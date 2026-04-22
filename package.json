@@ -7,6 +7,7 @@
     "dev:ui": "bun run --cwd apps/ui dev",
     "dev:docs": "bun run --cwd apps/docs dev",
     "build:ui": "bun run --cwd apps/ui build",
+    "build:api": "bun run --cwd apps/api build",
     "build:docs": "bun run --cwd apps/docs build",
     "typecheck": "tsc --build apps/api/tsconfig.json apps/ui/tsconfig.json packages/types/tsconfig.json"
   }

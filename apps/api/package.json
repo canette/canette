@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
+    "build": "bun build --target=bun --compile --outfile api-server src/index.ts",
     "db:migrate": "bun run scripts/migrate.ts",
     "typecheck": "tsc --noEmit"
   },
