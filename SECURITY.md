@@ -27,5 +27,5 @@ To report a vulnerability to the Canette team, us the GitHub security advisory s
 
 ## Securing your Canette Installation
 
-See the [documentation](https://canette.dev/docs/) for recommendations and additional information about running Canette in productions,
+See the [documentation](https://canette.dev/docs/) for recommendations and additional information about running Canette in production,
 and the associated risks.
