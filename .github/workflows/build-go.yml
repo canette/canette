@@ -27,7 +27,7 @@ jobs:
 
     - name: Build ${{ matrix.app }}
       run: go build -v ./...
-      working-directory:
+      working-directory: ${{ matrix.app }}
 
     - name: Test ${{ matrix.app }}
       run: go test -v ./...
