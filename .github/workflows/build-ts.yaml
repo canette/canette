@@ -1,0 +1,45 @@
+name: Build Typescript
+
+on:
+  pull_request:
+    branches:
+      - '*'
+    paths:
+      - apps/ui
+      - apps/api
+      - packages
+      - package.json
+  push:
+    branches:
+      - main
+    paths:
+      - apps/ui
+      - apps/api
+      - packages
+      - package.json
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [ 'ui', 'api' ]    
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.3.11
+
+    - name: Bun install
+      run: bun install --frozen-lockfile --ignore-scripts
+
+    - name: Build ${{ matrix.app }}
+      run: bun run build:${{ matrix.app }}
+
+# We should have tests
+#    - name: Test ${{ matrix.app }}
+#      run: bun run test:${{ matrix.app }}
