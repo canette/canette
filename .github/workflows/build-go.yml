@@ -1,0 +1,34 @@
+name: Build Go
+
+on:
+  pull_request:
+    branches:
+      - '*'
+    paths:
+      - apps/builder
+      - apps/controller
+      - apps/logstreamer
+  workflow_dispatch: 
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [ 'apps/builder', 'apps/controller', 'apps/logstreamer' ]
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.26'
+
+    - name: Build ${{ matrix.app }}
+      run: go build -v ./...
+      working-directory:
+
+    - name: Test ${{ matrix.app }}
+      run: go test -v ./...
+      working-directory: ${{ matrix.app }}
