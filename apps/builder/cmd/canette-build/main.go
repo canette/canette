@@ -107,7 +107,7 @@ func run() error {
 		fmt.Printf("CAN_CANETTE_CONFIG=%s\n", base64.StdEncoding.EncodeToString(rawYAML))
 	}
 
-	metaFile := "/tmp/build-metadata.json" //We are running in a container, this should be OK
+	metaFile := "/tmp/build-metadata.json" // We are running in a container, this should be OK
 	defer os.Remove(metaFile)
 
 	if err := build(cfg, workPath, fullImage, buildkitHost, metaFile); err != nil {
