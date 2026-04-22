@@ -8,6 +8,13 @@ on:
       - apps/builder
       - apps/controller
       - apps/logstreamer
+  push:
+    branches:
+      - main
+    paths:
+      - apps/builder
+      - apps/controller
+      - apps/logstreamer
   workflow_dispatch: 
 
 jobs:
