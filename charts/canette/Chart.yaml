@@ -1,0 +1,11 @@
+apiVersion: v2
+name: canette
+description: Kubernetes Push-to-deploy Platform — builder, controller, and supporting infrastructure
+type: application
+version: 0.1.0
+appVersion: "edge"
+keywords:
+  - paas
+  - kubernetes
+  - deploy
+home: https://github.com/canette/canette

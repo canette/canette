@@ -1,0 +1,4 @@
+{
+  "title": "Self-hosting",
+  "pages": ["requirements", "helm", "registry"]
+}

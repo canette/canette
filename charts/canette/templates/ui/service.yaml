@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: canette-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: canette-ui
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: canette-ui
+  ports:
+    - port: 3000
+      targetPort: 3000

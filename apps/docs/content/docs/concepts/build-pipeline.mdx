@@ -1,0 +1,42 @@
+---
+title: Build pipeline
+description: How canette builds container images using Railpack and BuildKit inside the cluster.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+canette builds container images inside the cluster using [Railpack](https://railpack.com) and [BuildKit](https://github.com/moby/buildkit).
+
+<Callout type="info">
+  This page is a work in progress.
+</Callout>
+
+## Stages
+
+Each build runs as a Kubernetes `Job` with two stages, each backed by a dedicated Go binary:
+
+### 1. git-clone (init container) — `canette-builder-git-init` image
+
+The `git-init` binary validates all inputs, sets up git credentials in Go (no shell), and shallow-clones the repository into a shared `emptyDir` volume at the exact ref. Supports public repos, PAT (HTTPS), and SSH deploy keys.
+
+### 2. image-build (main container) — `canette-builder-image-build` image
+
+The `canette-build` binary reads `canette.yaml` (size-checked and validated), determines the build strategy, and invokes `buildctl` directly with discrete arguments — no shell interpolation. Three strategies in order of priority:
+
+1. **Explicit Dockerfile** — if `build.dockerfile` is set in `canette.yaml`
+2. **Auto-detect Dockerfile** — if a `Dockerfile` exists at the app root
+3. **Railpack** — runs `railpack prepare` then builds via the BuildKit gateway frontend
+
+## Supported frameworks
+
+Railpack auto-detects: Node.js, Python, Go, Ruby, PHP, Java, Rust, Elixir, Deno, .NET, and more. A `Dockerfile` in the repo root is used directly if present.
+
+## When Railpack does not produce a working image
+
+Railpack covers the common cases well, but auto-detection can miss framework-specific quirks, monorepo layouts, or unusual build toolchains. If your app builds successfully but does not start correctly — or if Railpack picks the wrong runtime — the recommended solution is to add a `Dockerfile` to the repository.
+
+A `Dockerfile` at the app root takes precedence over Railpack automatically. This is a standard, well-understood format that gives you full control over the build without any canette-specific configuration. `railpack.json` is explicitly not supported — canette manages the build plan directly and will refuse to build if one is present.
+
+## BuildKit daemon
+
+A long-lived rootless `buildkitd` deployment runs in `canette-system`. Build jobs connect to it via `BUILDKIT_HOST` — no daemon is started per-job.

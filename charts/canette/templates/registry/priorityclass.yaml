@@ -1,0 +1,11 @@
+{{- if .Values.registry.enabled }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: canette-registry-critical
+  labels:
+    {{- include "canette.labels" . | nindent 4 }}
+value: 1000000
+globalDefault: false
+description: "Protects the canette in-cluster registry from eviction under resource pressure."
+{{- end }}

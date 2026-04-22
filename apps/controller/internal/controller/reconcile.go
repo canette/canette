@@ -1,0 +1,134 @@
+package controller
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"go.uber.org/zap"
+
+	"canette.dev/controller/internal/crypto"
+	k8sres "canette.dev/controller/internal/k8s"
+	"canette.dev/controller/internal/store"
+)
+
+func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeployment) {
+	log := c.log.With(
+		zap.String("deployment", dep.ID),
+		zap.String("app", dep.AppSlug),
+		zap.String("project", dep.ProjectSlug),
+	)
+
+	var lastErr error
+	defer func() {
+		if lastErr != nil {
+			log.Error("reconcile failed", zap.Error(lastErr))
+			if err := c.store.MarkFailed(ctx, dep.ID, lastErr.Error()); err != nil {
+				log.Error("failed to mark deployment failed", zap.Error(err))
+			}
+		}
+	}()
+
+	// 1. Fetch app config.
+	appCfg, cfgErr := c.store.GetAppConfig(ctx, dep)
+	if cfgErr != nil {
+		// canette.yaml is invalid — deployment continues with snapshot defaults.
+		msg := fmt.Sprintf("Warning: canette.yaml could not be parsed (%s); using defaults", cfgErr)
+		log.Warn("invalid canette.yaml, using defaults", zap.Error(cfgErr))
+		c.appendLog(ctx, log, dep.ID, "controller", msg)
+	}
+
+	// 2. Fetch and decrypt secrets.
+	secrets, err := c.store.GetSecrets(ctx, dep.AppID)
+	if err != nil {
+		lastErr = fmt.Errorf("get secrets: %w", err)
+		return
+	}
+	secretData := make(map[string][]byte, len(secrets))
+	for _, sec := range secrets {
+		decrypted, err := crypto.Decrypt(sec.EncryptedValue, c.cryptoKey)
+		if err != nil {
+			log.Error("failed to decrypt secret", zap.String("key", sec.Key), zap.Error(err))
+			lastErr = fmt.Errorf("failed to decrypt app secrets")
+			return
+		}
+		secretData[sec.Key] = []byte(decrypted)
+	}
+
+	// 3. Build K8s resources.
+	deployCfg := c.buildDeployConfig(appCfg, secretData)
+	res := k8sres.BuildResources(deployCfg)
+
+	// 4. Render and store manifest (before applying — preserves intent even if apply fails).
+	manifest, err := k8sres.RenderManifest(res)
+	if err != nil {
+		log.Warn("failed to render manifest", zap.Error(err))
+	} else {
+		if err := c.store.SetAppliedManifest(ctx, dep.ID, manifest); err != nil {
+			log.Warn("failed to store manifest", zap.Error(err))
+		}
+	}
+
+	// 5. Apply all resources via server-side apply.
+	c.appendLog(ctx, log, dep.ID, "controller", "Applying Kubernetes resources...")
+	if err := k8sres.ApplyAll(ctx, c.dynClient, res); err != nil {
+		lastErr = fmt.Errorf("apply resources: %w", err)
+		return
+	}
+	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
+
+	// 6. Watch rollout (poll every 3s, timeout 12min).
+	// K8s progressDeadlineSeconds defaults to 600s (10min); our timeout must exceed that
+	// so we see the real ProgressDeadlineExceeded condition rather than timing out first.
+	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
+	deadline := time.Now().Add(12 * time.Minute)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			lastErr = ctx.Err()
+			return
+		default:
+		}
+
+		status, err := k8sres.CheckRollout(ctx, c.client, appNS, dep.AppSlug)
+		if err != nil {
+			log.Warn("check rollout error", zap.Error(err))
+		} else {
+			c.appendLog(ctx, log, dep.ID, "controller", status.Message)
+			if status.Done {
+				if status.Succeeded {
+					break
+				}
+				lastErr = fmt.Errorf("rollout failed: %s", status.Message)
+				return
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	if time.Now().After(deadline) {
+		lastErr = fmt.Errorf("rollout timed out after 12 minutes")
+		return
+	}
+
+	// 7. Mark live and set URL.
+	if err := c.store.MarkLive(ctx, dep.ID); err != nil {
+		lastErr = fmt.Errorf("mark live: %w", err)
+		return
+	}
+
+	liveURL := fmt.Sprintf("https://%s-%s.%s", dep.AppSlug, dep.ProjectSlug, c.cfg.ClusterDomain)
+	if err := c.store.SetAppLiveURL(ctx, dep.AppID, liveURL); err != nil {
+		log.Warn("failed to set live url", zap.Error(err))
+	}
+
+	c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("Deployment live at %s", liveURL))
+	log.Info("deployment live", zap.String("url", liveURL))
+	lastErr = nil
+}
+
+func (c *Controller) appendLog(ctx context.Context, log *zap.Logger, deploymentID, stream, line string) {
+	if err := c.store.AppendLog(ctx, deploymentID, stream, line); err != nil {
+		log.Warn("failed to write controller log", zap.Error(err))
+	}
+}

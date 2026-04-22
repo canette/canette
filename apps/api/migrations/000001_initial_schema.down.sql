@@ -1,0 +1,16 @@
+DROP TABLE IF EXISTS scan_sboms;
+DROP TABLE IF EXISTS admin_settings;
+DROP TABLE IF EXISTS pending_namespace_deletions;
+DROP TABLE IF EXISTS webhook_secrets;
+DROP TABLE IF EXISTS env_vars;
+DROP TABLE IF EXISTS secrets;
+DROP TABLE IF EXISTS build_logs;
+DROP TABLE IF EXISTS deployments;
+DROP TABLE IF EXISTS apps;
+DROP TABLE IF EXISTS git_credentials;
+DROP TABLE IF EXISTS memberships;
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS "verification";
+DROP TABLE IF EXISTS "account";
+DROP TABLE IF EXISTS "session";
+DROP TABLE IF EXISTS "user";

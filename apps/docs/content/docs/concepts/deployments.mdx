@@ -1,0 +1,63 @@
+---
+title: Deployments
+description: A deployment is a single attempt to build and ship a commit of an app.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+A **deployment** is a single attempt to build and ship a commit of an app.
+
+<Callout type="info">
+  This page is a work in progress.
+</Callout>
+
+## Status lifecycle
+
+| Status | Meaning |
+|---|---|
+| `pending` | Queued, waiting for the builder to pick it up |
+| `building` | Build Job is running (git-clone → image-build → push) |
+| `deploying` | Image pushed, controller applying K8s manifests |
+| `live` | Deployment is running and passing health checks |
+| `failed` | Build or deploy failed — see logs for details |
+| `stopped` | App was manually stopped — K8s resources have been torn down |
+
+## Triggering a deployment
+
+Deployments can be triggered:
+
+- **Manually** from the app page in the UI
+- **Via webhook** from GitHub, GitLab, or Gitea on push
+
+## Deploy actions
+
+The app page exposes up to three deploy actions depending on the app's current state:
+
+### Redeploy
+
+Re-applies the Kubernetes manifests using the **same image** from the current deployment. The controller reads all settings (port, environment variables, secrets) fresh from the database — so any changes you saved since the last deploy are picked up without requiring a rebuild.
+
+Use **Redeploy** when:
+- You changed an environment variable, secret, or port and want to apply it to the running app
+- You want to restart the app without pulling a new image
+
+### Rebuild (git apps)
+
+Creates a new deployment record and triggers a full build: git clone at the latest commit on the configured branch → Railpack build → image push → deploy.
+
+Use **Rebuild** when:
+- You have pushed new code and want to pick it up
+
+### Deploy new (image apps)
+
+Creates a new deployment record and re-resolves `imageUrl:imageTag` at deploy time. If the tag (e.g. `latest`) has been updated in your registry since the last deploy, the new image version is used.
+
+Use **Deploy new** when:
+- You have pushed a new image to your registry and want to pull it
+
+## Viewing logs
+
+Two log views are available from the app page:
+
+- **Deploy logs** — output from the build pipeline and Kubernetes rollout, scoped to a specific deployment. Available for all apps regardless of source type.
+- **App logs** — live stdout/stderr streamed directly from the running container over SSE. Only available while the app is `live`. Logs are not stored — open the panel to start a live stream.

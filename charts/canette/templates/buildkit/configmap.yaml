@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd-config
+  namespace: {{ include "canette.buildNamespace" . }}
+  labels:
+    {{- include "canette.labels" . | nindent 4 }}
+data:
+  buildkitd.toml: |
+    {{- if .Values.registry.enabled }}
+    [registry.{{ include "canette.registryHost" . | quote }}]
+      http = true
+      insecure = true
+    {{- end }}
+    {{- range $host, $cfg := .Values.buildkit.registries }}
+    [registry.{{ $host | quote }}]
+      http = {{ $cfg.http | default false }}
+      insecure = {{ $cfg.insecure | default false }}
+    {{- end }}

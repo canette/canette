@@ -1,0 +1,130 @@
+---
+title: Running in Production
+description: Recommendations for running a production-ready canette installation.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+<Callout type="warn">
+  This page is a work in progress. Content may be incomplete or change significantly.
+</Callout>
+
+The default Helm installation is designed to get you up and running quickly — it bundles PostgreSQL and an in-cluster image registry so nothing extra is required. For production use, you should replace both with dedicated external services.
+
+## Use an external database
+
+The bundled PostgreSQL instance has no persistent storage configured by default and is not suitable for production. Replace it with a managed database or a self-hosted PostgreSQL instance you operate separately.
+
+```yaml
+# values.yaml
+postgres:
+  enabled: false
+
+externalDatabase:
+  url: "postgresql://myuser:$(DB_PASSWORD)@myhost:5432/canette?sslmode=require"
+  passwordSecretRef:
+    name: canette-db-secret
+    key: password
+```
+
+Create the secret before installing or upgrading:
+
+```bash
+kubectl create secret generic canette-db-secret \
+  --namespace canette-system \
+  --from-literal=password=<your-db-password>
+```
+
+Good options for managed PostgreSQL: AWS RDS, DigitalOcean Managed Databases, Supabase, Neon, or a self-hosted instance with regular backups.
+
+<Callout type="warn">
+  Run canette's migrations against your external database before the first install. The migration job runs automatically as a Helm pre-upgrade hook — make sure `DATABASE_URL` points to the right instance before you `helm install`.
+</Callout>
+
+## Use an external image registry
+
+The in-cluster registry stores built images inside the cluster with no replication or backup. For production, use a dedicated registry that persists independently of the cluster.
+
+```yaml
+# values.yaml
+registry:
+  enabled: false
+
+externalRegistry:
+  username: myuser
+  passwordSecretRef:
+    name: canette-registry-secret
+    key: password
+
+builder:
+  imageRepo: ghcr.io/myorg/apps/
+
+controller:
+  pullRepo: ghcr.io/myorg/apps/
+```
+
+```bash
+kubectl create secret generic canette-registry-secret \
+  --namespace canette-system \
+  --from-literal=password=<your-registry-token>
+```
+
+Good options: GitHub Container Registry (ghcr.io), AWS ECR, DigitalOcean Container Registry, Docker Hub, or a self-hosted Harbor instance.
+
+<Callout type="info">
+  `builder.imageRepo` is where canette pushes built images. `controller.pullRepo` is the prefix the controller uses when writing image references into Kubernetes `Deployment` specs — these must resolve to the same location from inside the cluster.
+</Callout>
+
+## Persist the encryption key
+
+The master encryption key for git credentials and app secrets is auto-generated on first install and stored in a Kubernetes Secret. For production, back up this secret or supply your own key so you can restore it after a cluster rebuild.
+
+```bash
+# Back up the generated key
+kubectl get secret canette-encryption-key -n canette-system -o yaml > canette-encryption-key-backup.yaml
+```
+
+Or supply a known key at install time:
+
+```yaml
+# values.yaml
+encryptionKey: "your-32-character-key-here"
+```
+
+<Callout type="warn">
+  Store the encryption key backup somewhere secure, outside the cluster. If you lose it, all stored git credentials and app secrets become unrecoverable.
+</Callout>
+
+## Resource limits
+
+The default resource requests and limits are conservative. Tune them to your workload:
+
+```yaml
+# values.yaml
+api:
+  defaultResources:
+    cpuRequest: "250m"
+    memoryRequest: "256Mi"
+    cpuLimit: "1"
+    memoryLimit: "1Gi"
+```
+
+These become the default for every app deployment. Individual apps can override them via `canette.yaml` in their repository.
+
+## Cloud provider notes
+
+Each cloud provider has its own quirks when running Kubernetes workloads. Detailed guides for specific providers are planned — check back here as they are added.
+
+### AWS (EKS)
+
+- Use **RDS for PostgreSQL** as the external database. Enable automated backups and multi-AZ for production.
+- Use **ECR** (Elastic Container Registry) as the external registry. ECR tokens expire every 12 hours — use a token refresh mechanism or a registry proxy that handles re-authentication.
+- Build jobs require user namespace syscalls (`seccompProfile: Unconfined`). Verify your node AMI and kernel version support this (AL2023 and Bottlerocket do).
+- Gateway API support: Traefik and Cilium both work well on EKS. AWS Load Balancer Controller can also serve as the gateway implementation.
+
+### DigitalOcean (DOKS)
+
+- Use **DigitalOcean Managed PostgreSQL** as the external database.
+- Use **DigitalOcean Container Registry** as the external registry.
+- The default node image supports user namespaces — build jobs work without extra configuration.
+- Gateway API: Traefik is straightforward to install via Helm and works well with DOKS.

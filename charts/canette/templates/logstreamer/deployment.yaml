@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canette-logstreamer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: canette-logstreamer
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: canette-logstreamer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: canette-logstreamer
+    spec:
+      serviceAccountName: canette-logstreamer
+      containers:
+        - name: logstreamer
+          {{- $image := include "canette.serviceImage" (list . "canette-logstreamer" .Values.logstreamer.image) }}
+          image: {{ $image }}
+          imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ADDR
+              value: ":8080"
+            - name: LOGSTREAMER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: canette-logstreamer-secret
+                  key: token
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.logstreamer.resources | nindent 12 }}

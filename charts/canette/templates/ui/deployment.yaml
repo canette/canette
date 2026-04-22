@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canette-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: canette-ui
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: canette-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: canette-ui
+    spec:
+      containers:
+        - name: ui
+          {{- $image := include "canette.serviceImage" (list . "canette-ui" .Values.ui.image) }}
+          image: {{ $image }}
+          imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: API_URL
+              value: {{ include "canette.apiURL" . | quote }}
+            - name: GITHUB_LOGIN_ENABLED
+              value: {{ if .Values.api.githubClientId }}"true"{{ else }}"false"{{ end }}
+            - name: GITHUB_APP_ENABLED
+              value: {{ if .Values.api.githubApp.appId }}"true"{{ else }}"false"{{ end }}
+            - name: GOOGLE_LOGIN_ENABLED
+              value: {{ if .Values.api.googleClientId }}"true"{{ else }}"false"{{ end }}
+            - name: EMAIL_SIGNUP_ENABLED
+              value: {{ if .Values.api.disableEmailSignup }}"false"{{ else }}"true"{{ end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}

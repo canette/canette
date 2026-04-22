@@ -1,0 +1,55 @@
+import { createSign } from "node:crypto"
+
+// generateInstallationToken mints a GitHub App installation access token.
+// It reads GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY
+// from the environment — these are injected by the Helm chart when api.githubApp is configured.
+// The returned token is valid for 1 hour and can be used as a Bearer token or as
+// x-access-token in git clone URLs, identical to a PAT.
+export async function generateInstallationToken(): Promise<string> {
+  const appId = process.env.GITHUB_APP_ID
+  const installationId = process.env.GITHUB_APP_INSTALLATION_ID
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY
+
+  if (!appId || !installationId || !privateKey) {
+    throw new Error("GitHub App not configured (missing GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, or GITHUB_APP_PRIVATE_KEY)")
+  }
+
+  const jwt = signJwt(appId, privateKey)
+
+  const res = await fetch(
+    `https://api.github.com/app/installations/${installationId}/access_tokens`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    }
+  )
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`GitHub App token exchange failed (${res.status}): ${body}`)
+  }
+
+  const data = await res.json() as { token: string }
+  return data.token
+}
+
+// signJwt creates a short-lived RS256 JWT for authenticating as the GitHub App.
+// iat is backdated 60 s to account for clock skew; exp is 9 minutes from now.
+function signJwt(appId: string, privateKeyPem: string): string {
+  const now = Math.floor(Date.now() / 1000)
+  const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))
+  const payload = base64url(JSON.stringify({ iss: appId, iat: now - 60, exp: now + 540 }))
+  const signingInput = `${header}.${payload}`
+  const sign = createSign("RSA-SHA256")
+  sign.update(signingInput)
+  const signature = sign.sign(privateKeyPem, "base64url")
+  return `${signingInput}.${signature}`
+}
+
+function base64url(s: string): string {
+  return Buffer.from(s).toString("base64url")
+}

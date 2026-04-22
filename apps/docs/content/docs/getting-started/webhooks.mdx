@@ -1,0 +1,94 @@
+---
+title: Webhooks
+description: Automatically deploy your app on every push to its tracked branch.
+---
+
+Canette can automatically deploy your app whenever you push to its tracked branch. Set up a webhook once and every push triggers a build and deploy.
+
+## How it works
+
+1. You enable a webhook for an app in the UI
+2. Canette generates a secret and attempts to register the webhook directly in your git provider
+3. If auto-registration fails, Canette shows the URL and secret for you to add manually
+4. When a push arrives, Canette validates the signature, checks the branch and optional path filter, and triggers a deployment
+
+Webhooks are per-app. Each app gets its own unique URL and secret.
+
+## Enabling a webhook
+
+Open the app page and click **Enable webhook** in the settings panel. If your git credential has the right scope, the webhook is registered automatically and you're done. Otherwise, Canette shows the URL and secret with step-by-step instructions for your provider.
+
+## Auto-registration
+
+Canette uses your app's configured git credential to call the provider API and create the webhook automatically. This works with PAT credentials that have the right scope, or with a [GitHub App credential](/docs/configuration/github-app).
+
+| Provider | Required PAT scope |
+|---|---|
+| GitHub | `admin:repo_hook` (classic) or `write:repo_hook` (fine-grained) |
+| GitLab | `api` |
+| Gitea | `write:repository` |
+
+If the credential lacks the scope, auto-registration fails gracefully and Canette shows manual setup instructions. No action is needed on your part — just follow the instructions shown in the UI.
+
+## Manual setup
+
+If auto-registration is not available, add the webhook yourself in your repository settings:
+
+### GitHub
+1. Go to **Repository → Settings → Webhooks → Add webhook**
+2. **Payload URL:** paste the webhook URL from Canette
+3. **Content type:** `application/json`
+4. **Secret:** paste the webhook secret
+5. **Events:** select *Just the push event*
+6. Click **Add webhook**
+
+### GitLab
+1. Go to **Repository → Settings → Webhooks**
+2. **URL:** paste the webhook URL
+3. **Secret token:** paste the webhook secret
+4. Check **Push events**
+5. Click **Add webhook**
+
+### Gitea
+1. Go to **Repository → Settings → Webhooks → Add webhook → Gitea**
+2. **Target URL:** paste the webhook URL
+3. **Secret:** paste the webhook secret
+4. **Trigger on:** Push events
+5. Click **Add webhook**
+
+## Path filtering
+
+By default, any push to the tracked branch triggers a deploy. If your app lives in a subdirectory of a monorepo, you can set a **Watch path** when enabling the webhook so deploys only happen when files under that path change.
+
+A push that only modifies `packages/api/` will be silently ignored. A push that touches `packages/web/src/index.ts` will trigger a deploy.
+
+The watch path is matched as a path prefix — `packages/web` matches `packages/web/src/index.ts` but not `packages/webserver/main.go`.
+
+## Busy app behaviour
+
+If a deployment is already in progress when a push arrives, Canette drops the event silently and returns `200` to the provider. Trigger a new deployment manually from the UI once the current one finishes.
+
+## Security
+
+Each webhook is validated using the provider's standard mechanism:
+
+| Provider | Method |
+|---|---|
+| GitHub | HMAC-SHA256 over the raw request body (`X-Hub-Signature-256`) |
+| Gitea | HMAC-SHA256 over the raw request body (`X-Gitea-Signature`) |
+| GitLab | Constant-time token comparison (`X-Gitlab-Token`) |
+
+The secret is encrypted at rest and never returned by the API after creation.
+
+## Removing a webhook
+
+Open the app page, go to the webhook settings panel, and click **Remove webhook**. Canette deletes the webhook from the database and attempts to deregister it from the provider. If deregistration fails (e.g. the credential was rotated), delete it manually from your repository's webhook settings.
+
+## Webhook base URL
+
+By default, webhook URLs are constructed using the UI's public hostname. If your API is accessible at a different hostname than the UI, set `api.webhookBaseUrl` in your Helm values:
+
+```yaml
+api:
+  webhookBaseUrl: "https://api.example.com"
+```

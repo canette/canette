@@ -1,0 +1,276 @@
+# canette Helm chart values
+
+# ---------------------------------------------------------------------------
+# Global image settings
+# ---------------------------------------------------------------------------
+# Base repository for all canette service images.
+# Each service image defaults to {image.repo}/{serviceName}:{image.tag}.
+# Override individual images under each service section if needed.
+image:
+  repo: "ghcr.io/canette"
+  # Overrides the image tag for all service images.
+  # Leave empty to use Chart.AppVersion (recommended — tag and chart version stay in sync).
+  tag: ""
+
+# Required: base domain for all dynamic hostnames.
+# App URLs are constructed as {app}-{project}.<domain>.
+# The in-cluster registry (when enabled) is exposed at registry.<domain>.
+domain: ""
+
+# AES-256-GCM encryption key shared by builder and controller.
+# Used to encrypt/decrypt git credentials and app secrets at rest.
+# Leave empty to auto-generate on first install (recommended).
+# The generated key is stored in the canette-encryption-key Secret and reused
+# on every subsequent upgrade. Set explicitly only if you need to restore a
+# known key (e.g. disaster recovery or cluster migration).
+encryptionKey: ""
+
+# ---------------------------------------------------------------------------
+# PostgreSQL (optional — set enabled: false to use an external database)
+# ---------------------------------------------------------------------------
+postgres:
+  enabled: true
+  image: postgres:18-alpine
+  # Override auto-generated postgres password.
+  # By default canette generates a random password on first install and stores it in
+  # the postgres-credentials Secret, reusing it on every upgrade.
+  # Set this to use your own password instead (e.g. for disaster recovery).
+  password: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    # Enable a PersistentVolumeClaim for postgres data.
+    # Set to false when using ephemeral clusters (e.g. quick EKS tests) where
+    # provisioning a PV is not worth the effort — data will be lost on pod restart.
+    enabled: true
+    size: 5Gi
+    # storageClass: "" # Leave empty to use the cluster default StorageClass.
+
+# Used when postgres.enabled=false
+externalDatabase:
+  url: ""
+  # Optional: inject the database password from a Kubernetes Secret at runtime.
+  # Set passwordSecretRef.name and put $(DB_PASSWORD) in the url where the password goes.
+  # Example url: "postgresql://myuser:$(DB_PASSWORD)@myhost:5432/mydb?sslmode=require"
+  passwordSecretRef:
+    name: ""
+    key: "password"
+
+# ---------------------------------------------------------------------------
+# External registry credentials (used when registry.enabled=false)
+# ---------------------------------------------------------------------------
+externalRegistry:
+  # Credentials for pushing to an external registry.
+  # The builder is given a docker config Secret with these credentials.
+  username: ""
+  password: ""
+  # Optional: read the password from a Kubernetes Secret instead of a plain value.
+  # The secret must exist in the system namespace before helm install/upgrade.
+  passwordSecretRef:
+    name: ""
+    key: "password"
+
+# ---------------------------------------------------------------------------
+# In-cluster image registry (optional)
+# ---------------------------------------------------------------------------
+registry:
+  enabled: true
+  image: registry:2
+  # Override auto-generated registry credentials.
+  # By default canette generates a random username/password on first install and stores
+  # them in the canette-registry-credentials Secret, reusing them on every upgrade.
+  # Set both fields to use your own credentials instead (e.g. for disaster recovery).
+  username: ""
+  password: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  persistence:
+    # Enable a PersistentVolumeClaim for registry image storage.
+    # Set to false when using ephemeral clusters (e.g. quick EKS tests) where
+    # provisioning a PV is not worth the effort — images will be lost on pod restart.
+    enabled: true
+    size: 20Gi
+    # storageClass: "" # Leave empty to use the cluster default StorageClass.
+
+# ---------------------------------------------------------------------------
+# BuildKit daemon (always deployed — required by the builder)
+# ---------------------------------------------------------------------------
+buildkit:
+  image: moby/buildkit:v0.21.0-rootless
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  # Additional registry trust entries written into buildkitd.toml.
+  # The in-cluster registry is added automatically when registry.enabled=true.
+  # Format: "<host:port>": { http: true, insecure: true }
+  registries: {}
+
+# ---------------------------------------------------------------------------
+# Builder service
+# ---------------------------------------------------------------------------
+builder:
+  # Override image (defaults to {image.repo}/builder:{image.tag})
+  image: ""
+  # Override railpack+buildctl+canette-config image used for build jobs
+  # (defaults to {image.repo}/canette-builder-image-build:{image.tag})
+  builderImage: ""
+  # Override git-init image used as the init container in each build job
+  # (defaults to {image.repo}/canette-builder-git-init:{image.tag})
+  gitInitImage: ""
+  # Registry URL the builder pushes images to (used inside the cluster).
+  # Auto-derived as registry.canette-system.svc.cluster.local:5000/ when
+  # registry.enabled=true. Override when using an external registry.
+  imageRepo: ""
+  # BuildKit daemon address. Auto-derived from the buildkit service when left empty.
+  buildkitdAddr: ""
+  # Trivy image used for vulnerability scanning jobs. Override to pin a specific version.
+  trivyImage: "aquasec/trivy:0.51.0"
+  pollInterval: 5s
+  maxConcurrent: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Controller service
+# ---------------------------------------------------------------------------
+controller:
+  # Override image (defaults to {image.repo}/canette-controller:{image.tag})
+  image: ""
+  # Registry URL reachable by the kubelet for image pulls.
+  # Leave empty when registry.enabled=true — auto-derives to registry.<domain>/.
+  # Required when registry.enabled=false, e.g.: ghcr.io/myorg/
+  pullRepo: ""
+  gateway:
+    name: can-gateway
+    namespace: kube-system
+  pollInterval: 5s
+  logTailInterval: 10s
+  maxConcurrent: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# API service (Bun + Hono)
+# ---------------------------------------------------------------------------
+api:
+  # Override image (defaults to {image.repo}/canette-api:{image.tag})
+  image: ""
+  # GitHub OAuth credentials (required for GitHub login)
+  githubClientId: ""
+  githubClientSecret: ""
+  # Optional: read the GitHub client secret from a Kubernetes Secret instead of a plain value.
+  # The secret must exist in the system namespace before helm install/upgrade.
+  githubClientSecretRef:
+    name: ""
+    key: "github-client-secret"
+  # Google OAuth credentials (optional — enables Google login)
+  googleClientId: ""
+  googleClientSecret: ""
+  # Optional: read the Google client secret from a Kubernetes Secret instead of a plain value.
+  # The secret must exist in the system namespace before helm install/upgrade.
+  googleClientSecretRef:
+    name: ""
+    key: "google-client-secret"
+  # GitHub App credentials (optional — enables "GitHub App" git credential type).
+  # Create a GitHub App with Repository contents: Read and Webhooks: Read & Write,
+  # install it on your GitHub org, then fill in the values below.
+  # See docs/configuration/github-app for setup instructions.
+  githubApp:
+    appId: ""
+    installationId: ""
+    # Inline RSA private key PEM (escape newlines as \n).
+    # Use privateKeySecretRef instead if you manage secrets externally.
+    privateKey: ""
+    privateKeySecretRef:
+      name: ""
+      key: "private-key"
+  # BETTER_AUTH_SECRET is auto-generated on first install (same pattern as encryptionKey).
+  # Set explicitly for disaster recovery or cluster migration.
+  authSecret: ""
+  # Default Kubernetes resource allocations applied to every app deployment.
+  # Uses standard Kubernetes quantity notation (100m, 256Mi, 1, etc.).
+  defaultResources:
+    cpuRequest: "100m"
+    memoryRequest: "128Mi"
+    cpuLimit: "500m"
+    memoryLimit: "512Mi"
+  # Public base URL used to construct webhook payload URLs registered with git providers.
+  # Leave empty to use the UI hostname. Set this if your API is accessible at a different
+  # hostname than the UI (e.g. when only the API is publicly exposed).
+  webhookBaseUrl: ""
+  # Disable email/password sign-up. Existing users can still sign in with email.
+  # Set to true on closed-access deployments where user accounts are created by an admin.
+  # Defaults to false (sign-up is open).
+  disableEmailSignup: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# UI service (Next.js)
+# ---------------------------------------------------------------------------
+ui:
+  # Override image (defaults to {image.repo}/canette-ui:{image.tag})
+  image: ""
+  # Required: public hostname for the UI, e.g. canette.example.com
+  # Used for the HTTPRoute and as the CORS origin passed to the API.
+  hostname: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Logstreamer service (live pod log streaming — no database)
+# ---------------------------------------------------------------------------
+logstreamer:
+  # Override image (defaults to {image.repo}/canette-logstreamer:{image.tag})
+  image: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Database migrations
+# ---------------------------------------------------------------------------
+migrations:
+  # By default, migrations run inline at API startup (RUN_MIGRATIONS=true).
+  # Set enabled=true to run migrations as a Helm pre-upgrade Job instead.
+  # When enabled, the API deployment will have RUN_MIGRATIONS=false injected
+  # so migrations do not run twice.
+  enabled: false

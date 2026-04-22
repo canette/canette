@@ -1,0 +1,31 @@
+---
+title: Apps
+description: An app represents a single deployable service backed by a Git repository.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+An **app** represents a single deployable service backed by a Git repository.
+
+<Callout type="info">
+  This page is a work in progress.
+</Callout>
+
+## What defines an app
+
+- **Git URL** — the repository to build from
+- **Branch** — which branch to track (default: `main`)
+- **App path** — subdirectory within the repo (for monorepos)
+- **Git credential** — optional credential for private repos
+- **Secrets** — encrypted environment variables
+
+## Lifecycle
+
+An app goes through the following states when you trigger a deploy:
+
+```
+pending → building → deploying → live
+                              ↘ failed
+```
+
+See [Deployments](/docs/concepts/deployments) for details.

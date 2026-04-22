@@ -1,0 +1,13 @@
+{
+  "name": "canette",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:api": "bun run --cwd apps/api dev",
+    "dev:ui": "bun run --cwd apps/ui dev",
+    "dev:docs": "bun run --cwd apps/docs dev",
+    "build:ui": "bun run --cwd apps/ui build",
+    "build:docs": "bun run --cwd apps/docs build",
+    "typecheck": "tsc --build apps/api/tsconfig.json apps/ui/tsconfig.json packages/types/tsconfig.json"
+  }
+}

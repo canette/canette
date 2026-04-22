@@ -1,0 +1,37 @@
+---
+title: Installation
+description: Install canette on your Kubernetes cluster using Helm.
+---
+
+## Prerequisites
+
+- Kubernetes cluster (1.27+)
+- [Helm](https://helm.sh) 3.x
+- A Gateway API implementation (Traefik, Cilium, Kong, etc.)
+- A container registry (in-cluster or external)
+
+## Install with Helm
+
+```bash
+helm install canette oci://ghcr.io/canette/charts/canette \
+  --namespace canette-system \
+  --create-namespace \
+  --set github.clientId=<your-github-client-id> \
+  --set github.clientSecret=<your-github-client-secret>
+```
+
+## Configure GitHub OAuth
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Create a new OAuth App
+3. Set the callback URL to `https://<your-canette-url>/api/auth/callback/github`
+4. Copy the Client ID and Client Secret into your Helm values
+
+## Verify the installation
+
+```bash
+kubectl -n canette-system rollout status deploy/canette-api
+kubectl -n canette-system rollout status deploy/canette-ui
+```
+
+Then open the URL assigned to the `canette-ui` service in your browser.

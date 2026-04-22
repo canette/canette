@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build outputs
+.next/
+.source/
+dist/
+out/
+build/
+apps/docs/.docusaurus/
+apps/docs/build/
+canette-config
+apps/logstreamer/logstreamer
+apps/builder/git-init
+apps/builder/canette-build
+
+# Copied during the builkd step to incude mdx in static output
+apps/docs/public/docs
+
+# Environment — never commit real values
+.env
+.env.local
+.env.*.local
+htpasswd
+secrets.yaml
+values-development.yaml
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+
+# Go binaries
+apps/controller/controller
+apps/builder/builder
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+#Junk folders
+labs

@@ -1,0 +1,36 @@
+---
+title: Your first deploy
+description: Go from a Git repository to a live URL in under two minutes.
+---
+
+## 1. Create a project
+
+A **project** is a workspace that groups related apps. Think of it like a team or product area.
+
+1. Sign in to canette
+2. Click **New project**
+3. Give it a name and click **Create**
+
+## 2. Add an app
+
+1. Open the project and click **Add app**
+2. Paste your Git repository URL
+3. Choose the branch to deploy (default: `main`)
+4. Click **Create app**
+
+For private repositories, [add a Git credential](/docs/configuration/git-credentials) to your project first.
+
+## 3. Trigger a build
+
+Click **Deploy** on the app page. canette will:
+
+1. Clone your repository at the latest commit
+2. Detect your framework and generate a build plan with Railpack
+3. Build the container image and push it to the registry
+4. Create a `Deployment`, `Service`, and `HTTPRoute` in the cluster
+
+You can watch the build logs in real time from the deployment page.
+
+## 4. Access your app
+
+Once the deployment status shows **Live**, click the URL at the top of the deployment page.

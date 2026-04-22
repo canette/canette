@@ -1,0 +1,332 @@
+---
+title: Helm installation
+description: Deploy canette to your cluster using the Helm chart.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+The canette Helm chart deploys the API, UI, builder, controller, logstreamer, and BuildKit daemon to your cluster. PostgreSQL and an in-cluster image registry are included and enabled by default.
+
+## Prerequisites
+
+- Helm 3.x
+- Kubernetes 1.27+ with Gateway API CRDs installed
+- A Gateway API implementation (Traefik, Cilium, etc.)
+- Images built and pushed for the builder, controller, and migrations (see below)
+
+## Build the component images
+
+Before installing you need to push the component images to a registry your cluster can reach.
+
+All images can be built and pushed in one step using the build script:
+
+```bash
+IMAGE_REPO=my-registry/canette TAG=my-tag ./scripts/build-images.sh --push
+```
+
+Then point the chart at your registry and tag:
+
+```bash
+--set image.repo="my-registry/canette" --set image.tag="my-tag"
+```
+
+## Install
+
+The `-n` flag controls the system namespace. canette always creates a second namespace for build jobs named `{system}-build` — with the default below that becomes `canette-system-build`.
+
+```bash
+helm upgrade --install canette charts/canette \
+  -n canette-system --create-namespace \
+  --set domain="apps.example.com" \
+  --set ui.hostname="canette.example.com" \
+  --set api.githubClientId="<client-id>" \
+  --set api.githubClientSecret="<client-secret>"
+```
+
+Service images default to `ghcr.io/canette/canette/{service}:edge` — no image flags needed for a standard install. Override `image.repo`, `image.tag`, or individual service images as needed:
+
+```bash
+# Pin to a specific release
+--set image.tag="v1.2.3"
+
+# Use a different registry
+--set image.repo="my-registry/canette"
+```
+
+`domain` is the base domain for all dynamic hostnames:
+- **App URLs**: `{app}-{project}.apps.example.com`
+- **In-cluster registry**: `registry.apps.example.com` (when `registry.enabled=true`)
+
+The `controller.pullRepo` value is no longer required when using the in-cluster registry — it auto-derives to `registry.<domain>/`.
+
+For anything beyond a quick test, use a values file:
+
+```bash
+helm upgrade --install canette charts/canette -n canette-system --create-namespace -f my-values.yaml
+```
+
+### Multiple instances
+
+Because all namespaces are derived from `-n`, you can run isolated installations side by side:
+
+```bash
+# Production — apps at {app}-{project}.apps.example.com, registry at registry.apps.example.com
+helm upgrade --install canette charts/canette -n canette-system --create-namespace -f prod-values.yaml
+
+# Staging — apps at {app}-{project}.staging.example.com, registry at registry.staging.example.com
+helm upgrade --install canette-staging charts/canette -n canette-staging --create-namespace -f staging-values.yaml
+```
+
+This creates `canette-system` + `canette-system-build` for production, and `canette-staging` + `canette-staging-build` for staging — no resource conflicts.
+
+## Key values
+
+### Required
+
+| Value | Description |
+|-------|-------------|
+| `domain` | Base domain for all dynamic hostnames, e.g. `apps.example.com`. App URLs use `{app}-{project}.<domain>`; the in-cluster registry is exposed at `registry.<domain>`. |
+| `ui.hostname` | Public hostname for the UI, e.g. `canette.example.com` |
+| `api.githubClientId` | GitHub OAuth app client ID |
+| `api.githubClientSecret` | GitHub OAuth app client secret (or use `api.githubClientSecretRef`) |
+
+### Images (optional)
+
+All service images default to `{image.repo}/{serviceName}:{image.tag}`.
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `image.repo` | `ghcr.io/canette/canette` | Base repository for all canette service images |
+| `image.tag` | `Chart.AppVersion` | Tag applied to all service images. Leave empty to track `appVersion` automatically. |
+| `api.image` | derived | Override the API image |
+| `ui.image` | derived | Override the UI image |
+| `builder.image` | derived | Override the builder image |
+| `builder.builderImage` | derived (`image-build`) | Override the Railpack+buildctl build job image |
+| `builder.gitInitImage` | derived (`git-init`) | Override the git-init build job image |
+| `controller.image` | derived | Override the controller image |
+| `logstreamer.image` | derived | Override the logstreamer image |
+| `migrations.enabled` | `false` | Set to `true` to run migrations as a Helm pre-upgrade Job instead of at API startup |
+
+### API configuration (optional)
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `api.defaultResources.cpuRequest` | `100m` | Default CPU request for every app deployment |
+| `api.defaultResources.memoryRequest` | `128Mi` | Default memory request for every app deployment |
+| `api.defaultResources.cpuLimit` | `500m` | Default CPU limit for every app deployment |
+| `api.defaultResources.memoryLimit` | `512Mi` | Default memory limit for every app deployment |
+| `api.webhookBaseUrl` | `""` | Public base URL used when constructing webhook URLs registered with git providers. Leave empty to use the UI hostname. Set this if your API is accessible at a different hostname than the UI (e.g. only the API is publicly exposed). |
+| `api.disableEmailSignup` | `false` | Disable email/password sign-up. Existing users can still sign in with email. Set to `true` on closed-access deployments where user accounts are created by an admin. |
+
+Resource values use standard Kubernetes quantity notation: `100m` (millicores), `256Mi` (mebibytes), `1` (full core or gigabyte).
+
+These values are snapshotted into each deployment at trigger time. Changing them takes effect on the **next** deployment — existing live apps are not affected until redeployed.
+
+### Infrastructure (optional)
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `postgres.enabled` | `true` | Deploy in-cluster PostgreSQL |
+| `postgres.password` | `""` | Override auto-generated postgres password (leave empty to auto-generate) |
+| `externalDatabase.url` | `""` | External DB connection string when `postgres.enabled=false` |
+| `registry.enabled` | `true` | Deploy in-cluster image registry, exposed via HTTPRoute at `registry.<domain>` |
+| `registry.username` | `""` | Override auto-generated registry username (both fields required to override) |
+| `registry.password` | `""` | Override auto-generated registry password |
+| `controller.pullRepo` | `""` | Registry URL for kubelet image pulls. Auto-derives to `registry.<domain>/` when `registry.enabled=true`. Required when `registry.enabled=false`. |
+| `externalRegistry.username` | `""` | Username for an external registry (when `registry.enabled=false`) |
+| `externalRegistry.password` | `""` | Password for an external registry |
+
+### Gateway
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `controller.gateway.name` | `can-gateway` | Gateway resource name |
+| `controller.gateway.namespace` | `kube-system` | Gateway resource namespace |
+
+## Registry authentication
+
+### In-cluster registry
+
+Registry authentication is **always enabled and auto-generated on first install**. canette generates a random username and password, stores them in the `canette-registry-credentials` Secret, and reuses them on every `helm upgrade` — no configuration required.
+
+Build jobs are automatically given a matching docker config Secret; no extra setup needed.
+
+To use your own credentials instead (e.g. for disaster recovery or cluster migration):
+
+```yaml
+registry:
+  username: myuser
+  password: mysecret
+```
+
+<Callout type="warn">
+  If you set custom credentials after auto-generated ones are already in use, existing push credentials in build jobs will be replaced. Rotate them in one upgrade to avoid authentication failures.
+</Callout>
+
+### External registry
+
+When `registry.enabled=false`, provide credentials for the external registry and set `controller.pullRepo` explicitly:
+
+```yaml
+registry:
+  enabled: false
+externalRegistry:
+  username: myuser
+  password: mytoken
+builder:
+  imageRepo: ghcr.io/myorg/
+controller:
+  pullRepo: ghcr.io/myorg/
+```
+
+The host for the docker config is derived automatically from `builder.imageRepo`.
+
+## Secret references
+
+Several sensitive values can be sourced from existing Kubernetes Secrets rather than plain Helm values. Create the secret in the system namespace before running `helm install` or `helm upgrade`.
+
+### External database password
+
+Put `$(DB_PASSWORD)` in the URL where the password goes, then point `passwordSecretRef` at your secret:
+
+```yaml
+externalDatabase:
+  url: "postgresql://myuser:$(DB_PASSWORD)@myhost:5432/mydb?sslmode=require"
+  passwordSecretRef:
+    name: my-db-secret
+    key: password
+```
+
+Kubernetes substitutes `$(DB_PASSWORD)` at pod startup.
+
+### External registry password
+
+```yaml
+externalRegistry:
+  username: myuser
+  passwordSecretRef:
+    name: my-registry-secret
+    key: password
+```
+
+The chart looks up the secret at render time to construct the docker config — the secret must exist before `helm install`.
+
+### GitHub client secret
+
+```yaml
+api:
+  githubClientId: "my-client-id"
+  githubClientSecretRef:
+    name: my-github-secret
+    key: client-secret
+```
+
+## Encryption key
+
+The encryption key used to protect git credentials and app secrets at rest is **auto-generated on first install** and stored as a Kubernetes Secret. Every `helm upgrade` reuses the existing key automatically — no action required.
+
+To provide your own key (disaster recovery, cluster migration):
+
+```yaml
+# my-values.yaml
+encryptionKey: "your-32-character-key-here"
+```
+
+<Callout type="warn">
+  Changing the encryption key after secrets have been stored will break decryption of all existing credentials and app secrets.
+</Callout>
+
+## Upgrading
+
+```bash
+helm upgrade canette charts/canette --reuse-values
+```
+
+Migrations run automatically as a pre-upgrade hook Job before the services restart.
+
+## Uninstalling
+
+```bash
+helm uninstall canette
+kubectl delete namespace canette-system canette-build
+```
+
+<Callout type="warn">
+  Uninstalling deletes the BuildKit state volume and all in-cluster registry data. Back up any images you want to keep before uninstalling.
+</Callout>
+
+## Operations
+
+### Updating registry credentials
+
+To rotate or add registry credentials without changing other values:
+
+```bash
+helm upgrade canette charts/canette --reuse-values \
+  --set externalRegistry.username=myuser \
+  --set externalRegistry.password=mytoken
+```
+
+To keep credentials out of shell history, use a gitignored values file instead:
+
+```yaml
+# secrets.yaml
+externalRegistry:
+  username: myuser
+  password: mytoken
+```
+
+```bash
+helm upgrade canette charts/canette --reuse-values -f secrets.yaml
+```
+
+After upgrading, restart the builder to pick up the new credentials:
+
+```bash
+kubectl rollout restart deployment/canette-builder -n canette-system
+```
+
+### Updating resource defaults
+
+Resource defaults are Helm values — change them with an upgrade:
+
+```bash
+helm upgrade canette charts/canette --reuse-values \
+  --set api.defaultResources.cpuRequest=250m \
+  --set api.defaultResources.memoryRequest=256Mi \
+  --set api.defaultResources.cpuLimit=1 \
+  --set api.defaultResources.memoryLimit=1Gi
+```
+
+Or in a values file:
+
+```yaml
+api:
+  defaultResources:
+    cpuRequest: "250m"
+    memoryRequest: "256Mi"
+    cpuLimit: "1"
+    memoryLimit: "1Gi"
+```
+
+The new values take effect on the next deployment for each app. Existing live apps continue to use the resource values from when they were last deployed.
+
+### Updating the webhook base URL
+
+The webhook base URL is also a Helm value:
+
+```bash
+helm upgrade canette charts/canette --reuse-values \
+  --set api.webhookBaseUrl="https://api.example.com"
+```
+
+Leave it empty (the default) to use the UI hostname. Only set it if your API is reachable at a different public hostname than the UI.
+
+### Restarting a service
+
+Rolling restart with zero downtime — the old pod stays up until the new one is ready:
+
+```bash
+kubectl rollout restart deployment/canette-builder -n canette-system
+kubectl rollout restart deployment/canette-controller -n canette-system
+```

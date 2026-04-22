@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canette-builder
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: canette-builder
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: canette-builder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: canette-builder
+    spec:
+      serviceAccountName: canette-builder
+      containers:
+        - name: builder
+          {{- $image := include "canette.serviceImage" (list . "canette-builder" .Values.builder.image) }}
+          image: {{ $image }}
+          imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
+          env:
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: canette-encryption-key
+                  key: key
+            {{- if and (not .Values.postgres.enabled) .Values.externalDatabase.passwordSecretRef.name }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.passwordSecretRef.name }}
+                  key: {{ .Values.externalDatabase.passwordSecretRef.key }}
+            {{- end }}
+            - name: DATABASE_URL
+              {{- if .Values.postgres.enabled }}
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: DATABASE_URL
+              {{- else }}
+              value: {{ include "canette.databaseURL" . | quote }}
+              {{- end }}
+            - name: BUILDER_NAMESPACE
+              value: {{ include "canette.buildNamespace" . | quote }}
+            - name: IMAGE_REPO
+              value: {{ include "canette.imageRepo" . | quote }}
+            - name: BUILDKITD_ADDR
+              value: {{ include "canette.buildkitdAddr" . | quote }}
+            - name: BUILDER_IMAGE
+              value: {{ include "canette.serviceImage" (list . "canette-builder-image-build" .Values.builder.builderImage) | quote }}
+            - name: GIT_INIT_IMAGE
+              value: {{ include "canette.serviceImage" (list . "canette-builder-git-init" .Values.builder.gitInitImage) | quote }}
+            - name: TRIVY_IMAGE
+              value: {{ .Values.builder.trivyImage | quote }}
+            - name: POLL_INTERVAL
+              value: {{ .Values.builder.pollInterval | quote }}
+            - name: MAX_CONCURRENT
+              value: {{ .Values.builder.maxConcurrent | quote }}
+            {{- with include "canette.registryAuthSecretName" . }}
+            - name: REGISTRY_AUTH_SECRET
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.api.githubApp.appId }}
+            - name: GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: canette-api-secrets
+                  key: github-app-id
+            - name: GITHUB_APP_INSTALLATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: canette-api-secrets
+                  key: github-app-installation-id
+            - name: GITHUB_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if ((.Values.api.githubApp.privateKeySecretRef).name) }}
+                  name: {{ .Values.api.githubApp.privateKeySecretRef.name }}
+                  key: {{ .Values.api.githubApp.privateKeySecretRef.key }}
+                  {{- else }}
+                  name: canette-api-secrets
+                  key: github-app-private-key
+                  {{- end }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.builder.resources | nindent 12 }}

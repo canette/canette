@@ -1,0 +1,44 @@
+---
+title: Requirements
+description: Kubernetes, node, and registry requirements for running canette.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+<Callout type="info">
+  This page is a work in progress.
+</Callout>
+
+## Kubernetes
+
+- Kubernetes **1.27+**
+- [Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) installed
+- A Gateway API implementation (Traefik, Cilium, Kong, nginx, etc.)
+
+## Node requirements for builds
+
+Build jobs run rootless BuildKit. Each node that runs builds needs:
+
+| Distribution | Requirement |
+|---|---|
+| Ubuntu 24.04+ | `kernel.apparmor_restrict_unprivileged_userns=0` |
+| RHEL / CentOS | `user.max_user_namespaces=28633` |
+| All | Kernel ≥ 4.18 (5.11+ recommended for native overlayfs) |
+
+## Container registry
+
+canette pushes built images to a registry you provide. Options:
+
+- **In-cluster** — a plain `registry:2` deployment (no auth, for testing)
+- **External** — any OCI-compatible registry (GHCR, ECR, GCR, Docker Hub, etc.)
+
+## Resource recommendations
+
+| Component | CPU request | Memory request |
+|---|---|---|
+| `canette-api` | 100m | 128Mi |
+| `canette-ui` | 50m | 64Mi |
+| `canette-logstreamer` | 50m | 64Mi |
+| `buildkitd` | 500m | 512Mi |
+| `registry` | 50m | 64Mi |
+| Per build job | 250m | 256Mi |

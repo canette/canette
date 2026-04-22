@@ -1,0 +1,76 @@
+---
+title: canette.yaml
+description: Commit a canette.yaml to your repository to customise build and runtime behaviour.
+---
+
+Commit a `canette.yaml` file to your repository to customise build and runtime behaviour. All fields are optional — absence means "use platform defaults".
+
+## Full reference
+
+```yaml
+name: my-app            # string, unique within project
+
+build:
+  context: .            # path relative to app root
+  dockerfile: Dockerfile
+  args:
+    KEY: value
+
+runtime:
+  port: 3000
+  command: ["node", "server.js"]
+
+env:
+  KEY: value            # plaintext, safe to commit
+
+secrets:
+  - SECRET_NAME         # names only — values are set in the UI
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+replicas: 1
+
+healthcheck:
+  path: /healthz
+  port: 3000
+  initial_delay: 10
+  period: 15
+
+ingress:
+  host: my-app.apps.company.com
+  tls: true
+  path: /
+```
+
+## Field ownership
+
+Fields are split between the UI (stored in the database) and `canette.yaml` (committed to the repo). The file is parsed at deploy time — not on every UI interaction — so there is no sync problem.
+
+| Field | Owned by | Behaviour |
+|-------|----------|-----------|
+| `build.context`, `build.dockerfile`, `build.args` | `canette.yaml` only | Parsed from the cloned workspace at build time |
+| `runtime.port`, `runtime.command`, `replicas`, `resources`, `healthcheck` | UI as default, `canette.yaml` overrides | File wins when present; UI value is the fallback |
+| `env` | `canette.yaml` only | Plaintext vars committed to the repo; merged at deploy time |
+| `secrets` | UI only (values); `canette.yaml` can list names | Secret values are never stored in the file |
+| `ingress` | UI as default, `canette.yaml` overrides | File wins when present |
+
+## Build detection
+
+When a deployment is triggered, canette determines the build method in this order:
+
+1. **`build.dockerfile` is set** in `canette.yaml` — uses the Dockerfile at that path (relative to the app root), with `build.context` as the build context
+2. **`Dockerfile` exists at the app root** — auto-detected, no `canette.yaml` needed
+3. **Neither** — [railpack](https://railpack.com) auto-detects the project type and builds it
+
+## Notes
+
+- Unknown fields are silently ignored (forward compatibility)
+- `env` values are stored in plaintext in your repo — do not put secrets here
+- `secrets` lists names only; values must be set via the UI or API
+- `build.context` and `build.dockerfile` are paths relative to the app root (the directory set as **App path** in the UI), not the repo root

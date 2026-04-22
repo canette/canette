@@ -1,0 +1,106 @@
+---
+title: Platform security
+description: Security properties of canette at runtime — credentials, authentication, API design, and network routing.
+---
+
+This page covers the security properties of canette at runtime — how credentials are stored, how users are authenticated, how the API is protected, and how traffic reaches your apps. For security concerns specific to the image build process, see [Build security](/docs/concepts/build-security).
+
+---
+
+## Secrets and credentials
+
+### App secrets (environment variables)
+
+App secrets are encrypted before they are written to the database and decrypted only at deploy time.
+
+- **Algorithm**: AES-256-GCM with a random 96-bit nonce per value
+- **Key**: a master key stored in a Kubernetes `Secret` in the `canette-system` namespace, created once at Helm install time and never written to the database
+- **At deploy time**: the API decrypts the value in memory and creates a Kubernetes `Secret` in the app's namespace; the plaintext value exists only for the duration of that operation
+- **Never returned**: the API does not return secret values after they have been stored — not in list responses, not in detail responses, not in logs
+- **Never logged**: secret values are excluded from structured logging at every log level
+
+### Git credentials (PAT tokens and SSH keys)
+
+Git credentials (PAT tokens and SSH private keys) use the same AES-256-GCM encryption as app secrets. The master key is the same shared key. Credentials are scoped to a project; apps within the project inherit them.
+
+The `known_hosts` fingerprint for SSH credentials is not secret and is stored in plaintext.
+
+---
+
+## Authentication
+
+Authentication is handled by [better-auth](https://www.better-auth.com) embedded in the API server.
+
+### Supported providers
+
+| Provider | Notes |
+|----------|-------|
+| GitHub OAuth | Recommended for teams already on GitHub |
+| Google OAuth | Requires a Google Cloud OAuth app |
+| Email/password | Always available; new sign-ups can be disabled via Helm |
+
+### Session handling
+
+- Sessions are stored server-side; the browser receives a signed, `HttpOnly` session cookie
+- The UI communicates with the API exclusively via this session cookie — it never holds or exposes an API token
+- CI/CD integrations use `Authorization: Bearer <token>` — tokens are scoped and can be rotated independently of user sessions
+
+### Access control
+
+- **401 Unauthenticated**: returned when no valid session or token is present
+- **403 Forbidden**: returned when a valid session exists but the user does not have access to the requested project or app
+- Project membership is explicit — users do not get access to resources they have not been granted
+
+---
+
+## Webhook security
+
+Webhooks from GitHub, GitLab, and Gitea are validated with HMAC before any processing occurs.
+
+- Each webhook endpoint has a per-project secret stored in the database
+- Incoming requests are rejected immediately if the `X-Hub-Signature-256` (or equivalent) header is absent or does not match
+- Validation happens before any payload parsing — an invalid signature produces no side effects
+
+---
+
+## API design
+
+- All endpoints require authentication; there are no unauthenticated read endpoints
+- The API server does not talk to the Kubernetes API directly — that is the controller's responsibility. A compromised API process cannot create, modify, or delete Kubernetes resources
+- The UI talks only to the API — it has no direct database access and no Kubernetes credentials
+- Paginated list responses include only the fields needed for display; encrypted values are never included
+
+---
+
+## Network routing
+
+canette uses the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) exclusively — no legacy `networking.k8s.io/v1 Ingress` resources are generated.
+
+- Each app gets an `HTTPRoute` that routes from the cluster gateway to the app's `Service`
+- The `gatewayClassName` is set via Helm values — canette does not hardcode any controller-specific behaviour
+- Traefik is included as a subchart and enabled by default; it can be replaced with any Gateway API-compatible controller
+
+---
+
+## Namespace isolation
+
+canette uses three tiers of namespaces:
+
+| Namespace | Contents |
+|-----------|----------|
+| `canette-system` | canette control plane services (API, UI, controller, builder daemon, registry) |
+| `canette-build` | ephemeral build jobs — isolated from apps and control plane |
+| `can-{id}-{slug}` | one namespace per project, containing app `Deployment`, `Service`, `HTTPRoute`, and `Secret` resources |
+
+Build jobs cannot reach app namespaces or the control plane namespace. App namespaces cannot reach `canette-system` directly — all communication goes through the API.
+
+---
+
+## Deployment snapshots
+
+When a deploy is triggered, the API writes a snapshot of all configuration into the `deployments` table — git URL, branch, resource defaults, environment variables, and scan policy at the exact moment of triggering.
+
+This means:
+- The controller and builder read the snapshot, not live tables — a configuration change after triggering does not affect an in-progress build
+- Encrypted secrets are read once at deploy time and passed to Kubernetes; they are not re-read or re-decrypted during the lifetime of the deployment
+- The snapshot is intentionally denormalised — the builder and controller do not need to join multiple tables, reducing the blast radius if any single table is compromised

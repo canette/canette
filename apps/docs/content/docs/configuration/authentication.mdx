@@ -1,0 +1,95 @@
+---
+title: Authentication providers
+description: Configure GitHub OAuth, Google OAuth, and email login options.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+canette supports three login methods: **GitHub OAuth**, **Google OAuth**, and **email/password**. All three can be active simultaneously. Social providers are hidden from the login page when not configured.
+
+## GitHub OAuth
+
+### 1. Create an OAuth App
+
+1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
+2. Fill in the fields:
+   - **Application name**: e.g. `canette`
+   - **Homepage URL**: your canette URL, e.g. `https://canette.example.com`
+   - **Authorization callback URL**: `https://canette.example.com/api/auth/callback/github`
+3. Click **Register application**
+4. Copy the **Client ID**
+5. Click **Generate a new client secret** and copy the secret
+
+### 2. Configure Helm
+
+```yaml
+api:
+  githubClientId: "<client-id>"
+  githubClientSecret: "<client-secret>"
+```
+
+Or reference a pre-existing Kubernetes Secret for the client secret:
+
+```yaml
+api:
+  githubClientId: "<client-id>"
+  githubClientSecretRef:
+    name: my-github-secret
+    key: client-secret
+```
+
+Once configured, a **Continue with GitHub** button appears on the login page.
+
+---
+
+## Google OAuth
+
+### 1. Create an OAuth 2.0 client
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/) and select or create a project
+2. Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**
+3. If prompted, configure the OAuth consent screen first (set User Type to **Internal** for org-only access, or **External** to allow any Google account)
+4. Choose **Application type: Web application**
+5. Under **Authorised redirect URIs**, add: `https://canette.example.com/api/auth/callback/google`
+6. Click **Create** and copy the **Client ID** and **Client secret**
+
+### 2. Configure Helm
+
+```yaml
+api:
+  googleClientId: "<client-id>"
+  googleClientSecret: "<client-secret>"
+```
+
+Or reference a pre-existing Kubernetes Secret for the client secret:
+
+```yaml
+api:
+  googleClientId: "<client-id>"
+  googleClientSecretRef:
+    name: my-google-secret
+    key: client-secret
+```
+
+Once configured, a **Continue with Google** button appears on the login page.
+
+---
+
+## Email login
+
+Email/password login is always available unless explicitly disabled. Users sign in with their email address and password.
+
+### Disabling new sign-ups
+
+To prevent new users from creating accounts via email (while still allowing existing users to sign in), set:
+
+```yaml
+api:
+  disableEmailSignup: true
+```
+
+<Callout type="info">
+  This only blocks *new* registrations via email. Users who already have an account can still sign in. Social provider sign-ins are not affected — a user signing in with GitHub or Google for the first time will still have an account created automatically.
+</Callout>
+
+This is useful for closed-access deployments where user accounts are provisioned by an admin.

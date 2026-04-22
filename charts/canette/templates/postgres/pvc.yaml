@@ -1,0 +1,18 @@
+{{- if and .Values.postgres.enabled (dig "persistence" "enabled" true .Values.postgres) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ dig "persistence" "size" "5Gi" .Values.postgres }}
+  {{- with dig "persistence" "storageClass" "" .Values.postgres }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,19 @@
+{{- if and .Values.registry.enabled (dig "persistence" "enabled" true .Values.registry) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: registry
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ dig "persistence" "size" "20Gi" .Values.registry }}
+  {{- with dig "persistence" "storageClass" "" .Values.registry }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

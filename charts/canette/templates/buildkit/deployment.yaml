@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkitd
+  namespace: {{ include "canette.buildNamespace" . }}
+  labels:
+    app.kubernetes.io/name: buildkitd
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: buildkitd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: buildkitd
+    spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+        appArmorProfile:
+          type: Unconfined
+      containers:
+        - name: buildkitd
+          image: {{ .Values.buildkit.image }}
+          imagePullPolicy: {{ include "canette.imagePullPolicy" .Values.buildkit.image }}
+          args:
+            - --addr
+            - tcp://0.0.0.0:1234
+            - --oci-worker-no-process-sandbox
+            - --config
+            - /etc/buildkit/buildkitd.toml
+          ports:
+            - containerPort: 1234
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+          volumeMounts:
+            - name: buildkit-state
+              mountPath: /home/user/.local/share/buildkit
+            - name: buildkitd-config
+              mountPath: /etc/buildkit
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["buildctl", "--addr", "tcp://localhost:1234", "debug", "workers"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.buildkit.resources | nindent 12 }}
+      volumes:
+        - name: buildkit-state
+          emptyDir: {}
+        - name: buildkitd-config
+          configMap:
+            name: buildkitd-config

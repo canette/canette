@@ -1,0 +1,108 @@
+---
+title: Build security
+description: Security properties of the canette build pipeline and what risks remain.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+canette builds container images by running untrusted code inside your cluster. This page explains what protections are in place and what risks remain — so you can make an informed decision about what code you allow to be built.
+
+<Callout type="warn">
+  Building code you do not control or have not reviewed carries inherent risk. The protections described here reduce the attack surface significantly, but they do not eliminate it. Treat canette like any other CI system: only build repositories you trust.
+</Callout>
+
+## What canette does to contain builds
+
+### Dedicated build namespace
+
+All build jobs run in the `canette-build` namespace, isolated from application namespaces and the `canette-system` control plane namespace.
+
+### Non-root containers
+
+Both the `git-clone` and `image-build` containers run as UID/GID 1000 (`canette` user). The pod security context enforces this:
+
+- `runAsNonRoot: true` — Kubernetes rejects the pod if the image tries to run as root
+- `runAsUser: 10001` / `runAsGroup: 10001` — explicit UID/GID
+- `fsGroup: 10001` — shared volume (`/workspace`) is owned by the build user in both containers
+- `allowPrivilegeEscalation: false` — setuid binaries cannot grant elevated privileges
+
+### No Kubernetes API access
+
+Build pods have `automountServiceAccountToken: false`. The build containers have no credentials to call the Kubernetes API, so a compromised build cannot enumerate or modify cluster resources.
+
+### Seccomp profile
+
+The build pod runs with `seccompProfile: RuntimeDefault`. The actual image building (user namespaces, overlayfs) happens inside the separate, long-lived `buildkitd` deployment — the build job itself only communicates with buildkitd over TCP and needs no special syscalls.
+
+### Hard time limit
+
+Each build job has a 30-minute `activeDeadlineSeconds`. A hung or deliberately slow build is forcibly terminated by Kubernetes.
+
+### Isolated `railpack prepare` subprocess
+
+When Railpack is used to auto-detect the project type, it runs in a subprocess with a 5-minute timeout and a minimal, clean environment — only `PATH`, `HOME`, and `TMPDIR` are set. Job-level environment variables (app secrets, `CANETTE_CONFIG`, build credentials) are not inherited by the Railpack process.
+
+### Credential handling
+
+- **PAT (HTTPS)**: the access token is embedded in the clone URL for the duration of the `git clone` command only. It is never written to disk.
+- **SSH keys**: `GIT_SSH_COMMAND` is set to point directly at the mounted credential secret volume. The private key is never copied to the container filesystem.
+- Git credentials are deleted from the cluster after each build completes (or fails).
+
+### Input validation
+
+All inputs to the `git-clone` and `image-build` containers are validated before any subprocess is launched:
+
+- Git URLs must be `https://` or `git@host:path` — no other schemes
+- Git refs are validated against a strict allowlist (alphanumeric, `.`, `-`, `_`, `/`)
+- App paths are checked against path traversal attacks
+- `canette.yaml` build args are validated for shell metacharacters and size
+
+---
+
+## Risks to be aware of
+
+The protections above reduce but do not eliminate risk. The following attack surfaces remain.
+
+### Malicious configuration
+
+The user can provide a `canette.yaml` or `Dockerfile` in the committed repository. These files can override build settings — including the `Dockerfile` path and build context. A deliberately crafted `Dockerfile` can:
+
+- Install arbitrary software in the resulting image
+- Exfiltrate secrets passed as build args during the build
+- Produce an image that runs malicious code when deployed
+
+canette validates the *syntax and structure* of `canette.yaml` but does not analyse the content of Dockerfiles or build scripts for malicious intent. This is equivalent to running any CI pipeline against untrusted code.
+
+### Railpack auto-detection and `railpack.json`
+
+When no Dockerfile is present, Railpack analyses the repository content to generate a build plan. A repository could contain files crafted to influence Railpack's detection logic or the generated build plan. While the Railpack subprocess runs in a clean environment with limited privileges, the analysis itself reads arbitrary files from the repository.
+
+To prevent this, canette refuses to build if a `railpack.json` is present in the app directory. The build fails immediately with a clear error — remove the file from the repository to proceed. Railpack auto-detection (reading `package.json`, `pyproject.toml`, and similar project files) is unaffected; only the explicit Railpack config override is blocked.
+
+If Railpack does not produce a working image for your project, add a `Dockerfile` instead — it takes precedence over Railpack and eliminates any need for `railpack.json`. See [Build pipeline](/docs/concepts/build-pipeline#when-railpack-does-not-produce-a-working-image).
+
+### Build-time network access
+
+Build jobs have outbound internet access (required to fetch dependencies). During a build, the build process can make arbitrary outbound network requests — for example, to exfiltrate environment variables or source code, or to reach internal services on your network if your cluster does not enforce egress restrictions.
+
+**Mitigation**: Configure network policies on your cluster to restrict egress from the `canette-build` namespace to only what is needed (package registries, your git host, your image registry).
+
+### Image content
+
+canette builds and deploys whatever the build produces. It does not scan images for vulnerabilities by default (optional Trivy scanning can be enabled). A malicious or vulnerable image runs inside your cluster with the same privileges as any other app.
+
+### Shared `buildkitd`
+
+All builds share a single `buildkitd` daemon. Build cache is shared between builds. A build that intentionally or accidentally corrupts the BuildKit cache could affect subsequent builds. The `buildkitd` pod itself runs with elevated privileges (required for rootless mode) — it is a high-value target and should not be exposed outside the cluster.
+
+---
+
+## Recommendations
+
+| Concern | Recommendation |
+|---------|----------------|
+| Untrusted repositories | Review `canette.yaml` and `Dockerfile` before triggering a build |
+| Network exfiltration | Add a `NetworkPolicy` restricting egress from `canette-build` |
+| Vulnerable images | Enable Trivy scanning; set `scan_mandatory: true` in admin settings |
+| Shared build cache | Use separate canette installations for trusted and untrusted workloads |
+| Build secrets | Never pass sensitive secrets as build args — use runtime secrets instead |

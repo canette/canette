@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: canette-logstreamer
+  labels:
+    {{- include "canette.labels" . | nindent 4 }}
+rules:
+  # Pod listing — required to find a running pod by app label across dynamic namespaces
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Pod log streaming — required to tail live container output
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]

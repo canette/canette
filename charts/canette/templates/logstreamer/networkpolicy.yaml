@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: canette-logstreamer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: canette-logstreamer
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: canette-api
+      ports:
+        - protocol: TCP
+          port: 8080

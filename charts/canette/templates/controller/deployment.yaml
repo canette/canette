@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canette-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: canette-controller
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: canette-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: canette-controller
+    spec:
+      serviceAccountName: canette-controller
+      containers:
+        - name: controller
+          {{- $image := include "canette.serviceImage" (list . "canette-controller" .Values.controller.image) }}
+          image: {{ $image }}
+          imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
+          env:
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: canette-encryption-key
+                  key: key
+            {{- if and (not .Values.postgres.enabled) .Values.externalDatabase.passwordSecretRef.name }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.passwordSecretRef.name }}
+                  key: {{ .Values.externalDatabase.passwordSecretRef.key }}
+            {{- end }}
+            - name: DATABASE_URL
+              {{- if .Values.postgres.enabled }}
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: DATABASE_URL
+              {{- else }}
+              value: {{ include "canette.databaseURL" . | quote }}
+              {{- end }}
+            - name: PULL_REPO
+              value: {{ include "canette.pullRepo" . | quote }}
+            - name: CLUSTER_DOMAIN
+              value: {{ required "domain is required" .Values.domain | quote }}
+            - name: GATEWAY_NAME
+              value: {{ .Values.controller.gateway.name | quote }}
+            - name: GATEWAY_NAMESPACE
+              value: {{ .Values.controller.gateway.namespace | quote }}
+            - name: BUILDER_NAMESPACE
+              value: {{ include "canette.buildNamespace" . | quote }}
+            - name: POLL_INTERVAL
+              value: {{ .Values.controller.pollInterval | quote }}
+            - name: LOG_TAIL_INTERVAL
+              value: {{ .Values.controller.logTailInterval | quote }}
+            - name: MAX_CONCURRENT
+              value: {{ .Values.controller.maxConcurrent | quote }}
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}

@@ -1,17 +1,21 @@
-<img src="apps/docs/public/img/logo-128.png" alt="canette" width="64">
+---
+title: Introduction
+description: canette is a lightweight internal PaaS that runs inside an existing Kubernetes cluster.
+---
 
-# canette
+import { Callout } from "fumadocs-ui/components/callout"
 
-**Fast and User-Friendly PaaS for Kubernetes** · [canette.dev](https://canette.dev)
+<Callout type="warn">
+  canette is under active development. Breaking changes may be introduced at any time. These docs are a work in progress and may be incomplete or contain information that is no longer correct or relevant.
+</Callout>
 
-canette is a lightweight deployment platform that runs inside any Kubernetes cluster. Push a repository and get a live URL — automatic build detection, instant webhook deploys, and proven infrastructure behind the scenes.
-
+**canette** (Kubernetes Push-to-deploy Platform) is a lightweight internal PaaS that runs inside an existing Kubernetes cluster. It gives developers a Vercel-like push-to-deploy experience without requiring external services or platform expertise.
 
 ## Who is it for?
 
 canette is designed for developers and designers who want to host a demo, Storybook, or small internal service. You should be able to go from a Git repository to a live URL in under 2 minutes — no Dockerfile required, no Kubernetes knowledge needed.
 
-## Why use canette?
+## Why canette?
 
 ### For developers
 
@@ -26,7 +30,7 @@ canette runs entirely inside your own Kubernetes cluster, installed as a single 
 - **Full inventory.** You always know what is deployed and where. There are no apps quietly running in someone else's infrastructure and no old demos forgotten on the public internet.
 - **Secure by default.** Build jobs run as non-root with no Kubernetes API access, a hard 30-minute timeout, and encrypted secrets at rest. The attack surface is minimised without requiring any custom security configuration.
 - **No external dependencies.** canette does not phone home, does not require an external registry, and does not depend on any third-party SaaS. Everything runs in the cluster you already operate.
-- **Standard Kubernetes primitives.** canette generates ordinary `Deployment`, `Service`, and `HTTPRoute` resources. There is no proprietary resource format, or custom CRDs — what canette creates, you can inspect, modify, or delete with standard tools.
+- **Standard Kubernetes primitives.** canette generates ordinary `Deployment`, `Service`, and `HTTPRoute` resources. There is no proprietary resource format — what canette creates, you can inspect, modify, or delete with standard tools.
 
 ## How it works
 
@@ -44,25 +48,13 @@ canette runs entirely inside your own Kubernetes cluster, installed as a single 
 - **Real-time logs** — build and deploy logs stream live in the UI
 - **Gateway API** — HTTPRoute-based routing, no legacy Ingress
 
----
+## Architecture
 
-## Requirements
+canette consists of four services:
 
-- Kubernetes cluster (EKS, GKE, bare metal)
-- A Gateway API implementation (Traefik, Cilium, etc.) pre-installed
-- A container registry reachable from the cluster
-- PostgreSQL
-
----
-
-## Documentation
-
-See [canette.dev](https://canette.dev) for installation guides, configuration reference, and architecture documentation.
-
-For AI-assisted development, see [CLAUDE.md](./CLAUDE.md).
-
----
-
-## License
-
-Apache 2.0
+| Service | Language | Purpose |
+|---|---|---|
+| `api` | TypeScript (Bun + Hono) | REST API, auth, webhooks |
+| `ui` | TypeScript (Next.js) | Web interface |
+| `builder` | Go | Creates Kubernetes build Jobs |
+| `controller` | Go | Reconciles desired state with the cluster |
