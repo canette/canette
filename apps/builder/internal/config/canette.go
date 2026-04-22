@@ -76,7 +76,7 @@ func ParseFile(path string) (CanetteConfig, error) {
 	}
 
 	var cfg CanetteConfig
-	fmt.Printf("Parsin configuration from %s...\n", path)
+	fmt.Printf("Parsing configuration from %s...\n", path)
 	if err := yaml.NewDecoder(f).Decode(&cfg); err != nil {
 		return CanetteConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
