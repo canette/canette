@@ -5,16 +5,16 @@ on:
     branches:
       - '*'
     paths:
-      - apps/builder
-      - apps/controller
-      - apps/logstreamer
-  push:
+      - apps/builder/**
+      - apps/controller/**
+      - apps/logstreamer/**
+  push: # Replace with Docker Edge build
     branches:
       - main
     paths:
-      - apps/builder
-      - apps/controller
-      - apps/logstreamer
+      - apps/builder/**
+      - apps/controller/**
+      - apps/logstreamer/**
   workflow_dispatch: 
 
 jobs:
