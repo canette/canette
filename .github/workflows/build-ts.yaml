@@ -5,17 +5,17 @@ on:
     branches:
       - '*'
     paths:
-      - apps/ui
-      - apps/api
-      - packages
+      - apps/ui/**
+      - apps/api/**
+      - packages/**
       - package.json
-  push:
+  push: # Replace with Docker edge build
     branches:
       - main
     paths:
-      - apps/ui
-      - apps/api
-      - packages
+      - apps/ui/**
+      - apps/api/**
+      - packages/**
       - package.json
   workflow_dispatch:
 
