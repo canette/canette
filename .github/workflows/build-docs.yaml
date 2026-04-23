@@ -5,13 +5,13 @@ on:
     branches:
       - '*'
     paths:
-      - apps/docs
+      - apps/docs/**
       - package.json
   push:
     branches:
       - main
     paths:
-      - apps/docs
+      - apps/docs/**
       - package.json
   workflow_dispatch:
 
