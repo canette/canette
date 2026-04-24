@@ -1,6 +1,6 @@
 import { Hono } from "hono"
 import { stream } from "hono/streaming"
-import { db } from "../db"
+import { db } from "../db/db"
 import { requireAuth } from "../middleware/require-auth"
 import type { AppEnv } from "../types"
 import { getAppNamespace } from "../services/app-logs"

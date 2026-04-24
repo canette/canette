@@ -27,7 +27,7 @@ export const auth = betterAuth({
         }
       : {}),
   },
-  plugins: [passwordPolicyPlugin(), admin({ adminRole: "admin" })],
+  plugins: [passwordPolicyPlugin(), admin({ adminRole: "admin", defaultRole: "developer" })],
   emailAndPassword: {
     enabled: true,
   },
@@ -53,10 +53,27 @@ export const auth = betterAuth({
             `UPDATE "user" SET role = 'admin' WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM "user" WHERE role = 'admin')`,
             [user.id],
           )
+
+          // Auto-create a personal team for every new user.
+          const teamId = crypto.randomUUID()
+          await pool.query(
+            `INSERT INTO teams (id, name, is_personal, owner_id, created_at, updated_at)
+             VALUES ($1, $2, TRUE, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [teamId, `${user.name}'s team`, user.id],
+          )
+          await pool.query(
+            `INSERT INTO team_members (id, team_id, user_id, created_at)
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
+            [crypto.randomUUID(), teamId, user.id],
+          )
         },
       },
     },
   },
 })
 
-export type Session = typeof auth.$Infer.Session
+type _Session = typeof auth.$Infer.Session
+export type Session = {
+  session: _Session["session"]
+  user: _Session["user"] & { role: string }
+}

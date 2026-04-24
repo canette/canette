@@ -2,6 +2,9 @@
 node_modules/
 .bun/
 
+# IDEs
+.vscode/
+
 # Build outputs
 .next/
 .source/
@@ -15,9 +18,7 @@ apps/logstreamer/logstreamer
 apps/builder/git-init
 apps/builder/canette-build
 apps/api/api-server
-
-# Copied during the builkd step to incude mdx in static output
-apps/docs/public/docs
+apps/api/db-migrate
 
 # Environment — never commit real values
 .env

@@ -38,7 +38,7 @@ spec:
           {{- $image := include "canette.serviceImage" (list . "canette-api" .Values.api.image) }}
           image: {{ $image }}
           imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
-          command: ["bun", "run", "db:migrate"]
+          command: ["./db-migrate"]
           env:
             {{- if and (not .Values.postgres.enabled) .Values.externalDatabase.passwordSecretRef.name }}
             - name: DB_PASSWORD

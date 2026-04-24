@@ -1,7 +1,7 @@
-import type { Db } from "../db"
+import type { DB } from "../db/db"
 import type { EnvVar } from "@canette/types"
 import type { Selectable } from "kysely"
-import type { Database } from "../db-types"
+import type { Database } from "../db/types"
 import { ServiceError } from "./errors"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
@@ -28,7 +28,7 @@ function isValidKey(key: string): boolean {
 // ── Service functions ─────────────────────────────────────────────────────────
 // Callers must verify app access (via getAppById) before calling these.
 
-export async function listEnvVars(db: Db, appId: string): Promise<EnvVar[]> {
+export async function listEnvVars(db: DB, appId: string): Promise<EnvVar[]> {
   const rows = await db
     .selectFrom("env_vars")
     .selectAll()
@@ -39,7 +39,7 @@ export async function listEnvVars(db: Db, appId: string): Promise<EnvVar[]> {
 }
 
 export async function upsertEnvVar(
-  db: Db,
+  db: DB,
   appId: string,
   key: string,
   value: string
@@ -73,7 +73,7 @@ export async function upsertEnvVar(
 }
 
 export async function deleteEnvVar(
-  db: Db,
+  db: DB,
   appId: string,
   key: string
 ): Promise<boolean> {

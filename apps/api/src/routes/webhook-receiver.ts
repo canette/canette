@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { db } from "../db"
+import { db } from "../db/db"
 import { processWebhookEvent } from "../services/webhooks"
 
 // Public — no auth middleware. Security is handled by HMAC/token validation inside processWebhookEvent.

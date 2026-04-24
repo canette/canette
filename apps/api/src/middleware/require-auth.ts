@@ -1,5 +1,5 @@
 import { createMiddleware } from "hono/factory"
-import { auth } from "../auth"
+import { auth } from "../auth/auth"
 
 // Attaches the session to the Hono context. Returns 401 if not authenticated.
 export const requireAuth = createMiddleware<{

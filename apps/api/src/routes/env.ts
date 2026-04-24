@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { db } from "../db"
+import { db } from "../db/db"
 import { requireAuth } from "../middleware/require-auth"
 import type { AppEnv } from "../types"
 import { ServiceError } from "../services/errors"

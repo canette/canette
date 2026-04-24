@@ -1,0 +1,60 @@
+import { Hono } from "hono"
+import { cors } from "hono/cors"
+import { logger } from "hono/logger"
+import { auth } from "./auth/auth"
+import { projectsRouter } from "./routes/projects"
+import { teamsRouter } from "./routes/teams"
+import { appsRouter } from "./routes/apps"
+import { envRouter } from "./routes/env"
+import { appLogsRouter } from "./routes/app-logs"
+import { appLogsStreamRouter } from "./routes/app-logs-stream"
+import { webhooksRouter } from "./routes/webhooks"
+import { webhookReceiverRouter } from "./routes/webhook-receiver"
+import { adminRouter } from "./routes/admin"
+import { usersRouter } from "./routes/users"
+import type { DB } from "./db/db";
+
+export function createApp(db: DB) {
+    const app = new Hono()
+
+    app.use("*", logger())
+    app.use(
+    "*",
+    cors({
+        origin: process.env.UI_URL ?? "http://localhost:3000",
+        allowHeaders: ["Content-Type", "Authorization"],
+        allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+        credentials: true,
+    }),
+    )
+
+    // Block email sign-up when disabled via DISABLE_EMAIL_SIGNUP env var.
+    // Must be registered before the better-auth catch-all so Hono matches it first.
+    if (process.env.DISABLE_EMAIL_SIGNUP === "true") {
+    app.post("/api/auth/sign-up/email", (c) =>
+        c.json({ error: "Sign-up is disabled on this instance", code: "SIGNUP_DISABLED" }, 403),
+    )
+    }
+
+    // better-auth handles all /api/auth/** routes
+    app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
+
+    // public webhooks before auth
+    app.route("/api/v1/webhooks", webhookReceiverRouter)
+
+    // Application routes
+    const api = app.basePath("/api/v1")
+    api.route("/projects", projectsRouter)
+    api.route("/teams", teamsRouter)
+    api.route("/", appsRouter)
+    api.route("/", envRouter)
+    api.route("/", appLogsRouter)
+    api.route("/", appLogsStreamRouter)
+    api.route("/", webhooksRouter)
+    api.route("/admin", adminRouter)
+    api.route("/users", usersRouter)
+
+    app.get("/healthz", (c) => c.json({ ok: true }))
+
+    return app;
+}

@@ -1,9 +1,9 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
-import type { Db } from "../db"
+import type { DB } from "../db/db"
 import type { WebhookConfig } from "@canette/types"
 import type { Selectable } from "kysely"
-import type { Database } from "../db-types"
-import { encrypt, decrypt } from "../crypto"
+import type { Database } from "../db/types"
+import { encrypt, decrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
 import { createDeployment } from "./deployments"
 import { generateInstallationToken } from "./github-app-token"
@@ -90,7 +90,7 @@ function manualInstructions(parsed: ParsedGitUrl, webhookUrl: string, provider: 
 }
 
 async function tryAutoRegister(
-  db: Db,
+  db: DB,
   app: AppRow,
   parsed: ParsedGitUrl,
   webhookUrl: string,
@@ -227,7 +227,7 @@ async function tryDeregister(parsed: ParsedGitUrl, providerHookId: string, pat: 
 // ── Public service functions ───────────────────────────────────────────────────
 
 export async function createWebhook(
-  db: Db,
+  db: DB,
   appId: string,
   userId: string,
   opts: { watchPath: string }
@@ -241,10 +241,11 @@ export async function createWebhook(
   // Verify membership
   const accessRow = await db
     .selectFrom("apps as a")
-    .innerJoin("memberships as m", "m.project_id", "a.project_id")
+    .innerJoin("projects as p_access", "p_access.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p_access.team_id")
     .select(["a.id", "a.slug", "a.git_url", "a.git_branch", "a.source_type", "a.git_credential_id"])
     .where("a.id", "=", appId)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!accessRow) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
@@ -313,16 +314,17 @@ export async function createWebhook(
 }
 
 export async function getWebhook(
-  db: Db,
+  db: DB,
   appId: string,
   userId: string
 ): Promise<WebhookConfig | null> {
   const access = await db
     .selectFrom("apps as a")
-    .innerJoin("memberships as m", "m.project_id", "a.project_id")
+    .innerJoin("projects as p_access", "p_access.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p_access.team_id")
     .select("a.id")
     .where("a.id", "=", appId)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!access) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
@@ -346,16 +348,17 @@ export async function getWebhook(
 }
 
 export async function deleteWebhook(
-  db: Db,
+  db: DB,
   appId: string,
   userId: string
 ): Promise<boolean> {
   const accessRow = await db
     .selectFrom("apps as a")
-    .innerJoin("memberships as m", "m.project_id", "a.project_id")
+    .innerJoin("projects as p_access", "p_access.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p_access.team_id")
     .select(["a.git_url", "a.git_credential_id"])
     .where("a.id", "=", appId)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!accessRow) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
@@ -398,7 +401,7 @@ export async function deleteWebhook(
 // ── Webhook event processing (called by the public receiver route) ─────────────
 
 export async function processWebhookEvent(
-  db: Db,
+  db: DB,
   appId: string,
   rawBody: Buffer,
   headers: Record<string, string | undefined>

@@ -1,6 +1,6 @@
 import { CanetteLogo } from "@/components/canette-logo"
 import { Footer } from "@/components/footer"
-import { UserMenu } from "@/app/(authenticated)/dashboard/user-menu"
+import { UserMenu } from "@/components/user-menu"
 
 export interface BreadcrumbItem {
   label: string

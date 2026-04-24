@@ -1,7 +1,7 @@
-import type { Db } from "../db"
+import type { DB } from "../db/db"
 import type { BuildLog, Deployment, DeploymentStatus, PaginatedResponse } from "@canette/types"
 import type { Selectable } from "kysely"
-import type { Database } from "../db-types"
+import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
 import { getAppById } from "./apps"
@@ -58,7 +58,7 @@ interface SnapshotAppRow {
 // buildSnapshot gathers all data needed by the Go services from the database
 // and serialises it as a JSON string stored in deployments.deployment_snapshot.
 // This eliminates cross-table joins in the builder and controller at claim time.
-async function buildSnapshot(db: Db, appId: string): Promise<string> {
+async function buildSnapshot(db: DB, appId: string): Promise<string> {
   const appRows = await sql<SnapshotAppRow>`
     SELECT a.id, a.slug, a.source_type, a.git_url, a.git_branch,
            a.app_path, a.git_credential_id, a.port,
@@ -121,7 +121,7 @@ async function buildSnapshot(db: Db, appId: string): Promise<string> {
 
 // Caller must already have verified the user has access to this app.
 export async function listDeployments(
-  db: Db,
+  db: DB,
   appId: string
 ): Promise<PaginatedResponse<Deployment>> {
   const rows = await db
@@ -136,7 +136,7 @@ export async function listDeployments(
 }
 
 // hasActiveDeployment returns true if the app already has an in-progress deployment.
-async function hasActiveDeployment(db: Db, appId: string): Promise<boolean> {
+async function hasActiveDeployment(db: DB, appId: string): Promise<boolean> {
   const row = await db
     .selectFrom("deployments")
     .select("id")
@@ -148,12 +148,12 @@ async function hasActiveDeployment(db: Db, appId: string): Promise<boolean> {
 }
 
 // triggeredBy is a user ID for manual deploys, or null for webhook-triggered deploys.
-// When non-null, access is verified against the memberships table.
+// When non-null, access is verified via team membership.
 // When null (webhook path), the HMAC signature in the receiver is the security gate.
 // input is provided by webhooks (real commit data); omit for manual deploys and the
 // branch/tag is read from the apps table with commit_message set to 'Manual Deploy'.
 export async function createDeployment(
-  db: Db,
+  db: DB,
   appId: string,
   triggeredBy: string | null,
   input?: { commitSha: string; commitMessage?: string }
@@ -235,18 +235,19 @@ export async function createDeployment(
 
 // stopApp gracefully stops a live deployment (→ 'stopped', triggers K8s teardown).
 // Any in-progress build is left running — if it completes it will redeploy the app.
-// Verifies access itself via app → project → membership.
+// Verifies access itself via app → project → team membership.
 export async function stopApp(
-  db: Db,
+  db: DB,
   appId: string,
   userId: string
 ): Promise<boolean> {
   const access = await db
     .selectFrom("apps as a")
-    .innerJoin("memberships as m", "m.project_id", "a.project_id")
+    .innerJoin("projects as p_access", "p_access.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p_access.team_id")
     .select("a.id")
     .where("a.id", "=", appId)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!access) return false
 
@@ -273,19 +274,20 @@ export async function stopApp(
 // redeployDeployment creates a new deployment row reusing the already-built image
 // without triggering a new build. A fresh snapshot is built from current app state
 // so that any changes to env vars, ports, or admin settings are picked up.
-// Verifies access via deployment → app → project → membership.
+// Verifies access via deployment → app → project → team membership.
 export async function redeployDeployment(
-  db: Db,
+  db: DB,
   deploymentId: string,
   userId: string
 ): Promise<Deployment | null> {
   const access = await db
     .selectFrom("deployments as d")
     .innerJoin("apps as a", "a.id", "d.app_id")
-    .innerJoin("memberships as m", "m.project_id", "a.project_id")
+    .innerJoin("projects as p_access", "p_access.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p_access.team_id")
     .select(["d.id", "d.app_id", "d.status", "d.image_digest", "d.commit_sha", "d.commit_message"])
     .where("d.id", "=", deploymentId)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!access) return null
 
@@ -349,17 +351,18 @@ export async function redeployDeployment(
 
 // Verifies access itself via deployment → app → project → membership join.
 export async function getDeploymentLogs(
-  db: Db,
+  db: DB,
   deploymentId: string,
   userId: string
 ): Promise<BuildLog[] | null> {
   const access = await db
     .selectFrom("deployments as d")
     .innerJoin("apps as a", "a.id", "d.app_id")
-    .innerJoin("memberships as m", "m.project_id", "a.project_id")
+    .innerJoin("projects as p_access", "p_access.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p_access.team_id")
     .select(["d.id", "d.commit_sha"])
     .where("d.id", "=", deploymentId)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!access) return null
 

@@ -1,7 +1,6 @@
-import { CredentialsClient } from "./credentials-client"
+import { redirect } from "next/navigation"
 
-export const dynamic = "force-dynamic"
-
-export default function CredentialsPage() {
-  return <CredentialsClient />
+// Credentials are now managed per-team. Redirect to the teams page.
+export default function CredentialsRedirect() {
+  redirect("/dashboard/teams")
 }

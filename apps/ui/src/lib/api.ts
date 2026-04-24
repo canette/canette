@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanPolicy, SyncResult, User, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminTeamOverview, App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanPolicy, SyncResult, Team, TeamMember, User, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -29,25 +29,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json()
 }
 
+// Teams
+export const teams = {
+  list: () => request<Team[]>("/teams"),
+  get: (id: string) => request<Team & { members: TeamMember[] }>(`/teams/${id}`),
+  create: (body: { name: string }) =>
+    request<Team>("/teams", { method: "POST", body: JSON.stringify(body) }),
+  rename: (id: string, name: string) =>
+    request<Team>(`/teams/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  delete: (id: string) => request<void>(`/teams/${id}`, { method: "DELETE" }),
+  addMember: (teamId: string, body: { userId?: string; email?: string }) =>
+    request<void>(`/teams/${teamId}/members`, { method: "POST", body: JSON.stringify(body) }),
+  removeMember: (teamId: string, userId: string) =>
+    request<void>(`/teams/${teamId}/members/${userId}`, { method: "DELETE" }),
+  listCredentials: (teamId: string) =>
+    request<GitCredential[]>(`/teams/${teamId}/credentials`),
+  createCredential: (teamId: string, body: { name: string; provider: GitProvider; type: GitCredentialType; value?: string; sshKnownHosts?: string }) =>
+    request<GitCredential>(`/teams/${teamId}/credentials`, { method: "POST", body: JSON.stringify(body) }),
+  updateCredential: (teamId: string, id: string, value: string) =>
+    request<GitCredential>(`/teams/${teamId}/credentials/${id}`, { method: "PATCH", body: JSON.stringify({ value }) }),
+  deleteCredential: (teamId: string, id: string) =>
+    request<void>(`/teams/${teamId}/credentials/${id}`, { method: "DELETE" }),
+}
+
 // Projects
 export const projects = {
   list: () => request<PaginatedResponse<Project>>("/projects"),
-  get: (id: string) => request<Project>(`/projects/${id}`),
-  create: (body: { name: string; slug: string; description?: string }) =>
+  get: (idOrSlug: string) => request<Project>(`/projects/${idOrSlug}`),
+  create: (body: { teamId: string; name: string; slug: string; description?: string }) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: { name?: string; description?: string; slug?: string }) =>
     request<Project>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   delete: (id: string) => request<void>(`/projects/${id}`, { method: "DELETE" }),
-}
-
-// Git credentials
-export const credentials = {
-  list: () => request<GitCredential[]>("/credentials"),
-  create: (body: { name: string; provider: GitProvider; type: GitCredentialType; value?: string; sshKnownHosts?: string }) =>
-    request<GitCredential>("/credentials", { method: "POST", body: JSON.stringify(body) }),
-  update: (id: string, value: string) =>
-    request<GitCredential>(`/credentials/${id}`, { method: "PATCH", body: JSON.stringify({ value }) }),
-  delete: (id: string) => request<void>(`/credentials/${id}`, { method: "DELETE" }),
+  listCredentials: (idOrSlug: string) => request<GitCredential[]>(`/projects/${idOrSlug}/credentials`),
 }
 
 // Apps
@@ -134,6 +148,7 @@ export const admin = {
     request<User>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deleteUser: (id: string) => request<void>(`/admin/users/${id}`, { method: "DELETE" }),
   getOverview: () => request<AdminProjectOverview[]>("/admin/overview"),
+  getTeams: () => request<AdminTeamOverview[]>("/admin/teams"),
   sync: () => request<SyncResult>("/admin/sync", { method: "POST" }),
   resetStuck: () => request<SyncResult>("/admin/reset-stuck", { method: "POST" }),
   getScanPolicy: () => request<ScanPolicy>("/admin/settings/security"),

@@ -10,6 +10,9 @@ CREATE TABLE "user" (
   "emailVerified"  BOOLEAN NOT NULL DEFAULT FALSE,
   image            TEXT,
   role             TEXT NOT NULL DEFAULT 'developer' CHECK (role IN ('admin', 'developer')),
+  banned           BOOLEAN DEFAULT FALSE,
+  "banReason"      TEXT,
+  "banExpires"     TEXT,
   "createdAt"      TEXT NOT NULL,
   "updatedAt"      TEXT NOT NULL
 );
@@ -50,37 +53,47 @@ CREATE TABLE "verification" (
   "updatedAt"  TEXT
 );
 
--- ── Application tables ────────────────────────────────────────────────────────
+-- ── Teams ─────────────────────────────────────────────────────────────────────
 
-CREATE TABLE projects (
+CREATE TABLE teams (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
-  slug        TEXT NOT NULL,
-  description TEXT,
-  created_by  TEXT NOT NULL REFERENCES "user"(id),
+  is_personal BOOLEAN NOT NULL DEFAULT FALSE,
+  owner_id    TEXT NOT NULL REFERENCES "user"(id) ON DELETE RESTRICT,
   created_at  TIMESTAMPTZ NOT NULL,
   updated_at  TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE memberships (
+CREATE TABLE team_members (
   id         TEXT PRIMARY KEY,
+  team_id    TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   user_id    TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  role       TEXT NOT NULL DEFAULT 'developer' CHECK (role IN ('admin', 'developer')),
   created_at TIMESTAMPTZ NOT NULL,
-  UNIQUE(user_id, project_id)
+  UNIQUE(team_id, user_id)
+);
+
+-- ── Application tables ────────────────────────────────────────────────────────
+
+CREATE TABLE projects (
+  id          TEXT PRIMARY KEY,
+  team_id     TEXT NOT NULL REFERENCES teams(id) ON DELETE RESTRICT,
+  name        TEXT NOT NULL,
+  slug        TEXT NOT NULL,
+  description TEXT,
+  created_by  TEXT REFERENCES "user"(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE git_credentials (
   id               TEXT PRIMARY KEY,
-  user_id          TEXT REFERENCES "user"(id) ON DELETE CASCADE, -- nullable for system credentials
+  team_id          TEXT REFERENCES teams(id) ON DELETE CASCADE, -- nullable for system credentials
   name             TEXT NOT NULL,
   provider         TEXT NOT NULL CHECK (provider IN ('github', 'gitlab', 'gitea', 'generic')),
   type             TEXT NOT NULL CHECK (type IN ('pat', 'ssh_key', 'github_app')),
   encrypted_value  TEXT NOT NULL, -- AES-256-GCM encrypted PAT token, SSH private key, or GitHub App private key
   ssh_known_hosts  TEXT,          -- plain text, not secret
-  created_at       TIMESTAMPTZ NOT NULL,
-  UNIQUE(user_id, name)
+  created_at       TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE apps (
@@ -100,7 +113,6 @@ CREATE TABLE apps (
   canette_config    TEXT,
   created_at        TIMESTAMPTZ NOT NULL,
   updated_at        TIMESTAMPTZ NOT NULL,
-  UNIQUE(project_id, name),
   UNIQUE(project_id, slug)
 );
 
@@ -136,7 +148,7 @@ CREATE TABLE secrets (
   id              TEXT PRIMARY KEY,
   app_id          TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
   key             TEXT NOT NULL,
-  encrypted_value TEXT NOT NULL, -- AES-256-GCM; empty string stored encrypted, never null
+  encrypted_value TEXT NOT NULL, -- AES-256-GCM empty string stored encrypted, never null
   created_at      TIMESTAMPTZ NOT NULL,
   updated_at      TIMESTAMPTZ NOT NULL,
   UNIQUE(app_id, key)
@@ -184,29 +196,34 @@ CREATE TABLE scan_sboms (
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 
-CREATE INDEX idx_session_token              ON "session"(token);
-CREATE INDEX idx_account_user              ON "account"("userId");
-CREATE INDEX idx_memberships_user_id       ON memberships(user_id);
-CREATE INDEX idx_memberships_project_id    ON memberships(project_id);
-CREATE UNIQUE INDEX idx_projects_slug      ON projects(slug);
-CREATE INDEX idx_apps_project_id           ON apps(project_id);
-CREATE UNIQUE INDEX idx_apps_project_slug  ON apps(project_id, slug);
-CREATE INDEX idx_git_credentials_user_id   ON git_credentials(user_id);
-CREATE INDEX idx_deployments_app_id        ON deployments(app_id);
-CREATE INDEX idx_deployments_status        ON deployments(status);
-CREATE INDEX idx_deployments_app_created   ON deployments(app_id, created_at DESC);
-CREATE INDEX idx_build_logs_deployment     ON build_logs(deployment_id);
-CREATE INDEX idx_secrets_app_id            ON secrets(app_id);
-CREATE INDEX idx_env_vars_app_id           ON env_vars(app_id);
-CREATE INDEX idx_webhook_secrets_app_id    ON webhook_secrets(app_id);
+CREATE INDEX idx_session_token            ON "session"(token);
+CREATE INDEX idx_account_user             ON "account"("userId");
+CREATE INDEX idx_teams_owner_id           ON teams(owner_id);
+CREATE INDEX idx_team_members_team_id     ON team_members(team_id);
+CREATE INDEX idx_team_members_user_id     ON team_members(user_id);
+CREATE INDEX idx_projects_team_id         ON projects(team_id);
+CREATE UNIQUE INDEX idx_projects_slug     ON projects(slug);
+CREATE INDEX idx_apps_project_id          ON apps(project_id);
+CREATE UNIQUE INDEX idx_apps_project_slug ON apps(project_id, slug);
+-- Unique credential name per team (NULLs excluded — system creds use fixed id)
+CREATE UNIQUE INDEX idx_git_credentials_team_name
+  ON git_credentials(team_id, name)
+  WHERE team_id IS NOT NULL;
+CREATE INDEX idx_deployments_app_id       ON deployments(app_id);
+CREATE INDEX idx_deployments_status       ON deployments(status);
+CREATE INDEX idx_deployments_app_created  ON deployments(app_id, created_at DESC);
+CREATE INDEX idx_build_logs_deployment    ON build_logs(deployment_id);
+CREATE INDEX idx_secrets_app_id           ON secrets(app_id);
+CREATE INDEX idx_env_vars_app_id          ON env_vars(app_id);
+CREATE INDEX idx_webhook_secrets_app_id   ON webhook_secrets(app_id);
 
 -- ── Seed data ─────────────────────────────────────────────────────────────────
 
 INSERT INTO admin_settings (key, value, updated_at) VALUES
-  ('security.scan_enabled',            'false',    NOW()),
-  ('security.scan_mandatory',          'false',    NOW()),
-  ('security.fail_severity',           'CRITICAL', NOW()),
-  ('resources.default_cpu_request',    '100m',     NOW()),
-  ('resources.default_memory_request', '128Mi',    NOW()),
-  ('resources.default_cpu_limit',      '500m',     NOW()),
-  ('resources.default_memory_limit',   '512Mi',    NOW());
+  ('security.scan_enabled',            'false',    CURRENT_TIMESTAMP),
+  ('security.scan_mandatory',          'false',    CURRENT_TIMESTAMP),
+  ('security.fail_severity',           'CRITICAL', CURRENT_TIMESTAMP),
+  ('resources.default_cpu_request',    '100m',     CURRENT_TIMESTAMP),
+  ('resources.default_memory_request', '128Mi',    CURRENT_TIMESTAMP),
+  ('resources.default_cpu_limit',      '500m',     CURRENT_TIMESTAMP),
+  ('resources.default_memory_limit',   '512Mi',    CURRENT_TIMESTAMP);

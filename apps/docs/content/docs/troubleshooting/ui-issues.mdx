@@ -1,0 +1,45 @@
+---
+title: UI Issues
+description: Troubleshoot issues with the canette ui
+---
+
+## Password manager overlays blocking the UI
+
+Browser password manager extensions can inject invisible overlays that block parts of the canette UI.
+
+### Symptoms
+
+After signing in, parts of the interface are unresponsive or unclickable — most commonly the user menu in the top-right corner. Clicks appear to land in the right area but nothing happens.
+
+### Cause
+
+Password manager browser extensions (Bitwarden, 1Password, Dashlane, and others) inject small icon overlays into pages where they detect stored credentials. These overlays are sometimes positioned incorrectly and end up sitting invisibly on top of unrelated UI elements, intercepting clicks before they reach the page.
+
+### Fix
+
+The simplest fix is to tell your password manager to stop injecting on the canette hostname.
+
+**Bitwarden**
+
+1. Click the Bitwarden extension icon in your browser toolbar
+2. Click the **Settings** gear icon
+3. Go to **Excluded Domains**
+4. Add your canette hostname (e.g. `canette.internal.example.com`)
+
+Alternatively, right-click the Bitwarden icon while on any canette page and select **Exclude this domain**.
+
+**1Password**
+
+1. Open the 1Password extension
+2. Click the **...** menu → **Settings**
+3. Under **Autofill**, add the hostname to the list of never-autofill sites
+
+**General fallback**
+
+If your password manager does not have an exclusion list, you can disable the browser extension for the canette site specifically:
+
+1. Open your browser's extension manager
+2. Find the password manager extension
+3. Use the per-site permission controls to set it to "Off" for the canette domain
+
+This is a browser extension behaviour and cannot be fixed from within canette itself.

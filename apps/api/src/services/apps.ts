@@ -1,7 +1,7 @@
-import type { Db } from "../db"
+import type { DB } from "../db/db"
 import type { App, AppSourceType, PaginatedResponse } from "@canette/types"
 import type { Selectable, Updateable } from "kysely"
-import type { Database } from "../db-types"
+import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
 
@@ -43,7 +43,7 @@ function isValidAppSlug(slug: string): boolean {
 // ── Service functions ─────────────────────────────────────────────────────────
 
 export async function isAppSlugAvailable(
-  db: Db,
+  db: DB,
   projectId: string,
   slug: string
 ): Promise<boolean> {
@@ -57,15 +57,16 @@ export async function isAppSlugAvailable(
 }
 
 export async function listApps(
-  db: Db,
+  db: DB,
   projectId: string,
   userId: string
 ): Promise<PaginatedResponse<App> | null> {
   const membership = await db
-    .selectFrom("memberships")
-    .select("user_id")
-    .where("project_id", "=", projectId)
-    .where("user_id", "=", userId)
+    .selectFrom("projects as p")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
+    .select("p.id")
+    .where("p.id", "=", projectId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!membership) return null
 
@@ -89,23 +90,24 @@ export async function listApps(
 }
 
 export async function getAppById(
-  db: Db,
+  db: DB,
   appId: string,
   userId: string
 ): Promise<App | null> {
   const row = await db
     .selectFrom("apps as a")
-    .innerJoin("memberships as m", "m.project_id", "a.project_id")
+    .innerJoin("projects as p", "p.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
     .selectAll("a")
     .where("a.id", "=", appId)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!row) return null
   return mapApp(row)
 }
 
 export async function getAppByRef(
-  db: Db,
+  db: DB,
   projectRef: string,
   appRef: string,
   userId: string
@@ -118,11 +120,11 @@ export async function getAppByRef(
   const row = await db
     .selectFrom("apps as a")
     .innerJoin("projects as p", "p.id", "a.project_id")
-    .innerJoin("memberships as m", "m.project_id", "p.id")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
     .selectAll("a")
     .where(sql.ref(projectCol), "=", projectRef)
     .where(sql.ref(appCol), "=", appRef)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!row) return null
   return mapApp(row)
@@ -156,7 +158,7 @@ function validateGitUrl(url: string): void {
 }
 
 export async function createApp(
-  db: Db,
+  db: DB,
   projectId: string,
   userId: string,
   input: {
@@ -200,15 +202,33 @@ export async function createApp(
   if (input.canetteConfig) validateCanetteConfig(input.canetteConfig)
 
   const membership = await db
-    .selectFrom("memberships")
-    .select("role")
-    .where("project_id", "=", projectId)
-    .where("user_id", "=", userId)
+    .selectFrom("projects as p")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
+    .select(["p.id", "p.team_id"])
+    .where("p.id", "=", projectId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
+
   if (!membership) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
+
+  if (input.gitCredentialId) {
+    const credential = await db
+      .selectFrom("git_credentials")
+      .select("team_id")
+      .where("id", "=", input.gitCredentialId)
+      .executeTakeFirst()
+
+    if (!credential) {
+      throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
+    }
+    // team_id null means system credential — accessible to everyone
+    if (credential.team_id !== null && credential.team_id !== membership.team_id) {
+      throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
+    }
+  }
 
   try {
     await db
@@ -247,7 +267,7 @@ export async function createApp(
 }
 
 export async function updateApp(
-  db: Db,
+  db: DB,
   appId: string,
   userId: string,
   patch: {
@@ -264,6 +284,8 @@ export async function updateApp(
   }
 ): Promise<App | null> {
   const app = await getAppById(db, appId, userId)
+
+  //Does the app exist and the user has access
   if (!app) return null
 
   if (patch.sourceType !== undefined && patch.sourceType !== "git" && patch.sourceType !== "image") {
@@ -287,6 +309,28 @@ export async function updateApp(
         "WEBHOOK_EXISTS",
         400
       )
+    }
+  }
+
+  if (patch.gitCredentialId !== undefined && patch.gitCredentialId !== null) {
+    const project = await db
+      .selectFrom("projects")
+      .select("team_id")
+      .where("id", "=", app.projectId)
+      .executeTakeFirstOrThrow()
+
+    const credential = await db
+      .selectFrom("git_credentials")
+      .select("team_id")
+      .where("id", "=", patch.gitCredentialId)
+      .executeTakeFirst()
+
+    if (!credential) {
+      throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
+    }
+    // team_id null means system credential — accessible to everyone
+    if (credential.team_id !== null && credential.team_id !== project.team_id) {
+      throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
     }
   }
 
@@ -319,7 +363,7 @@ export async function updateApp(
 }
 
 export async function deleteApp(
-  db: Db,
+  db: DB,
   appId: string,
   userId: string
 ): Promise<boolean> {

@@ -46,9 +46,13 @@ The controller reads desired state from the database and reconciles it with the 
 canette generates `HTTPRoute` and `Gateway` resources. Never generate `networking.k8s.io/v1 Ingress` resources. The `gatewayClassName` comes from Helm values and is the only place implementation-specific knowledge lives.
 
 ### Database
-PostgreSQL via the `pg` npm package (TypeScript) and `jackc/pgx/v5` (Go). Schema migrations are managed by `golang-migrate` and run as a Helm pre-upgrade hook Job. Never modify the schema without a migration file.
+PostgreSQL via the `pg` npm package (TypeScript) and `jackc/pgx/v5` (Go). Never modify the schema without a migration file.
 
-Local dev: deploy an in-cluster PostgreSQL instance with `kubectl apply -f labs/postgres.yaml`, then port-forward it with `kubectl port-forward -n canette-system svc/postgres 5432:5432`. Set `DATABASE_URL=postgresql://canette:canette@localhost:5432/canette` in `apps/api/.env`. Run `bun run --cwd apps/api db:migrate` to apply all pending migrations. The migration runner is at `apps/api/scripts/migrate.ts`.
+**Migration files** live in `apps/api/migrations/` as plain SQL — one `{version}_{description}.up.sql` and one `.down.sql` per migration. The version prefix is a zero-padded number (e.g. `000001`). Always use `CURRENT_TIMESTAMP` instead of `NOW()` — it works on both PostgreSQL and SQLite (used in tests).
+
+**Migration runner** (`apps/api/src/db/migrations.ts`) accepts any Kysely `DB` instance, reads the `.up.sql` files in order, splits each file on `;` and executes statements one at a time, and tracks applied versions in a `schema_migrations` table. The runner is invoked at API startup via `apps/api/scripts/migrate.ts`, which reads `MIGRATIONS_DIR` from the environment (defaults to `./migrations` relative to cwd — matches the directory next to the compiled binary).
+
+Local dev: deploy an in-cluster PostgreSQL instance with `kubectl apply -f labs/postgres.yaml`, then port-forward it with `kubectl port-forward -n canette-system svc/postgres 5432:5432`. Set `DATABASE_URL=postgresql://canette:canette@localhost:5432/canette` in `apps/api/.env`. Run `bun run --cwd apps/api db:migrate` to apply all pending migrations.
 
 ### Secrets
 App secrets (env vars) are encrypted at rest with AES-256-GCM. The master key comes from a Kubernetes Secret created at Helm install time. The API server decrypts values at deploy time and creates Kubernetes Secrets in the app's namespace. Secret values are never logged, never returned by the API after being set, and never stored in plaintext.
@@ -260,10 +264,9 @@ Each of these can be built and tested independently before wiring them together.
 
 ## Testing expectations
 
-- API endpoints: integration tests using Bun's built-in test runner against a real PostgreSQL DB
-- Controller and builder: Go tests using `envtest` (no real cluster needed for unit tests)
-- UI: Playwright for critical flows (create project, deploy app, view logs)
-- Do not mock the database in tests — use a real PostgreSQL instance with migrations applied
+- **API service tests**: unit tests using an in-memory SQLite database via Kysely. Test files live in `apps/api/tests/` mirroring the `src/` structure (e.g. `tests/services/apps.test.ts`). Use `createTestDb()` from `tests/utils/sqlite.ts` which wraps `bun:sqlite` with a shim that adds the `reader` boolean Kysely's `SqliteDialect` requires. Call `runMigrations(db, ...)` in `beforeAll` to apply the full schema before inserting fixtures. Run with `bun test` from `apps/api/`. Type-check test files with `bun run typecheck:test` (uses `tsconfig.test.json` which includes `bun-types`).
+- **Controller and builder**: Go tests using `envtest` (no real cluster needed for unit tests)
+- **UI**: Playwright for critical flows (create project, deploy app, view logs)
 
 ---
 

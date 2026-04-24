@@ -1,7 +1,7 @@
-import type { Db } from "../db"
-import type { AdminAppSummary, AdminProjectOverview, DeploymentStatus, ResourceDefaults, ScanPolicy, SyncResult, User, UserRole, WebhookSettings } from "@canette/types"
+import type { DB } from "../db/db"
+import type { AdminAppSummary, AdminProjectOverview, AdminTeamOverview, DeploymentStatus, ResourceDefaults, ScanPolicy, SyncResult, User, UserRole, WebhookSettings } from "@canette/types"
 import type { Selectable } from "kysely"
-import type { Database } from "../db-types"
+import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
 
@@ -22,7 +22,7 @@ function mapUser(row: UserRow): User {
 }
 
 export async function getCurrentUser(
-  db: Db,
+  db: DB,
   userId: string
 ): Promise<(User & { hasPassword: boolean }) | null> {
   const [userRow, accountRow] = await Promise.all([
@@ -44,7 +44,7 @@ export async function getCurrentUser(
 }
 
 export async function updateCurrentUser(
-  db: Db,
+  db: DB,
   userId: string,
   patch: { name: string }
 ): Promise<User> {
@@ -61,7 +61,7 @@ export async function updateCurrentUser(
   return mapUser(row)
 }
 
-export async function listUsers(db: Db): Promise<User[]> {
+export async function listUsers(db: DB): Promise<User[]> {
   const rows = await db
     .selectFrom("user")
     .select(["id", "name", "email", "image", "role", "createdAt"])
@@ -71,7 +71,7 @@ export async function listUsers(db: Db): Promise<User[]> {
 }
 
 export async function updateUserRole(
-  db: Db,
+  db: DB,
   id: string,
   role: UserRole,
   requesterId: string
@@ -97,12 +97,26 @@ export async function updateUserRole(
 }
 
 export async function deleteUser(
-  db: Db,
+  db: DB,
   id: string,
   requesterId: string
 ): Promise<boolean> {
   if (id === requesterId) {
     throw new ServiceError("Cannot delete your own account", "FORBIDDEN", 403)
+  }
+  // Block deletion if the user owns any team — admin must delete the team first.
+  const ownedTeam = await db
+    .selectFrom("teams")
+    .select("name")
+    .where("owner_id", "=", id)
+    .limit(1)
+    .executeTakeFirst()
+  if (ownedTeam) {
+    throw new ServiceError(
+      `Cannot delete this user: they own the team "${ownedTeam.name}". Delete or transfer ownership of the team first.`,
+      "CONFLICT",
+      409
+    )
   }
   const result = await db
     .deleteFrom("user")
@@ -124,11 +138,12 @@ interface AppOverviewRow {
   latest_deployment_at: string | null
 }
 
-export async function getProjectsOverview(db: Db): Promise<AdminProjectOverview[]> {
+export async function getProjectsOverview(db: DB): Promise<AdminProjectOverview[]> {
   const projects = await db
-    .selectFrom("projects")
-    .select(["id", "name", "slug", "created_at"])
-    .orderBy("created_at", "asc")
+    .selectFrom("projects as p")
+    .innerJoin("teams as t", "t.id", "p.team_id")
+    .select(["p.id", "p.name", "p.slug", "p.created_at", "t.name as team_name"])
+    .orderBy("p.created_at", "asc")
     .execute()
 
   if (projects.length === 0) return []
@@ -169,6 +184,7 @@ export async function getProjectsOverview(db: Db): Promise<AdminProjectOverview[
     id: p.id,
     name: p.name,
     slug: p.slug,
+    teamName: (p as typeof p & { team_name: string }).team_name,
     createdAt: p.created_at,
     apps: appsByProject.get(p.id) ?? [],
   }))
@@ -176,7 +192,7 @@ export async function getProjectsOverview(db: Db): Promise<AdminProjectOverview[
 
 // ── Scan policy ───────────────────────────────────────────────────────────────
 
-export async function getScanPolicy(db: Db): Promise<ScanPolicy> {
+export async function getScanPolicy(db: DB): Promise<ScanPolicy> {
   const rows = await db
     .selectFrom("admin_settings")
     .select(["key", "value"])
@@ -191,7 +207,7 @@ export async function getScanPolicy(db: Db): Promise<ScanPolicy> {
 }
 
 export async function updateScanPolicy(
-  db: Db,
+  db: DB,
   patch: Partial<ScanPolicy>
 ): Promise<ScanPolicy> {
   const now = new Date().toISOString()
@@ -246,7 +262,7 @@ export function getWebhookSettings(): WebhookSettings {
 
 // ── Reset stuck builds ────────────────────────────────────────────────────────
 
-export async function resetStuckBuilds(db: Db): Promise<SyncResult> {
+export async function resetStuckBuilds(db: DB): Promise<SyncResult> {
   const now = new Date().toISOString()
   const result = await db
     .updateTable("deployments")
@@ -269,7 +285,7 @@ export async function resetStuckBuilds(db: Db): Promise<SyncResult> {
 
 // ── Force sync ────────────────────────────────────────────────────────────────
 
-export async function forceSyncLiveApps(db: Db): Promise<SyncResult> {
+export async function forceSyncLiveApps(db: DB): Promise<SyncResult> {
   const now = new Date().toISOString()
   // Reset the latest-live deployment for every app back to 'deploying'.
   // The controller picks it up on the next poll and re-applies K8s manifests.

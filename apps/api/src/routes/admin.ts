@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto"
 import { Hono } from "hono"
-import { db } from "../db"
-import { auth } from "../auth"
+import { db } from "../db/db"
+import { auth } from "../auth/auth"
 import { requireAuth } from "../middleware/require-auth"
 import { requireAdmin } from "../middleware/require-admin"
 import type { AppEnv } from "../types"
@@ -18,6 +18,7 @@ import {
   updateScanPolicy,
   updateUserRole,
 } from "../services/admin"
+import { listTeamsOverview } from "../services/teams"
 import type { ScanPolicy, UserRole } from "@canette/types"
 
 function generatePassword(): string {
@@ -102,6 +103,13 @@ adminRouter.delete("/users/:id", async (c) => {
 adminRouter.get("/overview", async (c) => {
   const overview = await getProjectsOverview(db)
   return c.json(overview)
+})
+
+// All teams with member and project counts
+// GET /api/v1/admin/teams
+adminRouter.get("/teams", async (c) => {
+  const teams = await listTeamsOverview(db)
+  return c.json(teams)
 })
 
 // Force-sync: re-queue all live apps for reconciliation

@@ -1,4 +1,4 @@
 {
   "title": "canette",
-  "pages": ["index", "getting-started", "concepts", "configuration", "self-hosting"]
+  "pages": ["index", "getting-started", "concepts", "configuration", "self-hosting", "security", "troubleshooting"]
 }

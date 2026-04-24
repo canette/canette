@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils"
 
 const NAV_ITEMS = [
   { href: "/dashboard/settings/profile", label: "Profile" },
-  { href: "/dashboard/settings/credentials", label: "Git Credentials" },
 ]
 
 export function SettingsNav() {

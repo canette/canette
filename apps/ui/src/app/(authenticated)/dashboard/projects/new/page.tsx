@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import * as api from "@/lib/api"
+import type { Team } from "@canette/types"
 
 function toSlug(name: string): string {
   return name
@@ -28,6 +30,17 @@ export default function NewProjectPage() {
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const [teams, setTeams] = useState<Team[]>([])
+  const [teamId, setTeamId] = useState<string>("")
+
+  // Load user's teams
+  useEffect(() => {
+    api.teams.list().then((data) => {
+      setTeams(data)
+      if (data.length > 0) setTeamId(data[0].id)
+    }).catch(() => {})
+  }, [])
 
   // Auto-derive slug from name unless user has manually edited it
   useEffect(() => {
@@ -60,22 +73,20 @@ export default function NewProjectPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (slugState !== "available") return
+    if (slugState !== "available" || !teamId) return
     setError("")
     setSubmitting(true)
 
     try {
-      const res = await fetch("/api/v1/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ name: name.trim(), slug, description: description.trim() || undefined }),
+      const data = await api.projects.create({
+        teamId,
+        name: name.trim(),
+        slug,
+        description: description.trim() || undefined,
       })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Something went wrong"); return }
       router.push(`/dashboard/projects/${data.slug}`)
-    } catch {
-      setError("Network error — please try again")
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Something went wrong")
     } finally {
       setSubmitting(false)
     }
@@ -89,7 +100,7 @@ export default function NewProjectPage() {
     invalid: <span className="text-destructive">Lowercase letters, numbers and hyphens only; cannot start or end with a hyphen</span>,
   }[slugState]
 
-  const canSubmit = !!name.trim() && slugState === "available" && !submitting
+  const canSubmit = !!name.trim() && slugState === "available" && !!teamId && !submitting
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -111,6 +122,25 @@ export default function NewProjectPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+              {/* Team selector — only shown when user has multiple teams */}
+              {teams.length > 1 && (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="team">Team</Label>
+                  <select
+                    id="team"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    value={teamId}
+                    onChange={(e) => setTeamId(e.target.value)}
+                  >
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}{t.isPersonal ? " (personal)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="name">Name</Label>
                 <Input
@@ -125,7 +155,7 @@ export default function NewProjectPage() {
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="slug">
                   Slug
-                  <span className="ml-2 text-xs text-muted-foreground font-normal">(used in you app URLs)</span>
+                  <span className="ml-2 text-xs text-muted-foreground font-normal">(used in your app URLs)</span>
                 </Label>
                 <Input
                   id="slug"

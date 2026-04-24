@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/app-shell"
-import { ProjectList } from "./project-list"
+import { ProjectList } from "@/components/project-list"
 
 export default function DashboardPage() {
   return (

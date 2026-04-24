@@ -16,7 +16,7 @@ export const passwordPolicyPlugin = () => ({
   hooks: {
     before: [
       {
-        matcher: (ctx: { path: string }) =>
+        matcher: (ctx: { path?: string }) =>
           ctx.path === "/sign-up/email" || ctx.path === "/change-password",
         handler: createAuthMiddleware(async (ctx) => {
           const password = ctx.body?.newPassword ?? ctx.body?.password

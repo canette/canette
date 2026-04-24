@@ -53,11 +53,10 @@ export default function NewAppPage() {
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    fetch(`/api/v1/projects/${projectSlug}`, { credentials: "include" })
-      .then((r) => r.json())
+    api.projects.get(projectSlug)
       .then(setProject)
       .catch(() => setError("Failed to load project"))
-    api.credentials.list().then(setCredentials).catch(() => {})
+    api.projects.listCredentials(projectSlug).then(setCredentials).catch(() => {})
   }, [projectSlug])
 
   useEffect(() => {

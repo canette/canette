@@ -1,0 +1,52 @@
+---
+title: Teams
+description: Teams are the ownership and access-control boundary in canette. Every project and its apps belong to exactly one team.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+A **team** is the ownership and access-control boundary in canette. Projects, apps, and git credentials all belong to a team, and every member of a team has full access to everything in it.
+
+## Personal teams
+
+When you register, canette automatically creates a **personal team** named after you (e.g. *"Alice's team"*). Your personal team works exactly like any other team — it holds your projects and credentials — but it cannot be renamed or deleted.
+
+For solo developers nothing changes: you work inside your personal team without ever thinking about team management.
+
+## Shared teams
+
+A global admin can create additional teams and add users to them. This is the mechanism for giving multiple people access to the same projects and apps.
+
+All members of a shared team have equal, full access to every project and app in that team. There are no per-project or per-app permission levels within a team.
+
+## Git credentials
+
+Git credentials (personal access tokens, SSH keys, GitHub App installations) are scoped to a team. Any member of the team can use a team credential when creating or configuring an app.
+
+System credentials (e.g. a cluster-wide GitHub App) have no team owner and are visible read-only to all users.
+
+## Team management
+
+| Action | Who can do it |
+|---|---|
+| View team members and credentials | Any team member |
+| Add / rotate / delete a team credential | Any team member |
+| Create a shared team | Global admin only |
+| Add or remove team members | Global admin only |
+| Delete a shared team | Global admin only (team must have no projects) |
+
+<Callout type="info">
+  A user who owns a team cannot be deleted until an admin removes the team first.
+</Callout>
+
+## Relationship to projects
+
+```
+Team
+└── Project
+    └── App
+```
+
+A project belongs to exactly one team. Moving a project between teams is not supported — create a new project in the target team instead.
+
+When you create a project you choose which team owns it. If you are only a member of one team (your personal team), the selector is skipped and canette assigns it automatically.

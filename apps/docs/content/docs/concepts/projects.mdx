@@ -5,7 +5,7 @@ description: A project is the top-level organisational unit in canette, grouping
 
 import { Callout } from "fumadocs-ui/components/callout"
 
-A **project** is the top-level organisational unit in canette. It groups related apps and controls who has access to them.
+A **project** is an organisational unit that groups related apps. Projects belong to a [team](/docs/concepts/teams) — access to a project is granted by being a member of its team.
 
 <Callout type="info">
   This page is a work in progress.
@@ -13,13 +13,10 @@ A **project** is the top-level organisational unit in canette. It groups related
 
 ## What a project contains
 
-- One or more **apps** (each app maps to a Git repository)
-- **Members** with `admin` or `developer` roles
-- **Git credentials** shared across apps in the project
+- One or more **apps** (each app maps to a Git repository or container image)
 
-## Roles
+## Access control
 
-| Role | Can do |
-|---|---|
-| `admin` | Create/delete apps, manage members, manage credentials |
-| `developer` | Trigger deployments, view logs |
+Access to a project is inherited entirely from team membership. All members of the owning team have full access to every project and app in that team. There are no per-project roles.
+
+See [Teams](/docs/concepts/teams) for details on how to manage access.
