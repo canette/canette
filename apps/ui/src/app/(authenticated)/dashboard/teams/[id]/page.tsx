@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState, use } from "react"
+import { useEffect, useState, useCallback, use } from "react"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -72,7 +73,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [savingCred, setSavingCred] = useState(false)
   const [editCredError, setEditCredError] = useState("")
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const [teamData, credData] = await Promise.all([
         api.teams.get(teamId),
@@ -84,9 +85,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     } finally {
       setLoading(false)
     }
-  }
+  }, [teamId])
 
-  useEffect(() => { load() }, [teamId])
+  useEffect(() => { load() }, [load])
 
   async function handleAddMember(e: React.FormEvent) {
     e.preventDefault()
@@ -196,9 +197,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     >
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-start gap-3">
-          <a href="/dashboard/teams" className="text-muted-foreground hover:text-foreground transition-colors mt-1">
+          <Link href="/dashboard/teams" className="text-muted-foreground hover:text-foreground transition-colors mt-1">
             <ArrowLeft size={18} />
-          </a>
+          </Link>
           <div>
             <h1 className="text-xl font-semibold">{team.name}</h1>
           </div>

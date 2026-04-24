@@ -1,6 +1,7 @@
 "use client"
 
 import Image from "next/image"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { signOut } from "@/lib/auth-client"
 import { useCurrentUser } from "@/lib/session-context"
@@ -64,7 +65,7 @@ export function UserMenu() {
           <a href="/dashboard/settings/profile">Profile</a>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <a href="/dashboard/teams">Teams</a>
+          <Link href="/dashboard/teams">Teams</Link>
         </DropdownMenuItem>
         {isAdmin && (
           <>

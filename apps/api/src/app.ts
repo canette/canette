@@ -12,9 +12,8 @@ import { webhooksRouter } from "./routes/webhooks"
 import { webhookReceiverRouter } from "./routes/webhook-receiver"
 import { adminRouter } from "./routes/admin"
 import { usersRouter } from "./routes/users"
-import type { DB } from "./db/db";
 
-export function createApp(db: DB) {
+export function createApp() {
     const app = new Hono()
 
     app.use("*", logger())

@@ -345,6 +345,12 @@ The current secret input is a single-line field, making it impractical to paste 
 
 ---
 
+## Runtime and package manager
+
+Always use `bun` and `bun x` for running scripts and executing packages. Do not use `node`, `npm`, or `npx` — they are not installed on this machine.
+
+---
+
 ## Things to never do
 
 - Never log secret values, tokens, or credentials at any log level

@@ -1,5 +1,5 @@
 import type { DB } from "../db/db"
-import type { AdminAppSummary, AdminProjectOverview, AdminTeamOverview, DeploymentStatus, ResourceDefaults, ScanPolicy, SyncResult, User, UserRole, WebhookSettings } from "@canette/types"
+import type { AdminAppSummary, AdminProjectOverview, DeploymentStatus, ResourceDefaults, ScanPolicy, SyncResult, User, UserRole, WebhookSettings } from "@canette/types"
 import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"

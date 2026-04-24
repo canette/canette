@@ -7,8 +7,6 @@ import { ServiceError } from "./errors"
 // ── Internal row types ────────────────────────────────────────────────────────
 
 type TeamRow = Selectable<Database["teams"]>
-type TeamMemberRow = Selectable<Database["team_members"]>
-type UserRow = Pick<Selectable<Database["user"]>, "id" | "name" | "email" | "image">
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
 

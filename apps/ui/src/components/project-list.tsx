@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import type { Project } from "@canette/types"
 
@@ -27,12 +28,12 @@ export function ProjectList() {
           deployed independently from a Git repository or a Docker image.
         </p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <a href="/dashboard/projects/new" className="block group">
+          <Link href="/dashboard/projects/new" className="block group">
             <div className="h-full rounded-lg border-2 border-dashed border-border group-hover:border-foreground/30 transition-colors flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground group-hover:text-foreground">
               <span className="text-3xl font-light leading-none">+</span>
               <span className="text-sm font-medium">Create project</span>
             </div>
-          </a>
+          </Link>
         </div>
       </div>
     )
