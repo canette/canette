@@ -11,6 +11,16 @@ import { Callout } from "fumadocs-ui/components/callout"
 
 The default Helm installation is designed to get you up and running quickly — it bundles PostgreSQL and an in-cluster image registry so nothing extra is required. For production use, you should replace both with dedicated external services.
 
+## Keep image versions in sync with the chart
+
+canette is a distributed system — the API, UI, builder, controller, and logstreamer all communicate with each other and share a database schema. Component versions must move together.
+
+The Helm chart handles this automatically: the default `image.tag` is the chart's own `appVersion`, so installing or upgrading the chart always pulls the matching set of images. **Do not override `image.tag` in production unless you have a specific reason to.**
+
+<Callout type="warn">
+  **Never pin to `:edge` in production.** The `edge` tag is rebuilt on every commit to `main` and is not immutable — a pod restart (node eviction, OOM kill, rolling update) can silently pull a newer image and leave your cluster running a mix of incompatible versions. The `edge` tag exists for development and testing against the latest changes only.
+</Callout>
+
 ## Use an external database
 
 The bundled PostgreSQL instance has no persistent storage configured by default and is not suitable for production. Replace it with a managed database or a self-hosted PostgreSQL instance you operate separately.
