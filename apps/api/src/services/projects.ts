@@ -1,7 +1,7 @@
-import type { Db } from "../db"
+import type { DB } from "../db/db"
 import type { PaginatedResponse, Project } from "@canette/types"
 import type { Selectable, Updateable } from "kysely"
-import type { Database } from "../db-types"
+import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
 
@@ -14,10 +14,11 @@ type ProjectRow = Selectable<Database["projects"]>
 function mapProject(row: ProjectRow): Project {
   return {
     id: row.id,
+    teamId: row.team_id,
     name: row.name,
     slug: row.slug,
     description: row.description ?? undefined,
-    createdBy: row.created_by ?? "",
+    createdBy: row.created_by ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -29,17 +30,29 @@ function isValidProjectSlug(slug: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,49}$/.test(slug) && !slug.endsWith("-")
 }
 
+// ── Team membership check ─────────────────────────────────────────────────────
+
+async function isTeamMember(db: DB, teamId: string, userId: string): Promise<boolean> {
+  const row = await db
+    .selectFrom("team_members")
+    .select("id")
+    .where("team_id", "=", teamId)
+    .where("user_id", "=", userId)
+    .executeTakeFirst()
+  return !!row
+}
+
 // ── Service functions ─────────────────────────────────────────────────────────
 
 export async function listProjects(
-  db: Db,
+  db: DB,
   userId: string
 ): Promise<PaginatedResponse<Project>> {
   const rows = await db
     .selectFrom("projects as p")
-    .innerJoin("memberships as m", "m.project_id", "p.id")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
     .selectAll("p")
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .orderBy("p.created_at", "desc")
     .execute()
   const items = rows.map(mapProject)
@@ -47,7 +60,7 @@ export async function listProjects(
 }
 
 export async function getProjectByRef(
-  db: Db,
+  db: DB,
   ref: string,
   userId: string
 ): Promise<Project | null> {
@@ -55,16 +68,16 @@ export async function getProjectByRef(
   const col = isUuid ? "p.id" : "p.slug"
   const row = await db
     .selectFrom("projects as p")
-    .innerJoin("memberships as m", "m.project_id", "p.id")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
     .selectAll("p")
     .where(sql.ref(col), "=", ref)
-    .where("m.user_id", "=", userId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!row) return null
   return mapProject(row)
 }
 
-export async function isProjectSlugAvailable(db: Db, slug: string): Promise<boolean> {
+export async function isProjectSlugAvailable(db: DB, slug: string): Promise<boolean> {
   const row = await db
     .selectFrom("projects")
     .select("id")
@@ -74,9 +87,9 @@ export async function isProjectSlugAvailable(db: Db, slug: string): Promise<bool
 }
 
 export async function createProject(
-  db: Db,
+  db: DB,
   userId: string,
-  input: { name: string; slug: string; description?: string }
+  input: { teamId: string; name: string; slug: string; description?: string }
 ): Promise<Project> {
   if (!input.name?.trim()) {
     throw new ServiceError("name is required", "VALIDATION_ERROR", 400)
@@ -88,37 +101,32 @@ export async function createProject(
       400
     )
   }
+  if (!input.teamId) {
+    throw new ServiceError("teamId is required", "VALIDATION_ERROR", 400)
+  }
+
+  const member = await isTeamMember(db, input.teamId, userId)
+  if (!member) {
+    throw new ServiceError("Team not found", "NOT_FOUND", 404)
+  }
 
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
-  const membershipId = crypto.randomUUID()
 
   try {
-    await db.transaction().execute(async (trx) => {
-      await trx
-        .insertInto("projects")
-        .values({
-          id,
-          name: input.name.trim(),
-          slug: input.slug,
-          description: input.description ?? null,
-          created_by: userId,
-          created_at: now,
-          updated_at: now,
-        })
-        .execute()
-
-      await trx
-        .insertInto("memberships")
-        .values({
-          id: membershipId,
-          project_id: id,
-          user_id: userId,
-          role: "admin",
-          created_at: now,
-        })
-        .execute()
-    })
+    await db
+      .insertInto("projects")
+      .values({
+        id,
+        team_id: input.teamId,
+        name: input.name.trim(),
+        slug: input.slug,
+        description: input.description ?? null,
+        created_by: userId,
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("UNIQUE")) {
       throw new ServiceError("A project with that slug already exists", "CONFLICT", 409)
@@ -135,18 +143,20 @@ export async function createProject(
 }
 
 export async function updateProject(
-  db: Db,
+  db: DB,
   projectId: string,
   userId: string,
   patch: { name?: string; description?: string; slug?: string }
 ): Promise<Project> {
-  const membership = await db
-    .selectFrom("memberships")
-    .select("role")
-    .where("project_id", "=", projectId)
-    .where("user_id", "=", userId)
+  // Access check via team membership
+  const project = await db
+    .selectFrom("projects as p")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
+    .select("p.slug")
+    .where("p.id", "=", projectId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
-  if (!membership) throw new ServiceError("Not found", "NOT_FOUND", 404)
+  if (!project) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
   if (patch.slug !== undefined && !isValidProjectSlug(patch.slug)) {
     throw new ServiceError(
@@ -156,17 +166,10 @@ export async function updateProject(
     )
   }
 
-  // Read current slug before any update so we can detect a change and queue cleanup.
-  const current = await db
-    .selectFrom("projects")
-    .select("slug")
-    .where("id", "=", projectId)
-    .executeTakeFirstOrThrow()
-  const slugChanging = patch.slug !== undefined && patch.slug !== current.slug
+  const slugChanging = patch.slug !== undefined && patch.slug !== project.slug
 
   if (slugChanging) {
     // Block rename if any app still has an active (non-stopped) deployment.
-    // The correlated subquery finding the latest deployment per app is kept as sql tag.
     const countResult = await sql<{ count: string }>`
       SELECT COUNT(*) as count FROM apps a
       INNER JOIN deployments d ON d.app_id = a.id
@@ -204,9 +207,7 @@ export async function updateProject(
   }
 
   if (slugChanging) {
-    const oldNamespace = `can-${projectId.slice(0, 7)}-${current.slug.slice(0, 50)}`
-    // Prevent ClaimTeardown from trying to delete resources in the old (now-orphaned) namespace
-    // using the new slug. The old namespace will be deleted by the controller instead.
+    const oldNamespace = `can-${projectId.slice(0, 7)}-${project.slug.slice(0, 50)}`
     await db
       .updateTable("deployments")
       .set({ applied_manifest: null })
@@ -218,7 +219,6 @@ export async function updateProject(
       )
       .execute()
 
-    // Queue the old namespace for deletion by the controller.
     await db
       .insertInto("pending_namespace_deletions")
       .values({ id: crypto.randomUUID(), namespace: oldNamespace, created_at: new Date().toISOString() })
@@ -235,20 +235,18 @@ export async function updateProject(
 }
 
 export async function deleteProject(
-  db: Db,
+  db: DB,
   projectId: string,
   userId: string
 ): Promise<void> {
-  const membership = await db
-    .selectFrom("memberships")
-    .select("role")
-    .where("project_id", "=", projectId)
-    .where("user_id", "=", userId)
+  const project = await db
+    .selectFrom("projects as p")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
+    .select("p.id")
+    .where("p.id", "=", projectId)
+    .where("tm.user_id", "=", userId)
     .executeTakeFirst()
-  if (!membership) throw new ServiceError("Not found", "NOT_FOUND", 404)
-  if (membership.role !== "admin") {
-    throw new ServiceError("Only admins can delete projects", "FORBIDDEN", 403)
-  }
+  if (!project) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
   const result = await db
     .selectFrom("apps")

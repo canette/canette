@@ -1,5 +1,5 @@
 import { createMiddleware } from "hono/factory"
-import { auth } from "../auth"
+import { auth } from "../auth/auth"
 
 // Requires the session to belong to a global admin user.
 // Must be applied AFTER requireAuth so the session is already on the context.

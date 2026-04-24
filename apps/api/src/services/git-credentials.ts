@@ -1,8 +1,8 @@
-import type { Db } from "../db"
+import type { DB } from "../db/db"
 import type { GitCredential, GitProvider, GitCredentialType } from "@canette/types"
 import type { Selectable } from "kysely"
-import type { Database } from "../db-types"
-import { encrypt } from "../crypto"
+import type { Database } from "../db/types"
+import { encrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
 
 // ── Internal row type ─────────────────────────────────────────────────────────
@@ -12,7 +12,7 @@ type GitCredentialRow = Selectable<Database["git_credentials"]>
 function mapCredential(row: GitCredentialRow): GitCredential {
   return {
     id: row.id,
-    userId: row.user_id,
+    teamId: row.team_id,
     name: row.name,
     provider: row.provider as GitProvider,
     type: row.type as GitCredentialType,
@@ -23,7 +23,7 @@ function mapCredential(row: GitCredentialRow): GitCredential {
 
 // ── System credential ─────────────────────────────────────────────────────────
 
-// System credentials (e.g. cluster GitHub App) have user_id = NULL — they are
+// System credentials (e.g. cluster GitHub App) have team_id = NULL — they are
 // owned by canette itself, visible to all users, and cannot be created, updated,
 // or deleted through the user-facing API.
 const GITHUB_APP_CREDENTIAL_ID = "github-app-cluster"
@@ -31,14 +31,14 @@ const GITHUB_APP_CREDENTIAL_ID = "github-app-cluster"
 // initSystemCredentials upserts or removes the cluster GitHub App credential
 // based on whether GITHUB_APP_ID is present in the environment.
 // Call once at API startup.
-export async function initSystemCredentials(db: Db): Promise<void> {
+export async function initSystemCredentials(db: DB): Promise<void> {
   if (process.env.GITHUB_APP_ID) {
     const now = new Date().toISOString()
     await db
       .insertInto("git_credentials")
       .values({
         id: GITHUB_APP_CREDENTIAL_ID,
-        user_id: null,
+        team_id: null,
         name: "GitHub App",
         provider: "github",
         type: "github_app",
@@ -56,26 +56,48 @@ export async function initSystemCredentials(db: Db): Promise<void> {
   }
 }
 
+// ── Access helpers ────────────────────────────────────────────────────────────
+
+// Returns true if userId is a member of the given team.
+async function isTeamMember(db: DB, teamId: string, userId: string): Promise<boolean> {
+  const row = await db
+    .selectFrom("team_members")
+    .select("id")
+    .where("team_id", "=", teamId)
+    .where("user_id", "=", userId)
+    .executeTakeFirst()
+  return !!row
+}
+
 // ── Service functions ─────────────────────────────────────────────────────────
 
-export async function listCredentials(
-  db: Db,
+// List credentials for a specific team + system credentials.
+// Returns null if the user is not a member of the team.
+export async function listTeamCredentials(
+  db: DB,
+  teamId: string,
   userId: string
-): Promise<GitCredential[]> {
+): Promise<GitCredential[] | null> {
+  const member = await isTeamMember(db, teamId, userId)
+  if (!member) return null
+
   const rows = await db
     .selectFrom("git_credentials")
     .selectAll()
-    .where((eb) => eb.or([
-      eb("user_id", "=", userId),
-      eb("user_id", "is", null),
-    ]))
+    .where((eb) =>
+      eb.or([
+        eb("team_id", "=", teamId),
+        eb("team_id", "is", null),
+      ])
+    )
     .orderBy("created_at", "desc")
     .execute()
   return rows.map(mapCredential)
 }
 
 export async function createCredential(
-  db: Db,
+  db: DB,
+  teamId: string,
   userId: string,
   input: {
     name: string
@@ -88,6 +110,9 @@ export async function createCredential(
   if (!input.name?.trim()) throw new ServiceError("name is required", "VALIDATION_ERROR", 400)
   if (input.type === "github_app") throw new ServiceError("GitHub App credentials are managed automatically by canette", "NOT_ALLOWED", 422)
   if (!input.value?.trim()) throw new ServiceError("value is required", "VALIDATION_ERROR", 400)
+
+  const member = await isTeamMember(db, teamId, userId)
+  if (!member) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
   if (input.sshKnownHosts !== undefined && input.sshKnownHosts !== null) {
     if (Buffer.byteLength(input.sshKnownHosts, "utf8") > 10 * 1024) {
@@ -121,7 +146,7 @@ export async function createCredential(
       .insertInto("git_credentials")
       .values({
         id,
-        user_id: userId,
+        team_id: teamId,
         name: input.name.trim(),
         provider: input.provider,
         type: input.type,
@@ -146,16 +171,20 @@ export async function createCredential(
 }
 
 export async function updateCredential(
-  db: Db,
+  db: DB,
+  teamId: string,
   userId: string,
   id: string,
   input: { value: string }
 ): Promise<GitCredential | null> {
+  const member = await isTeamMember(db, teamId, userId)
+  if (!member) return null
+
   const existing = await db
     .selectFrom("git_credentials")
     .selectAll()
     .where("id", "=", id)
-    .where("user_id", "=", userId)
+    .where("team_id", "=", teamId)
     .executeTakeFirst()
   if (!existing) return null
 
@@ -186,20 +215,37 @@ export async function updateCredential(
 }
 
 export async function deleteCredential(
-  db: Db,
+  db: DB,
+  teamId: string,
   userId: string,
   id: string
 ): Promise<boolean> {
+  const member = await isTeamMember(db, teamId, userId)
+  if (!member) return false
+
   const existing = await db
     .selectFrom("git_credentials")
-    .select(["id", "user_id"])
+    .select(["id", "team_id"])
     .where("id", "=", id)
+    .where("team_id", "=", teamId)
     .executeTakeFirst()
-  if (!existing || existing.user_id == null || existing.user_id !== userId) return false
+  if (!existing) return false
 
-  await db
-    .deleteFrom("git_credentials")
-    .where("id", "=", id)
-    .execute()
+  // Block deletion if any app still references this credential.
+  const appRef = await db
+    .selectFrom("apps")
+    .select("id")
+    .where("git_credential_id", "=", id)
+    .limit(1)
+    .executeTakeFirst()
+  if (appRef) {
+    throw new ServiceError(
+      "Cannot delete a credential that is referenced by an app. Update the app first.",
+      "CONFLICT",
+      409
+    )
+  }
+
+  await db.deleteFrom("git_credentials").where("id", "=", id).execute()
   return true
 }

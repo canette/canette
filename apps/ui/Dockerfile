@@ -11,7 +11,7 @@ COPY apps/docs/package.json apps/docs/
 FROM base AS builder
 
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
 COPY packages/types packages/types
 COPY apps/ui apps/ui
@@ -21,12 +21,14 @@ RUN bun run --cwd apps/ui build
 FROM base AS runner
 
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
-RUN bun install --frozen-lockfile --production
+RUN bun install --frozen-lockfile --ignore-scripts
+#RUN bun install --frozen-lockfile --production
 
 COPY packages/types/src packages/types/src
 COPY packages/types/package.json packages/types/
 COPY apps/ui/package.json apps/ui/
 COPY apps/ui/next.config.ts apps/ui/
+COPY --from=builder /app/apps/ui/node_modules apps/ui/node_mudules
 COPY --from=builder /app/apps/ui/.next apps/ui/.next
 COPY --from=builder /app/apps/ui/public apps/ui/public
 

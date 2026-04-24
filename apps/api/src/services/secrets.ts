@@ -1,8 +1,8 @@
-import type { Db } from "../db"
+import type { DB } from "../db/db"
 import type { AppSecret } from "@canette/types"
 import type { Selectable } from "kysely"
-import type { Database } from "../db-types"
-import { encrypt } from "../crypto"
+import type { Database } from "../db/types"
+import { encrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
@@ -29,7 +29,7 @@ function isValidKey(key: string): boolean {
 // ── Service functions ─────────────────────────────────────────────────────────
 // Callers must verify app access (via getAppById) before calling these.
 
-export async function listSecrets(db: Db, appId: string): Promise<AppSecret[]> {
+export async function listSecrets(db: DB, appId: string): Promise<AppSecret[]> {
   const rows = await db
     .selectFrom("secrets")
     .selectAll()
@@ -40,7 +40,7 @@ export async function listSecrets(db: Db, appId: string): Promise<AppSecret[]> {
 }
 
 export async function upsertSecret(
-  db: Db,
+  db: DB,
   appId: string,
   key: string,
   value: string
@@ -75,7 +75,7 @@ export async function upsertSecret(
 }
 
 export async function deleteSecret(
-  db: Db,
+  db: DB,
   appId: string,
   key: string
 ): Promise<boolean> {

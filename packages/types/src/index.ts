@@ -13,12 +13,31 @@ export interface User {
   hasPassword?: boolean
 }
 
+export interface Team {
+  id: string
+  name: string
+  isPersonal: boolean
+  ownerId: string
+  memberCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TeamMember {
+  userId: string
+  name: string
+  email: string
+  image?: string
+  joinedAt: string
+}
+
 export interface Project {
   id: string
+  teamId: string
   name: string
   slug: string
   description?: string
-  createdBy: string
+  createdBy?: string
   createdAt: string
   updatedAt: string
 }
@@ -28,7 +47,7 @@ export type GitCredentialType = "pat" | "ssh_key" | "github_app"
 
 export interface GitCredential {
   id: string
-  userId: string | null  // null for system credentials (e.g. cluster GitHub App)
+  teamId: string | null  // null for system credentials (e.g. cluster GitHub App)
   name: string
   provider: GitProvider
   type: GitCredentialType
@@ -156,8 +175,18 @@ export interface AdminProjectOverview {
   id: string
   name: string
   slug: string
+  teamName: string
   createdAt: string
   apps: AdminAppSummary[]
+}
+
+export interface AdminTeamOverview {
+  id: string
+  name: string
+  isPersonal: boolean
+  memberCount: number
+  projectCount: number
+  createdAt: string
 }
 
 export interface ResourceDefaults {

@@ -29,13 +29,23 @@ func GenerateInstallationToken(ctx context.Context) (string, error) {
 	installID := os.Getenv("GITHUB_APP_INSTALLATION_ID")
 	privateKeyPEM := os.Getenv("GITHUB_APP_PRIVATE_KEY")
 
-	if appID == "" || installID == "" || privateKeyPEM == "" {
-		return "", fmt.Errorf("GitHub App not configured (missing GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, or GITHUB_APP_PRIVATE_KEY)")
+	var missing []string
+	if appID == "" {
+		missing = append(missing, "GITHUB_APP_ID")
+	}
+	if installID == "" {
+		missing = append(missing, "GITHUB_APP_INSTALLATION_ID")
+	}
+	if privateKeyPEM == "" {
+		missing = append(missing, "GITHUB_APP_PRIVATE_KEY")
+	}
+	if len(missing) > 0 {
+		return "", fmt.Errorf("GitHub App not configured (missing env vars: %s)", strings.Join(missing, ", "))
 	}
 
 	jwt, err := signJWT(appID, privateKeyPEM)
 	if err != nil {
-		return "", fmt.Errorf("sign JWT: %w", err)
+		return "", fmt.Errorf("sign JWT (app_id=%s): %w", appID, err)
 	}
 
 	url := fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", installID)
@@ -49,13 +59,14 @@ func GenerateInstallationToken(ctx context.Context) (string, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("token exchange request: %w", err)
+		return "", fmt.Errorf("token exchange request (app_id=%s, installation_id=%s): %w", appID, installID, err)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
 	if resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("GitHub App token exchange failed (HTTP %d)", resp.StatusCode)
+		return "", fmt.Errorf("GitHub App token exchange failed (HTTP %d, app_id=%s, installation_id=%s): %s",
+			resp.StatusCode, appID, installID, strings.TrimSpace(string(body)))
 	}
 
 	var result struct {

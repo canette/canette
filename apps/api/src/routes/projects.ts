@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { db } from "../db"
+import { db } from "../db/db"
 import { requireAuth } from "../middleware/require-auth"
 import type { AppEnv } from "../types"
 import { ServiceError } from "../services/errors"
@@ -11,6 +11,7 @@ import {
   listProjects,
   updateProject,
 } from "../services/projects"
+import { listTeamCredentials } from "../services/git-credentials"
 
 export const projectsRouter = new Hono<AppEnv>()
 
@@ -48,7 +49,7 @@ projectsRouter.get("/:ref", async (c) => {
 // POST /api/v1/projects
 projectsRouter.post("/", async (c) => {
   const session = c.get("session")
-  const body = await c.req.json<{ name: string; slug: string; description?: string }>()
+  const body = await c.req.json<{ teamId: string; name: string; slug: string; description?: string }>()
   try {
     const project = await createProject(db, session.user.id, body)
     return c.json(project, 201)
@@ -83,4 +84,16 @@ projectsRouter.delete("/:id", async (c) => {
     if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
     throw e
   }
+})
+
+// Get a credentials for a project by UUID or slug
+// TODO? Uses team. Saves UI roundtrip. Could be optimized with justom service method
+// GET /api/v1/projects/:ref/credentials
+projectsRouter.get("/:ref/credentials", async (c) => {
+  const session = c.get("session")
+  const project = await getProjectByRef(db, c.req.param("ref"), session.user.id)
+  if (!project) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  const credentials = await listTeamCredentials(db, project.teamId, session.user.id)
+  if (!credentials) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  return c.json(credentials)
 })

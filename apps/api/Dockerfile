@@ -17,12 +17,14 @@ COPY packages/types/package.json packages/types/package.json
 # Install dependencies
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
-COPY apps/api/scripts ./apps/api/scripts
 COPY apps/api/migrations ./apps/api/migrations
+COPY apps/api/scripts ./apps/api/scripts
 COPY apps/api/src ./apps/api/src
+COPY apps/api/tests ./apps/api/tests
 
-# RUN bun run test:api
+RUN bun run test:api
 RUN bun run build:api
+RUN bun run build:api:migrate
 
 # ---- Production image ----
 FROM debian:13.4-slim AS runner
@@ -32,6 +34,8 @@ ENV NODE_ENV=production
 
 # Copy only necessary files
 COPY --from=build /app/apps/api/api-server ./api-server
+COPY --from=build /app/apps/api/db-migrate ./db-migrate
+COPY --from=build /app/apps/api/migrations ./migrations
 
 EXPOSE 3000
 

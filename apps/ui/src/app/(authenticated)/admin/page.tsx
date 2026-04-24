@@ -12,7 +12,7 @@ import { ChevronDown, Copy, Check } from "lucide-react"
 import { useSession } from "@/lib/auth-client"
 import { AppShell } from "@/components/app-shell"
 import * as api from "@/lib/api"
-import type { AdminProjectOverview, ResourceDefaults, ScanPolicy, SyncResult, User, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminTeamOverview, ResourceDefaults, ScanPolicy, SyncResult, User, WebhookSettings } from "@canette/types"
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,11 +44,13 @@ export default function AdminPage() {
 
   const [users, setUsers] = useState<User[]>([])
   const [overview, setOverview] = useState<AdminProjectOverview[]>([])
+  const [adminTeams, setAdminTeams] = useState<AdminTeamOverview[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
   // collapsible cards
   const [usersOpen, setUsersOpen] = useState(true)
+  const [teamsOpen, setTeamsOpen] = useState(false)
   const [overviewOpen, setOverviewOpen] = useState(false)
   const [syncOpen, setSyncOpen] = useState(false)
   const [securityOpen, setSecurityOpen] = useState(false)
@@ -98,8 +100,8 @@ export default function AdminPage() {
       router.replace("/dashboard")
       return
     }
-    Promise.all([api.admin.listUsers(), api.admin.getOverview(), api.admin.getScanPolicy(), api.admin.getWebhookSettings(), api.admin.getResourceDefaults()])
-      .then(([u, o, p, wh, rd]) => { setUsers(u); setOverview(o); setScanPolicy(p); setPolicyDraft(p); setWebhookSettings(wh); setResourceDefaults(rd) })
+    Promise.all([api.admin.listUsers(), api.admin.getOverview(), api.admin.getTeams(), api.admin.getScanPolicy(), api.admin.getWebhookSettings(), api.admin.getResourceDefaults()])
+      .then(([u, o, t, p, wh, rd]) => { setUsers(u); setOverview(o); setAdminTeams(t); setScanPolicy(p); setPolicyDraft(p); setWebhookSettings(wh); setResourceDefaults(rd) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [session, sessionLoading, router])
@@ -299,6 +301,55 @@ export default function AdminPage() {
           </Card>
         </Collapsible>
 
+        {/* Teams */}
+        <Collapsible open={teamsOpen} onOpenChange={setTeamsOpen}>
+          <Card>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer select-none">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">Teams <span className="text-muted-foreground font-normal text-sm ml-1">({adminTeams.length})</span></CardTitle>
+                  <Chevron open={teamsOpen} />
+                </div>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="p-0">
+                {adminTeams.length === 0 ? (
+                  <p className="text-muted-foreground text-sm px-6 pb-4">No teams yet.</p>
+                ) : (
+                  <>
+                    <div className="px-6 py-1.5 flex items-center gap-4 border-b border-border/50">
+                      <span className="text-xs text-muted-foreground flex-1">NAME</span>
+                      <span className="text-xs text-muted-foreground w-20 text-right">MEMBERS</span>
+                      <span className="text-xs text-muted-foreground w-20 text-right">PROJECTS</span>
+                    </div>
+                    {adminTeams.map((team, i) => (
+                      <div key={team.id}>
+                        {i > 0 && <Separator />}
+                        <div className="flex items-center gap-4 px-6 py-3">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-sm font-medium truncate">{team.name}</span>
+                            {team.isPersonal && (
+                              <Badge variant="secondary" className="text-xs font-normal shrink-0">personal</Badge>
+                            )}
+                          </div>
+                          <span className="text-xs text-muted-foreground w-20 text-right">{team.memberCount}</span>
+                          <span className="text-xs text-muted-foreground w-20 text-right">{team.projectCount}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+                <div className="px-6 py-3 border-t border-border/50">
+                  <a href="/dashboard/teams/new" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                    + Create team
+                  </a>
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
         {/* Projects overview */}
         <Collapsible open={overviewOpen} onOpenChange={setOverviewOpen}>
           <Card>
@@ -326,6 +377,7 @@ export default function AdminPage() {
                         <div className="flex items-center gap-3">
                           <span className="text-sm font-medium">{project.name}</span>
                           <span className="font-mono text-xs text-muted-foreground">{project.slug}</span>
+                          <span className="text-xs text-muted-foreground">{project.teamName}</span>
                           <span className="text-xs text-muted-foreground">{project.apps.length} app{project.apps.length !== 1 ? "s" : ""}</span>
                         </div>
                         <Chevron open={expandedProjects.has(project.id)} />

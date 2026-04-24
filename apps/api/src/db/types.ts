@@ -54,8 +54,25 @@ export interface Database {
 
   // ── Application tables (snake_case column names) ──────────────────────────
 
+  teams: {
+    id: string
+    name: string
+    is_personal: boolean
+    owner_id: string
+    created_at: string
+    updated_at: string
+  }
+
+  team_members: {
+    id: string
+    team_id: string
+    user_id: string
+    created_at: string
+  }
+
   projects: {
     id: string
+    team_id: string
     name: string
     slug: string
     description: string | null
@@ -64,17 +81,9 @@ export interface Database {
     updated_at: string
   }
 
-  memberships: {
-    id: string
-    user_id: string
-    project_id: string
-    role: string
-    created_at: string
-  }
-
   git_credentials: {
     id: string
-    user_id: string | null  // null for system credentials (e.g. cluster GitHub App)
+    team_id: string | null  // null for system credentials (e.g. cluster GitHub App)
     name: string
     provider: string
     type: string
@@ -175,4 +184,12 @@ export interface Database {
     namespace: string
     created_at: string
   }
+
+  // ── DB Migration tracking ──────────────────────────
+
+  schema_migrations: {
+    version: string
+    applied_at: string
+  }
+
 }

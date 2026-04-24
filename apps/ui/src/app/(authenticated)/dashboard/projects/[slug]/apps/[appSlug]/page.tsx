@@ -126,7 +126,7 @@ function LogDialog({ deployment, onClose }: { deployment: Deployment; onClose: (
 
   return (
     <DialogContent className="max-h-[80vh] flex flex-col" aria-describedby="{undefined}">
-      <DialogHeader>
+      <DialogHeader className="flex-row items-center justify-between">
         <DialogTitle className="font-mono text-sm">
           Logs — {shortSha(deployment.commitSha)}
           {deployment.commitMessage && (
@@ -220,7 +220,7 @@ function RuntimeLogDialog({ appId, onClose }: { appId: string; onClose: () => vo
 
   return (
     <DialogContent className="max-h-[80vh] flex flex-col max-w-3xl" aria-describedby="{undefined}">
-      <DialogHeader>
+      <DialogHeader className="flex-row items-center justify-between">
         <DialogTitle className="text-sm">App logs</DialogTitle>
         <DialogClose asChild>
           <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7">
@@ -262,7 +262,7 @@ function ManifestDialog({ deploymentId, onClose }: { deploymentId: string; onClo
 
   return (
       <DialogContent className="max-h-[80vh] flex flex-col max-w-3xl" aria-describedby="{undefined}">
-      <DialogHeader>
+      <DialogHeader className="flex-row items-center justify-between">
         <DialogTitle className="text-sm">Applied manifest</DialogTitle>
         <DialogClose asChild>
           <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7">
@@ -960,7 +960,7 @@ export default function AppDetailPage() {
   useEffect(() => {
     Promise.all([
       api.apps.getBySlug(projectSlug, appSlug),
-      api.credentials.list().catch(() => [] as GitCredential[]),
+      api.projects.listCredentials(projectSlug).catch(() => [] as GitCredential[]),
     ])
       .then(([a, creds]) => {
         setApp(a)
