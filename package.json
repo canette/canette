@@ -1,7 +1,10 @@
 {
   "name": "canette",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev:api": "bun run --cwd apps/api dev",
     "dev:ui": "bun run --cwd apps/ui dev",
@@ -11,6 +14,10 @@
     "build:api:migrate": "bun run --cwd apps/api build:migrate",
     "build:docs": "bun run --cwd apps/docs build",
     "test:api": "bun test --cwd apps/api",
-    "typecheck": "bunx tsc --build apps/api/tsconfig.json apps/ui/tsconfig.json packages/types/tsconfig.json"
+    "typecheck": "bunx tsc --build apps/api/tsconfig.json apps/ui/tsconfig.json packages/types/tsconfig.json",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
   }
 }

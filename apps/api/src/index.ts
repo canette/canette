@@ -14,7 +14,7 @@ initSystemCredentials(db).catch((err) => {
   console.error("failed to init system credentials:", err)
 })
 
-const app = createApp(db)
+const app = createApp()
 
 export default {
   port: Number(process.env.PORT ?? 3001),

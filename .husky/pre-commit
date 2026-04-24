@@ -1,0 +1,3 @@
+bun run --cwd apps/api lint
+bun run --cwd apps/ui lint
+bun test --cwd apps/api 

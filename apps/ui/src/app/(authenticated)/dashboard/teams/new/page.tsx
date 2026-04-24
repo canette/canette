@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -33,11 +34,11 @@ export default function NewTeamPage() {
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-border sticky top-0 z-10 bg-background/80 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center gap-3">
-          <a href="/dashboard" className="text-sm font-semibold tracking-tight text-muted-foreground hover:text-foreground transition-colors">
+          <Link href="/dashboard" className="text-sm font-semibold tracking-tight text-muted-foreground hover:text-foreground transition-colors">
             canette
-          </a>
+          </Link>
           <span className="text-muted-foreground/40">/</span>
-          <a href="/dashboard/teams" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Teams</a>
+          <Link href="/dashboard/teams" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Teams</Link>
           <span className="text-muted-foreground/40">/</span>
           <span className="text-sm font-medium">New team</span>
         </div>

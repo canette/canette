@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
-import { ArrowLeft, ChevronDown, Check, Download, ExternalLink, Eye, EyeOff, Loader2, RefreshCw, TriangleAlert, X } from "lucide-react"
+import { ArrowLeft, ChevronDown, Download, ExternalLink, Eye, EyeOff, Loader2, RefreshCw, TriangleAlert, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AppShell } from "@/components/app-shell"
 import * as api from "@/lib/api"
@@ -910,8 +910,7 @@ export default function AppDetailPage() {
   const [saveError, setSaveError] = useState("")
 
   // canette config editor
-  const [configOpen, setConfigOpen] = useState(false)
-  const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
+const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
   const [savingConfig, setSavingConfig] = useState(false)
   const [configError, setConfigError] = useState("")
   const [configSaved, setConfigSaved] = useState(false)

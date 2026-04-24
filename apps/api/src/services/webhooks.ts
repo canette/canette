@@ -1,16 +1,12 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import type { DB } from "../db/db"
 import type { WebhookConfig } from "@canette/types"
-import type { Selectable } from "kysely"
-import type { Database } from "../db/types"
 import { encrypt, decrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
 import { createDeployment } from "./deployments"
 import { generateInstallationToken } from "./github-app-token"
 
 // ── Internal row types ────────────────────────────────────────────────────────
-
-type WebhookRow = Selectable<Database["webhook_secrets"]>
 
 interface AppRow {
   id: string

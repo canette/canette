@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -341,9 +342,9 @@ export default function AdminPage() {
                   </>
                 )}
                 <div className="px-6 py-3 border-t border-border/50">
-                  <a href="/dashboard/teams/new" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                  <Link href="/dashboard/teams/new" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
                     + Create team
-                  </a>
+                  </Link>
                 </div>
               </CardContent>
             </CollapsibleContent>
