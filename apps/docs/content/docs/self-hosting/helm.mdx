@@ -9,30 +9,29 @@ The canette Helm chart deploys the API, UI, builder, controller, logstreamer, an
 
 ## Prerequisites
 
-- Helm 3.x
+- Helm 3.8+
 - Kubernetes 1.27+ with Gateway API CRDs installed
 - A Gateway API implementation (Traefik, Cilium, etc.)
-- Images built and pushed for the builder, controller, and migrations (see below)
-
-## Build the component images
-
-Before installing you need to push the component images to a registry your cluster can reach.
-
-All images can be built and pushed in one step using the build script:
-
-```bash
-IMAGE_REPO=my-registry/canette TAG=my-tag ./scripts/build-images.sh --push
-```
-
-Then point the chart at your registry and tag:
-
-```bash
---set image.repo="my-registry/canette" --set image.tag="my-tag"
-```
 
 ## Install
 
-The `-n` flag controls the system namespace. canette always creates a second namespace for build jobs named `{system}-build` — with the default below that becomes `canette-system-build`.
+The chart is published to GitHub Container Registry and can be installed directly — no repository clone required:
+
+```bash
+helm upgrade --install canette oci://ghcr.io/canette/canette-chart \
+  --version 0.1.0 \
+  -n canette-system --create-namespace \
+  --set domain="apps.example.com" \
+  --set ui.hostname="canette.example.com" \
+  --set api.githubClientId="<client-id>" \
+  --set api.githubClientSecret="<client-secret>"
+```
+
+Replace `0.1.0` with the version you want to install. Available versions are listed on the [canette-chart package page](https://github.com/orgs/canette/packages/container/package/canette-chart).
+
+## Install from source
+
+If you have the repository cloned, you can install directly from the chart directory:
 
 ```bash
 helm upgrade --install canette charts/canette \
@@ -42,6 +41,10 @@ helm upgrade --install canette charts/canette \
   --set api.githubClientId="<client-id>" \
   --set api.githubClientSecret="<client-secret>"
 ```
+
+The `-n` flag controls the system namespace. canette always creates a second namespace for build jobs named `{system}-build` — with the default above that becomes `canette-system-build`.
+
+## Using a custom image registry
 
 Service images default to `ghcr.io/canette/canette/{service}:{appVersion}`, where `appVersion` is the version embedded in the Helm chart. Installing or upgrading the chart automatically uses the matching image versions — no image flags needed for a standard install.
 
