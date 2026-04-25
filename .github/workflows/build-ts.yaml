@@ -9,14 +9,6 @@ on:
       - apps/api/**
       - packages/**
       - package.json
-  push: # Replace with Docker edge build
-    branches:
-      - main
-    paths:
-      - apps/ui/**
-      - apps/api/**
-      - packages/**
-      - package.json
   workflow_dispatch:
 
 jobs:

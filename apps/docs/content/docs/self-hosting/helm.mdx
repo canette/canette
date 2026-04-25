@@ -43,15 +43,21 @@ helm upgrade --install canette charts/canette \
   --set api.githubClientSecret="<client-secret>"
 ```
 
-Service images default to `ghcr.io/canette/canette/{service}:edge` — no image flags needed for a standard install. Override `image.repo`, `image.tag`, or individual service images as needed:
+Service images default to `ghcr.io/canette/canette/{service}:{appVersion}`, where `appVersion` is the version embedded in the Helm chart. Installing or upgrading the chart automatically uses the matching image versions — no image flags needed for a standard install.
+
+To use a different registry or override the tag:
 
 ```bash
-# Pin to a specific release
---set image.tag="v1.2.3"
-
 # Use a different registry
 --set image.repo="my-registry/canette"
+
+# Use the edge build (latest commit on main — development only)
+--set image.tag="edge"
 ```
+
+<Callout type="warn">
+  **Do not use `:edge` in production.** The `edge` tag is rebuilt on every commit to `main` and is not immutable — a pod restart can silently pull a newer image, leaving components running at mismatched versions. Stick with the chart's default versioned tag for any environment where stability matters.
+</Callout>
 
 `domain` is the base domain for all dynamic hostnames:
 - **App URLs**: `{app}-{project}.apps.example.com`
@@ -97,7 +103,7 @@ All service images default to `{image.repo}/{serviceName}:{image.tag}`.
 | Value | Default | Description |
 |-------|---------|-------------|
 | `image.repo` | `ghcr.io/canette/canette` | Base repository for all canette service images |
-| `image.tag` | `Chart.AppVersion` | Tag applied to all service images. Leave empty to track `appVersion` automatically. |
+| `image.tag` | `Chart.AppVersion` | Tag applied to all service images. Defaults to the chart's `appVersion` — versioned releases are tracked automatically. Set to `edge` to use the latest development build. |
 | `api.image` | derived | Override the API image |
 | `ui.image` | derived | Override the UI image |
 | `builder.image` | derived | Override the builder image |

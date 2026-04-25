@@ -8,13 +8,6 @@ on:
       - apps/builder/**
       - apps/controller/**
       - apps/logstreamer/**
-  push: # Replace with Docker Edge build
-    branches:
-      - main
-    paths:
-      - apps/builder/**
-      - apps/controller/**
-      - apps/logstreamer/**
   workflow_dispatch: 
 
 jobs:
