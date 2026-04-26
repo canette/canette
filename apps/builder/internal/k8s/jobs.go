@@ -83,12 +83,6 @@ func BuildJob(
 	cfg BuildConfig,
 ) *batchv1.Job {
 	jobName := JobName(deploymentID)
-	sha := commitSha
-	if len(sha) > 7 {
-		sha = sha[:7]
-	}
-	gitTag := "git-" + sha
-
 	optional := true
 
 	labels := map[string]string{
@@ -169,7 +163,6 @@ func BuildJob(
 				{Name: "APP_NAME", Value: projectSlug + "/" + appSlug},
 				{Name: "APP_PATH", Value: appPath},
 				{Name: "IMAGE_REPO", Value: cfg.ImageRepo},
-				{Name: "IMAGE_TAG", Value: gitTag},
 				{Name: "BUILDKIT_HOST", Value: cfg.BuildkitdAddr},
 				{Name: "CANETTE_CONFIG", Value: base64.StdEncoding.EncodeToString([]byte(canetteConfig))},
 			},

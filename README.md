@@ -63,6 +63,12 @@ For AI-assisted development, see [CLAUDE.md](./CLAUDE.md).
 
 ---
 
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, linting, and testing instructions.
+
+---
+
 ## License
 
 Apache 2.0

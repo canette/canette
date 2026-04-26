@@ -32,7 +32,7 @@
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.3",
     "eslint-config-next": "16.2.4",
-    "eslint": "^10.2.1",
+    "eslint": "^9",
     "vite": "^6.3.5"
   }
 }

@@ -41,7 +41,6 @@ func run() error {
 	appName := os.Getenv("APP_NAME")
 	appPath := os.Getenv("APP_PATH")
 	imageRepo := os.Getenv("IMAGE_REPO")
-	imageTag := os.Getenv("IMAGE_TAG")
 	buildkitHost := os.Getenv("BUILDKIT_HOST")
 	workspace := os.Getenv("WORKSPACE")
 	if workspace == "" {
@@ -51,18 +50,10 @@ func run() error {
 	sourcePath := filepath.Join(workspace, "source")
 	configPath := filepath.Join(workspace, "config")
 
-	// Read the commit SHA written by the git-init container and derive the
-	// image tag from it. This always overrides IMAGE_TAG from the environment,
-	// which is set at job-creation time from the branch/ref and may not be a SHA.
-	shaBytes, err := os.ReadFile(filepath.Join(configPath, ".can-commit-sha"))
+	imageTag, err := readImageTag(configPath)
 	if err != nil {
-		return fmt.Errorf("read .can-commit-sha: %w", err)
+		return err
 	}
-	sha := strings.TrimSpace(string(shaBytes))
-	if len(sha) < 7 {
-		return fmt.Errorf(".can-commit-sha contains an invalid SHA: %q", sha)
-	}
-	imageTag = "git-" + sha[:7]
 
 	if err := validateInputs(appName, imageRepo, imageTag, buildkitHost); err != nil {
 		return err
@@ -299,6 +290,20 @@ func readDigest(metaFile string) (string, error) {
 		return "", fmt.Errorf("containerimage.digest not found in build metadata")
 	}
 	return meta.Digest, nil
+}
+
+// readImageTag reads the commit SHA written by the git-init container from
+// <configPath>/.can-commit-sha and returns a "git-<7hex>" image tag.
+func readImageTag(configPath string) (string, error) {
+	shaBytes, err := os.ReadFile(filepath.Join(configPath, ".can-commit-sha"))
+	if err != nil {
+		return "", fmt.Errorf("read .can-commit-sha: %w", err)
+	}
+	sha := strings.TrimSpace(string(shaBytes))
+	if len(sha) < 7 {
+		return "", fmt.Errorf(".can-commit-sha contains an invalid SHA: %q", sha)
+	}
+	return "git-" + sha[:7], nil
 }
 
 func fileExists(path string) bool {

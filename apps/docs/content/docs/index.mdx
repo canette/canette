@@ -50,7 +50,7 @@ canette runs entirely inside your own Kubernetes cluster, installed as a single 
 
 ## Architecture
 
-canette consists of four services:
+canette consists of five services:
 
 | Service | Language | Purpose |
 |---|---|---|
@@ -58,3 +58,4 @@ canette consists of four services:
 | `ui` | TypeScript (Next.js) | Web interface |
 | `builder` | Go | Creates Kubernetes build Jobs |
 | `controller` | Go | Reconciles desired state with the cluster |
+| `logstreamer` | Go | Streams live pod logs to the browser over SSE |

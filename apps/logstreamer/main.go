@@ -29,7 +29,7 @@ func main() {
 		zapCfg.Level.SetLevel(zap.InfoLevel)
 	}
 	log, _ := zapCfg.Build()
-	defer log.Sync()
+	defer func() { _ = log.Sync() }()
 
 	log.Info("canette logstreamer starting")
 

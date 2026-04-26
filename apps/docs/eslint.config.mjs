@@ -10,6 +10,11 @@ const eslintConfig = defineConfig([
     'next-env.d.ts',
     '.source/**',
   ]),
+  {
+    rules: {
+      'no-unused-vars': ['error', { ignoreRestSiblings: true }],
+    },
+  },
 ]);
 
 export default eslintConfig;

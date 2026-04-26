@@ -115,7 +115,7 @@ func validateRef(ref string) error {
 		return fmt.Errorf("GIT_REF %q contains invalid characters (alphanumeric, ., _, /, - only)", ref)
 	}
 	if strings.Contains(ref, "..") {
-		return fmt.Errorf("GIT_REF must not contain ..")
+		return fmt.Errorf("GIT_REF must not contain double dots")
 	}
 	return nil
 }

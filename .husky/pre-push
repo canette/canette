@@ -1,0 +1,13 @@
+# TS
+bun run lint:ui
+bun run lint:api
+bun run lint:docs
+bun run test:api
+
+# Go
+bun run lint:builder
+bun run lint:controller
+bun run lint:logstreamer
+bun run test:builder
+bun run test:controller
+bun run test:logstreamer

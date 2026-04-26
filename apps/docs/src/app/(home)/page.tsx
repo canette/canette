@@ -1,5 +1,4 @@
 import Link from "next/link"
-import Image from "next/image"
 import { InstallSnippet } from "@/components/install-snippet"
 import { CanetteLogo } from "@/components/canette-logo"
 import { features } from "@/data/features"
