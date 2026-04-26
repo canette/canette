@@ -30,7 +30,7 @@ encryptionKey: ""
 # ---------------------------------------------------------------------------
 postgres:
   enabled: true
-  image: postgres:18-alpine
+  image: postgres:18.3-alpine3.23
   # Override auto-generated postgres password.
   # By default canette generates a random password on first install and stores it in
   # the postgres-credentials Secret, reusing it on every upgrade.
@@ -80,7 +80,7 @@ externalRegistry:
 # ---------------------------------------------------------------------------
 registry:
   enabled: true
-  image: registry:2
+  image: registry:2.8.3
   # Override auto-generated registry credentials.
   # By default canette generates a random username/password on first install and stores
   # them in the canette-registry-credentials Secret, reusing them on every upgrade.
@@ -118,6 +118,12 @@ buildkit:
   # The in-cluster registry is added automatically when registry.enabled=true.
   # Format: "<host:port>": { http: true, insecure: true }
   registries: {}
+  # Restrict buildkit egress to internet-only by blocking RFC-1918 ranges.
+  # This prevents a compromised build from reaching cluster-internal services
+  # while still allowing package fetches from npm, PyPI, Docker Hub, etc.
+  # Set to false if builds need to reach private package mirrors or registries
+  # in RFC-1918 address space (e.g. an internal Artifactory or Nexus instance).
+  restrictEgress: true
 
 # ---------------------------------------------------------------------------
 # Builder service

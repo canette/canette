@@ -21,6 +21,7 @@ spec:
           type: Unconfined
         appArmorProfile:
           type: Unconfined
+        fsGroup: 1000
       containers:
         - name: buildkitd
           image: {{ .Values.buildkit.image }}
@@ -34,6 +35,8 @@ spec:
           ports:
             - containerPort: 1234
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
             seccompProfile:
               type: Unconfined
           volumeMounts:

@@ -1,4 +1,17 @@
+import { readFileSync } from "node:fs"
 import { createSign } from "node:crypto"
+
+// readSecretOrEnv reads from a file if <KEY>_FILE is set, else falls back to
+// the plain env var. Supports Kubernetes file-mount (production) and env vars (local dev).
+function readSecretOrEnv(key: string): string | undefined {
+  const filePath = process.env[`${key}_FILE`]
+  if (filePath) {
+    try {
+      return readFileSync(filePath, "utf8").trimEnd()
+    } catch {}
+  }
+  return process.env[key]
+}
 
 // generateInstallationToken mints a GitHub App installation access token.
 // It reads GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY
@@ -8,7 +21,7 @@ import { createSign } from "node:crypto"
 export async function generateInstallationToken(): Promise<string> {
   const appId = process.env.GITHUB_APP_ID
   const installationId = process.env.GITHUB_APP_INSTALLATION_ID
-  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY
+  const privateKey = readSecretOrEnv("GITHUB_APP_PRIVATE_KEY")
 
   if (!appId || !installationId || !privateKey) {
     throw new Error("GitHub App not configured (missing GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, or GITHUB_APP_PRIVATE_KEY)")

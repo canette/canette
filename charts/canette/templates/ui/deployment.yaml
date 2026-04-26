@@ -16,11 +16,18 @@ spec:
       labels:
         app.kubernetes.io/name: canette-ui
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: ui
           {{- $image := include "canette.serviceImage" (list . "canette-ui" .Values.ui.image) }}
           image: {{ $image }}
           imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 3000
           env:

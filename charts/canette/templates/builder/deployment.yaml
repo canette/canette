@@ -22,12 +22,16 @@ spec:
           {{- $image := include "canette.serviceImage" (list . "canette-builder" .Values.builder.image) }}
           image: {{ $image }}
           imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
-            - name: ENCRYPTION_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: canette-encryption-key
-                  key: key
+            - name: ENCRYPTION_KEY_FILE
+              value: /run/secrets/encryption-key
             {{- if and (not .Values.postgres.enabled) .Values.externalDatabase.passwordSecretRef.name }}
             - name: DB_PASSWORD
               valueFrom:
@@ -75,16 +79,56 @@ spec:
                 secretKeyRef:
                   name: canette-api-secrets
                   key: github-app-installation-id
-            - name: GITHUB_APP_PRIVATE_KEY
-              valueFrom:
-                secretKeyRef:
-                  {{- if ((.Values.api.githubApp.privateKeySecretRef).name) }}
-                  name: {{ .Values.api.githubApp.privateKeySecretRef.name }}
-                  key: {{ .Values.api.githubApp.privateKeySecretRef.key }}
-                  {{- else }}
-                  name: canette-api-secrets
-                  key: github-app-private-key
-                  {{- end }}
+            - name: GITHUB_APP_PRIVATE_KEY_FILE
+              value: /run/secrets/github-app-private-key
+            {{- end }}
+          ports:
+            - containerPort: 8081
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: encryption-key
+              mountPath: /run/secrets/encryption-key
+              subPath: key
+              readOnly: true
+            {{- if .Values.api.githubApp.appId }}
+            - name: github-app-private-key
+              mountPath: /run/secrets/github-app-private-key
+              subPath: key
+              readOnly: true
             {{- end }}
           resources:
             {{- toYaml .Values.builder.resources | nindent 12 }}
+      volumes:
+        - name: encryption-key
+          secret:
+            secretName: canette-encryption-key
+            items:
+              - key: key
+                path: key
+        {{- if .Values.api.githubApp.appId }}
+        - name: github-app-private-key
+          secret:
+            {{- if ((.Values.api.githubApp.privateKeySecretRef).name) }}
+            secretName: {{ .Values.api.githubApp.privateKeySecretRef.name }}
+            items:
+              - key: {{ .Values.api.githubApp.privateKeySecretRef.key }}
+                path: key
+            {{- else }}
+            secretName: canette-api-secrets
+            items:
+              - key: github-app-private-key
+                path: key
+            {{- end }}
+        {{- end }}

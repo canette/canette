@@ -18,10 +18,16 @@ spec:
         app.kubernetes.io/name: registry
     spec:
       priorityClassName: canette-registry-critical
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: registry
           image: {{ .Values.registry.image }}
           imagePullPolicy: {{ include "canette.imagePullPolicy" .Values.registry.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 5000
           env:

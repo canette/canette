@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -120,6 +122,8 @@ func run(log *zap.Logger) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	startHealthServer(ctx, log, envOr("HEALTH_ADDR", ":8081"))
+
 	b := builder.New(
 		store.New(db, log),
 		k8sClient,
@@ -130,6 +134,29 @@ func run(log *zap.Logger) error {
 		maxConcurrent,
 	)
 	return b.Run(ctx)
+}
+
+func startHealthServer(ctx context.Context, log *zap.Logger, addr string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+	}()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("health server error", zap.Error(err))
+		}
+	}()
 }
 
 func buildK8sClient() (kubernetes.Interface, error) {
@@ -151,11 +178,23 @@ func buildK8sClient() (kubernetes.Interface, error) {
 }
 
 func requireEnv(key string) (string, error) {
-	v := os.Getenv(key)
+	v := readSecretOrEnv(key)
 	if v == "" {
 		return "", fmt.Errorf("required environment variable %s is not set", key)
 	}
 	return v, nil
+}
+
+// readSecretOrEnv reads a secret value from a file if <KEY>_FILE is set,
+// falling back to the plain environment variable. This supports both the
+// Kubernetes file-mount pattern (production) and plain env vars (local dev).
+func readSecretOrEnv(key string) string {
+	if path := os.Getenv(key + "_FILE"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			return strings.TrimRight(string(data), "\n")
+		}
+	}
+	return os.Getenv(key)
 }
 
 func envOr(key, fallback string) string {

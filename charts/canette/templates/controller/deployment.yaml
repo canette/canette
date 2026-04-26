@@ -22,12 +22,16 @@ spec:
           {{- $image := include "canette.serviceImage" (list . "canette-controller" .Values.controller.image) }}
           image: {{ $image }}
           imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
-            - name: ENCRYPTION_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: canette-encryption-key
-                  key: key
+            - name: ENCRYPTION_KEY_FILE
+              value: /run/secrets/encryption-key
             {{- if and (not .Values.postgres.enabled) .Values.externalDatabase.passwordSecretRef.name }}
             - name: DB_PASSWORD
               valueFrom:
@@ -60,5 +64,32 @@ spec:
               value: {{ .Values.controller.logTailInterval | quote }}
             - name: MAX_CONCURRENT
               value: {{ .Values.controller.maxConcurrent | quote }}
+          ports:
+            - containerPort: 8082
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: encryption-key
+              mountPath: /run/secrets/encryption-key
+              subPath: key
+              readOnly: true
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
+      volumes:
+        - name: encryption-key
+          secret:
+            secretName: canette-encryption-key
+            items:
+              - key: key
+                path: key
