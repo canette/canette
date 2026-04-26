@@ -331,7 +331,7 @@ export default function NewAppPage() {
                 <Label htmlFor="port" className="flex items-center gap-1">
                   Port
                   <HelpTooltip>
-                    <p className="mb-1.5">The port your app listens on.</p>
+                    <p className="mb-1.5">The same port your app uses locally, e.g. <code className="font-mono">http://localhost:3000</code> → port 3000.</p>
                     <p className="mb-1 font-medium">Common defaults:</p>
                     <ul className="space-y-0.5 text-muted-foreground">
                       <li>Next.js / Node / Rails → 3000</li>
@@ -341,7 +341,7 @@ export default function NewAppPage() {
                       <li>Spring Boot → 8080</li>
                     </ul>
                     <p className="mt-1.5 text-muted-foreground">
-                      For Git apps, <code className="font-mono">PORT</code> is added automatically. Most apps work with the default value.
+                      For Git apps, <code className="font-mono">PORT</code> is added automatically to the deployment. Most apps should work with the default value.
                     </p>
                   </HelpTooltip>
                 </Label>
