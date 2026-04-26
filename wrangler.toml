@@ -1,0 +1,5 @@
+name = "canette-docs"
+compatibility_date = "2026-04-26"
+
+[assets]
+directory = "./apps/docs/out"
