@@ -32,3 +32,8 @@ jobs:
     - name: Test ${{ matrix.app }}
       run: go test -v ./...
       working-directory: ${{ matrix.app }}
+
+    - name: Lint ${{ matrix.app }}
+      uses: golangci/golangci-lint-action@v6
+      with:
+        working-directory: ${{ matrix.app }}

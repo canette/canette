@@ -32,7 +32,7 @@ func main() {
 		zapCfg.Level.SetLevel(zap.InfoLevel)
 	}
 	log, _ := zapCfg.Build()
-	defer log.Sync()
+	defer func() { _ = log.Sync() }()
 
 	if err := run(log); err != nil {
 		log.Fatal("fatal error", zap.Error(err))

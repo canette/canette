@@ -29,6 +29,9 @@ jobs:
     - name: Bun install
       run: bun install --frozen-lockfile --ignore-scripts
 
+    - name: Lint ${{ matrix.app }}
+      run: bun run lint:${{ matrix.app }}
+
     - name: Build ${{ matrix.app }}
       run: bun run build:${{ matrix.app }}
 

@@ -287,10 +287,6 @@ func TestBuildJob(t *testing.T) {
 			if findEnv(t, imageBuild, "APP_NAME") != testProjectSlug+"/"+testAppSlug {
 				t.Errorf("APP_NAME = %q, want %q", findEnv(t, imageBuild, "APP_NAME"), testProjectSlug+"/"+testAppSlug)
 			}
-			wantTag := "git-" + testCommitSha[:7]
-			if findEnv(t, imageBuild, "IMAGE_TAG") != wantTag {
-				t.Errorf("IMAGE_TAG = %q, want %q", findEnv(t, imageBuild, "IMAGE_TAG"), wantTag)
-			}
 			if !hasMountAt(imageBuild, "workspace", "/workspace") {
 				t.Error("image-build must mount workspace at /workspace")
 			}
@@ -339,31 +335,6 @@ func TestBuildJob_CANETTECONFIGEncoding(t *testing.T) {
 	}
 }
 
-func TestBuildJob_ImageTag(t *testing.T) {
-	tests := []struct {
-		sha     string
-		wantTag string
-	}{
-		{"abc1234def5678", "git-abc1234"},
-		{"abc1234", "git-abc1234"}, // exactly 7 chars
-		{"abc12", "git-abc12"},     // shorter than 7
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.sha, func(t *testing.T) {
-			job := BuildJob(
-				testDeploymentID, testProjectSlug, testAppSlug, tc.sha,
-				testGitURL, testGitBranch, testAppPath,
-				"none", "", "", baseCfg,
-			)
-			imageBuild := job.Spec.Template.Spec.Containers[0]
-			got := findEnv(t, imageBuild, "IMAGE_TAG")
-			if got != tc.wantTag {
-				t.Errorf("IMAGE_TAG = %q, want %q", got, tc.wantTag)
-			}
-		})
-	}
-}
 
 func TestScanJob(t *testing.T) {
 	const imageRef = "registry.example.com/myproject/myapp:git-abc1234"

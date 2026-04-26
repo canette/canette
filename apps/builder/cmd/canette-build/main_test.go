@@ -73,6 +73,67 @@ func TestResolveAppPath(t *testing.T) {
 	}
 }
 
+func TestReadImageTag(t *testing.T) {
+	t.Run("derives tag from full SHA", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".can-commit-sha"), []byte("abc1234def5678\n"), 0644); err != nil {
+			t.Fatalf("write sha file: %v", err)
+		}
+		tag, err := readImageTag(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tag != "git-abc1234" {
+			t.Errorf("tag = %q, want %q", tag, "git-abc1234")
+		}
+	})
+
+	t.Run("trims whitespace", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".can-commit-sha"), []byte("  def5678abc1234  \n"), 0644); err != nil {
+			t.Fatalf("write sha file: %v", err)
+		}
+		tag, err := readImageTag(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tag != "git-def5678" {
+			t.Errorf("tag = %q, want %q", tag, "git-def5678")
+		}
+	})
+
+	t.Run("missing file returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := readImageTag(dir); err == nil {
+			t.Error("expected error for missing file, got nil")
+		}
+	})
+
+	t.Run("SHA shorter than 7 chars returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".can-commit-sha"), []byte("abc12"), 0644); err != nil {
+			t.Fatalf("write sha file: %v", err)
+		}
+		if _, err := readImageTag(dir); err == nil {
+			t.Error("expected error for short SHA, got nil")
+		}
+	})
+
+	t.Run("exactly 7 chars is valid", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".can-commit-sha"), []byte("abc1234"), 0644); err != nil {
+			t.Fatalf("write sha file: %v", err)
+		}
+		tag, err := readImageTag(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tag != "git-abc1234" {
+			t.Errorf("tag = %q, want %q", tag, "git-abc1234")
+		}
+	})
+}
+
 func TestParseCanetteConfig(t *testing.T) {
 	dir := t.TempDir()
 
@@ -88,7 +149,9 @@ func TestParseCanetteConfig(t *testing.T) {
 
 	t.Run("valid config parsed", func(t *testing.T) {
 		path := filepath.Join(dir, "canette.yaml")
-		os.WriteFile(path, []byte("build:\n  dockerfile: docker/App.dockerfile\n  context: ./app\n"), 0644)
+		if err := os.WriteFile(path, []byte("build:\n  dockerfile: docker/App.dockerfile\n  context: ./app\n"), 0644); err != nil {
+			t.Fatalf("write test file: %v", err)
+		}
 
 		cfg, err := config.ParseFile(path)
 		if err != nil {
@@ -104,7 +167,9 @@ func TestParseCanetteConfig(t *testing.T) {
 
 	t.Run("invalid yaml returns error", func(t *testing.T) {
 		path := filepath.Join(dir, "invalid.yaml")
-		os.WriteFile(path, []byte("build: [invalid: yaml:"), 0644)
+		if err := os.WriteFile(path, []byte("build: [invalid: yaml:"), 0644); err != nil {
+			t.Fatalf("write test file: %v", err)
+		}
 		if _, err := config.ParseFile(path); err == nil {
 			t.Error("expected error, got nil")
 		}
@@ -112,7 +177,9 @@ func TestParseCanetteConfig(t *testing.T) {
 
 	t.Run("oversized file rejected", func(t *testing.T) {
 		path := filepath.Join(dir, "big.yaml")
-		os.WriteFile(path, []byte("build:\n  context: "+strings.Repeat("a", maxCanetteYAMLSize)), 0644)
+		if err := os.WriteFile(path, []byte("build:\n  context: "+strings.Repeat("a", maxCanetteYAMLSize)), 0644); err != nil {
+			t.Fatalf("write test file: %v", err)
+		}
 		if _, err := config.ParseFile(path); err == nil {
 			t.Error("expected size error, got nil")
 		}
