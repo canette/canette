@@ -1,0 +1,68 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: buildkitd
+  namespace: {{ include "canette.buildNamespace" . }}
+  labels:
+    app.kubernetes.io/name: buildkitd
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: buildkitd
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Build job pods (canette-build binary) connect to submit builds.
+    # The builder service pod does not talk to buildkitd — it only creates Jobs and tails logs via the K8s API.
+    - from:
+        - podSelector:
+            matchLabels:
+              canette.dev/component: builder
+      ports:
+        - protocol: TCP
+          port: 1234
+  egress:
+    {{- if .Values.buildkit.restrictEgress }}
+    # DNS — kube-dns must be reachable for all image and package registry lookups
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.registry.enabled }}
+    # In-cluster registry — buildkitd pushes built images here after each build
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: registry
+      ports:
+        - protocol: TCP
+          port: 5000
+    {{- end }}
+    # Internet egress for base image pulls and package fetches (npm, PyPI, apt, etc.)
+    # RFC-1918 ranges are blocked to prevent builds from reaching cluster-internal services.
+    # Set buildkit.restrictEgress=false if builds need to reach private mirrors in RFC-1918 space.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+    {{- else }}
+    # Unrestricted egress — buildkit.restrictEgress is false
+    - {}
+    {{- end }}

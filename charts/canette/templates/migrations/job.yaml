@@ -38,6 +38,12 @@ spec:
           {{- $image := include "canette.serviceImage" (list . "canette-api" .Values.api.image) }}
           image: {{ $image }}
           imagePullPolicy: {{ include "canette.imagePullPolicy" $image }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command: ["./db-migrate"]
           env:
             {{- if and (not .Values.postgres.enabled) .Values.externalDatabase.passwordSecretRef.name }}
