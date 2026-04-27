@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest"
+import { createHmac } from "node:crypto"
 import { createStateToken, verifyStateToken } from "../../src/utils/github-app-state"
 
 beforeAll(() => {
@@ -37,9 +38,8 @@ describe("utils/github-app-state", () => {
     process.env.ENCRYPTION_KEY = "a".repeat(64)
   })
 
-  it("rejects an expired token", async () => {
+  it("rejects an expired token", () => {
     // Build a token with exp in the past by constructing the payload manually
-    const { createHmac } = await import("node:crypto")
     const key = Buffer.from("a".repeat(64), "hex")
     const exp = Date.now() - 1000
     const payload = Buffer.from(JSON.stringify({ teamId: "t", userId: "u", exp })).toString("base64url")
@@ -51,8 +51,7 @@ describe("utils/github-app-state", () => {
     expect(verifyStateToken("nodot")).toBeNull()
   })
 
-  it("rejects a token with malformed payload", async () => {
-    const { createHmac } = await import("node:crypto")
+  it("rejects a token with malformed payload", () => {
     const key = Buffer.from("a".repeat(64), "hex")
     const payload = Buffer.from("not-valid-json").toString("base64url")
     const sig = createHmac("sha256", key).update(payload).digest("base64url")
