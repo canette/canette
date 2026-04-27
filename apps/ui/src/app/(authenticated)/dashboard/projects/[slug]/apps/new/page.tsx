@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { cn } from "@/lib/utils"
 import { HelpTooltip } from "@/components/ui/tooltip"
 import { CanetteLogo } from "@/components/canette-logo"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import * as api from "@/lib/api"
 import type { GitCredential, Project } from "@canette/types"
 
@@ -265,17 +266,20 @@ export default function NewAppPage() {
                   {credentials.length > 0 && (
                     <div className="flex flex-col gap-1.5">
                       <Label htmlFor="gitCredentialId">Credential</Label>
-                      <select
-                        id="gitCredentialId"
-                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                        value={gitCredentialId}
-                        onChange={(e) => setGitCredentialId(e.target.value)}
+                      <Select
+                        value={gitCredentialId || "__none__"}
+                        onValueChange={(v) => setGitCredentialId(v === "__none__" ? "" : v)}
                       >
-                        <option value="">None (public repo)</option>
-                        {credentials.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
+                        <SelectTrigger id="gitCredentialId">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">No credentials — public repo</SelectItem>
+                          {credentials.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   )}
 

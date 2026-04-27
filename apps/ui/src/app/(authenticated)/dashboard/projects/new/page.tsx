@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
 import * as api from "@/lib/api"
 import type { Team } from "@canette/types"
 
@@ -126,18 +128,21 @@ export default function NewProjectPage() {
               {teams.length > 1 && (
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="team">Team</Label>
-                  <select
-                    id="team"
-                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                    value={teamId}
-                    onChange={(e) => setTeamId(e.target.value)}
-                  >
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}{t.isPersonal ? " (personal)" : ""}
-                      </option>
-                    ))}
-                  </select>
+                  <Select value={teamId} onValueChange={setTeamId}>
+                    <SelectTrigger id="team">
+                      <SelectValue placeholder="Select a team" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {teams.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          <span className="flex items-center gap-2">
+                            {t.name}
+                            {t.isPersonal && <Badge variant="muted">personal</Badge>}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
 
