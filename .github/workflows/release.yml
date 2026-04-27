@@ -48,7 +48,7 @@ jobs:
         run: ./scripts/build-images.sh --push --latest
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       - name: Stamp Chart.yaml
         env:
