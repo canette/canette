@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@canette/types": "workspace:*",
-    "better-auth": "^1.2.0",
+    "better-auth": "^1.6.6",
     "hono": "^4.12.0",
     "kysely": "^0.28.16",
     "pg": "^8.13.0"
