@@ -34,6 +34,10 @@ function statusVariant(status: string | undefined): StatusVariant {
   return "pending"
 }
 
+function formatStatus(status: string) {
+  return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 function shortSha(sha: string) { return sha.slice(0, 7) }
 
 function parseScanSummary(json: string | undefined): ScanSummary | null {
@@ -667,12 +671,12 @@ function WebhookCard({ appId, sourceType, defaultWatchPath, gitBranch, open, onT
             {!loading && config && (
               (config.autoRegistered || config.verifiedAt) ? (
                 <span className="text-xs px-1.5 py-0.5 rounded-full border border-transparent bg-green-500/15 text-green-400 font-semibold">
-                  active
+                  Active
                 </span>
               ) : (
                 <>
                   <span className="text-xs px-1.5 py-0.5 rounded-full border border-transparent bg-yellow-500/15 text-yellow-400 font-semibold">
-                    setup pending
+                    Setup Pending
                   </span>
                   <button
                     type="button"
@@ -711,11 +715,12 @@ function WebhookCard({ appId, sourceType, defaultWatchPath, gitBranch, open, onT
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-muted-foreground w-32 shrink-0">Registration</span>
-                  <span>{
-                    config.autoRegistered ? 
-                    (config.verifiedAt ? "Auto-registered (verified)" : "Auto-registered (pending)") :
-                    config.verifiedAt ? "Manual (verified)" : "Manual (pending)"
-                    }</span>
+                  <span className="flex items-center gap-2">
+                    {config.autoRegistered ? "Auto-registered" : "Manual"}
+                    {config.verifiedAt
+                      ? <Badge variant="live">Verified</Badge>
+                      : <Badge variant="muted">Pending</Badge>}
+                  </span>
                 </div>
                 {gitBranch && (
                   <div className="flex items-center gap-3">
@@ -1153,7 +1158,7 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
                 )}
               </div>
               <Badge variant={currentDeployment ? statusVariant(currentDeployment.status) : "pending"}>
-                {currentDeployment?.status ?? "not deployed"}
+                {currentDeployment ? formatStatus(currentDeployment.status) : "Not deployed"}
               </Badge>
             </div>
           </CardHeader>
@@ -1181,7 +1186,7 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
                   <span className="ml-2 text-xs">{timeAgo(latestDeployment.createdAt)}</span>
                 </span>
                 <Badge variant={statusVariant(latestDeployment.status)}>
-                  {latestDeployment.status}
+                  {formatStatus(latestDeployment.status)}
                 </Badge>
               </div>
             )}
@@ -1241,7 +1246,7 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
                       {i > 0 && <Separator />}
                       <div className="flex items-center justify-between px-6 py-3">
                         <div className="flex items-center gap-3">
-                          <Badge variant={statusVariant(d.status)}>{d.status}</Badge>
+                          <Badge variant={statusVariant(d.status)}>{formatStatus(d.status)}</Badge>
                           <span className="font-mono text-xs text-muted-foreground">{shortSha(d.commitSha)}</span>
                           {d.commitMessage && (
                             <span className="text-sm text-foreground/80 truncate max-w-xs">{d.commitMessage}</span>
@@ -1367,10 +1372,10 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
                           onValueChange={(v) => setGitCredentialId(v === "__none__" ? "" : v)}
                         >
                           <SelectTrigger id="gitCredentialId">
-                            <SelectValue placeholder="None (public repo)" />
+                            <SelectValue placeholder="No credentials — public repo" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="__none__">None (public repo)</SelectItem>
+                            <SelectItem value="__none__">No credentials — public repo</SelectItem>
                             {credentials.map((c) => (
                               <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                             ))}

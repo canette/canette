@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import { HelpTooltip } from "@/components/ui/tooltip"
 import { CanetteLogo } from "@/components/canette-logo"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import * as api from "@/lib/api"
 import type { GitCredential, Project } from "@canette/types"
 
@@ -46,6 +48,7 @@ export default function NewAppPage() {
   const [urlParsed, setUrlParsed] = useState(false)
   const [imageUrl, setImageUrl] = useState("")
   const [imageTag, setImageTag] = useState("latest")
+  const [port, setPort] = useState(3000)
   const [gitCredentialId, setGitCredentialId] = useState<string>("")
   const [credentials, setCredentials] = useState<GitCredential[]>([])
   const [error, setError] = useState("")
@@ -105,6 +108,7 @@ export default function NewAppPage() {
               gitBranch: gitBranch.trim() || "main",
               appPath: appPath.trim() || undefined,
               gitCredentialId: gitCredentialId || undefined,
+              port,
             }
           : {
               name: name.trim(),
@@ -112,6 +116,7 @@ export default function NewAppPage() {
               sourceType,
               imageUrl: imageUrl.trim(),
               imageTag: imageTag.trim() || "latest",
+              port,
             }
 
       const res = await fetch(`/api/v1/projects/${project.id}/apps`, {
@@ -261,17 +266,20 @@ export default function NewAppPage() {
                   {credentials.length > 0 && (
                     <div className="flex flex-col gap-1.5">
                       <Label htmlFor="gitCredentialId">Credential</Label>
-                      <select
-                        id="gitCredentialId"
-                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                        value={gitCredentialId}
-                        onChange={(e) => setGitCredentialId(e.target.value)}
+                      <Select
+                        value={gitCredentialId || "__none__"}
+                        onValueChange={(v) => setGitCredentialId(v === "__none__" ? "" : v)}
                       >
-                        <option value="">None (public repo)</option>
-                        {credentials.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
+                        <SelectTrigger id="gitCredentialId">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">No credentials — public repo</SelectItem>
+                          {credentials.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   )}
 
@@ -322,6 +330,35 @@ export default function NewAppPage() {
                   </div>
                 </div>
               )}
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="port" className="flex items-center gap-1">
+                  Port
+                  <HelpTooltip>
+                    <p className="mb-1.5">The same port your app uses locally, e.g. <code className="font-mono">http://localhost:3000</code> → port 3000.</p>
+                    <p className="mb-1 font-medium">Common defaults:</p>
+                    <ul className="space-y-0.5 text-muted-foreground">
+                      <li>Next.js / Node / Rails → 3000</li>
+                      <li>Vite → 5173</li>
+                      <li>Django / Laravel → 8000</li>
+                      <li>Flask / FastAPI → 5000</li>
+                      <li>Spring Boot → 8080</li>
+                    </ul>
+                    <p className="mt-1.5 text-muted-foreground">
+                      For Git apps, <code className="font-mono">PORT</code> is added automatically to the deployment. Most apps should work with the default value.
+                    </p>
+                  </HelpTooltip>
+                </Label>
+                <Input
+                  id="port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={port}
+                  onChange={(e) => setPort(Number(e.target.value))}
+                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+              </div>
 
               {error && <p className="text-sm text-destructive">{error}</p>}
 

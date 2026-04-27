@@ -102,18 +102,22 @@ func BuildResources(cfg DeployConfig) AppResources {
 		}
 	}
 
-	// Build env list from plain-text vars
-	envList := make([]interface{}, 0, len(cfg.EnvVars))
+	port := cfg.Port
+	if port == 0 {
+		port = 3000
+	}
+
+	// Inject PORT as the first env var so railpack-built apps bind to the
+	// configured port. User-defined env vars follow, so an explicit PORT in
+	// the app's env vars will override this value (last entry wins in K8s).
+	envList := []interface{}{
+		map[string]interface{}{"name": "PORT", "value": fmt.Sprintf("%d", port)},
+	}
 	for k, v := range cfg.EnvVars {
 		envList = append(envList, map[string]interface{}{
 			"name":  k,
 			"value": v,
 		})
-	}
-
-	port := cfg.Port
-	if port == 0 {
-		port = 3000
 	}
 
 	podSpec := map[string]interface{}{
