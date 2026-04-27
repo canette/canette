@@ -53,7 +53,7 @@ githubAppRouter.get("/callback", async (c) => {
   if (!claims) {
     return c.redirect(`${uiBase}/dashboard?error=github-app-invalid-state`)
   }
-  const { teamId, userId } = claims
+  const { teamId } = claims
 
   if (setupAction === "request") {
     // The user requested access that hasn't been approved yet.

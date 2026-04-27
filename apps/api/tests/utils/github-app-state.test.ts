@@ -16,7 +16,7 @@ describe("utils/github-app-state", () => {
 
   it("rejects a tampered payload", () => {
     const token = createStateToken("team-1", "user-1")
-    const [payload, sig] = token.split(".")
+    const [, sig] = token.split(".")
     const tampered = Buffer.from(
       JSON.stringify({ teamId: "team-2", userId: "user-1", exp: Date.now() + 60000 })
     ).toString("base64url")
@@ -51,8 +51,8 @@ describe("utils/github-app-state", () => {
     expect(verifyStateToken("nodot")).toBeNull()
   })
 
-  it("rejects a token with malformed payload", () => {
-    const { createHmac } = require("node:crypto")
+  it("rejects a token with malformed payload", async () => {
+    const { createHmac } = await import("node:crypto")
     const key = Buffer.from("a".repeat(64), "hex")
     const payload = Buffer.from("not-valid-json").toString("base64url")
     const sig = createHmac("sha256", key).update(payload).digest("base64url")
