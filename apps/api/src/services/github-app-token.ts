@@ -14,23 +14,23 @@ function readSecretOrEnv(key: string): string | undefined {
 }
 
 // generateInstallationToken mints a GitHub App installation access token.
-// It reads GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY
-// from the environment — these are injected by the Helm chart when api.githubApp is configured.
+// installationId: if provided, uses that installation; otherwise falls back to
+// GITHUB_APP_INSTALLATION_ID env var (system credential mode).
 // The returned token is valid for 1 hour and can be used as a Bearer token or as
 // x-access-token in git clone URLs, identical to a PAT.
-export async function generateInstallationToken(): Promise<string> {
+export async function generateInstallationToken(installationId?: string): Promise<string> {
   const appId = process.env.GITHUB_APP_ID
-  const installationId = process.env.GITHUB_APP_INSTALLATION_ID
+  const resolvedInstallationId = installationId ?? process.env.GITHUB_APP_INSTALLATION_ID
   const privateKey = readSecretOrEnv("GITHUB_APP_PRIVATE_KEY")
 
-  if (!appId || !installationId || !privateKey) {
+  if (!appId || !resolvedInstallationId || !privateKey) {
     throw new Error("GitHub App not configured (missing GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, or GITHUB_APP_PRIVATE_KEY)")
   }
 
   const jwt = signJwt(appId, privateKey)
 
   const res = await fetch(
-    `https://api.github.com/app/installations/${installationId}/access_tokens`,
+    `https://api.github.com/app/installations/${resolvedInstallationId}/access_tokens`,
     {
       method: "POST",
       headers: {
@@ -48,6 +48,37 @@ export async function generateInstallationToken(): Promise<string> {
 
   const data = await res.json() as { token: string }
   return data.token
+}
+
+// getInstallationDetails fetches GitHub App installation metadata using the app JWT.
+// Used by the callback to determine which account/org the installation belongs to.
+export async function getInstallationDetails(installationId: string): Promise<{ account: { login: string; type: string } }> {
+  const appId = process.env.GITHUB_APP_ID
+  const privateKey = readSecretOrEnv("GITHUB_APP_PRIVATE_KEY")
+
+  if (!appId || !privateKey) {
+    throw new Error("GitHub App not configured (missing GITHUB_APP_ID or GITHUB_APP_PRIVATE_KEY)")
+  }
+
+  const jwt = signJwt(appId, privateKey)
+
+  const res = await fetch(
+    `https://api.github.com/app/installations/${installationId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    }
+  )
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`GitHub App installation lookup failed (${res.status}): ${body}`)
+  }
+
+  return res.json() as Promise<{ account: { login: string; type: string } }>
 }
 
 // signJwt creates a short-lived RS256 JWT for authenticating as the GitHub App.

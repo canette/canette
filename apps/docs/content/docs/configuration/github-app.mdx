@@ -5,14 +5,16 @@ description: Configure a GitHub App for short-lived token authentication and web
 
 import { Callout } from "fumadocs-ui/components/callout"
 
-canette can authenticate with GitHub as a **GitHub App** instead of using personal access tokens. GitHub Apps are the recommended approach for production deployments because they:
+canette can authenticate with GitHub as a **GitHub App** instead of using personal access tokens. GitHub Apps use short-lived tokens generated on demand — no long-lived secrets are stored per user — and work as a machine identity with an explicitly-granted permission scope.
 
-- Use short-lived tokens (1 hour) generated on demand — no long-lived secrets stored per user
-- Authenticate as a machine identity, not a person
-- Have a minimal, explicitly-granted permission scope
-- Work across an entire GitHub organisation without being tied to a specific user account
+## Two modes
 
-This is a cluster-wide setting configured by the canette admin. Once configured, any user can create a "GitHub App" credential and use it for private repository access and webhook auto-registration.
+| Mode | Who installs | Use case |
+|------|-------------|----------|
+| **System credential** | Admin installs once, configures `installationId` in Helm | Small teams, shared organisation, admin controls repo access |
+| **Per-team installation** | Each team connects their own GitHub account or org via a wizard | Larger deployments where users manage their own repository access |
+
+Both modes can be active at the same time — a team can use either the system credential or their own installation when configuring an app. You can start with the system credential and add the per-team wizard later by setting `slug` and `callbackUrl`.
 
 ## Required GitHub App permissions
 
@@ -21,68 +23,97 @@ When creating the GitHub App, grant only these permissions:
 | Permission | Level |
 |------------|-------|
 | **Repository contents** | Read |
+| **Metadata** | Read (auto-granted) |
 | **Webhooks** | Read & Write |
-
-No other permissions are needed.
 
 ## Setup
 
-### 1. Create the GitHub App
+### Step 1 — Create the GitHub App
 
 1. Go to your GitHub organisation settings → **Developer settings** → **GitHub Apps** → **New GitHub App** (or visit your personal settings if not using an org).
 2. Fill in the required fields:
-   - **GitHub App name**: something like `canette-<yourorg>`
+   - **GitHub App name**: e.g. `canette-yourorg`
    - **Homepage URL**: your canette URL, e.g. `https://canette.example.com`
-   - **Webhook**: leave disabled (canette manages webhooks separately)
-3. Under **Repository permissions**, set:
-   - **Contents**: Read-only
-   - **Webhooks**: Read and write
-4. Under **Where can this GitHub App be installed?**: choose **Only on this account** (or **Any account** if you need cross-org support).
+   - **Callback URL** *(per-team mode only)*: `https://canette.example.com/api/v1/github-app/callback`
+   - **Webhook**: leave disabled — canette manages webhooks separately
+3. Under **Repository permissions**, set **Contents: Read-only** and **Webhooks: Read and write**.
+4. Under **Where can this GitHub App be installed?**: choose **Any account** (allows teams to install on their own accounts/orgs) or **Only on this account** if you only need system credential mode.
 5. Click **Create GitHub App**.
 6. Note the **App ID** shown at the top of the app settings page.
+7. Note the **App slug** — the URL-friendly name shown in `https://github.com/apps/{slug}`.
 
-### 2. Generate a private key
+### Step 2 — Generate a private key
 
-On the GitHub App settings page, scroll to **Private keys** and click **Generate a private key**. A `.pem` file is downloaded — keep it safe.
+On the GitHub App settings page, scroll to **Private keys** and click **Generate a private key**. A `.pem` file is downloaded. Keep it safe.
 
-### 3. Install the app on your organisation
+### Step 3 — Helm configuration
 
-1. On the GitHub App settings page, click **Install App** in the left sidebar.
-2. Choose your organisation and select **All repositories** (or specific repositories).
-3. After installing, look at the URL in your browser — it will contain the **Installation ID**:
-   ```
-   https://github.com/organizations/<org>/settings/installations/12345678
-   ```
-   The number at the end is your Installation ID.
-
-### 4. Configure the Helm chart
-
-Add the following to your `values.yaml`:
+#### System credential mode (admin installs once)
 
 ```yaml
 api:
   githubApp:
-    appId: "123456"              # your App ID
-    installationId: "12345678"   # your Installation ID
-    privateKey: |                # paste the contents of the .pem file
+    appId: "123456"              # App ID from GitHub App settings
+    installationId: "12345678"   # Installation ID (see below)
+    privateKey: |
       -----BEGIN RSA PRIVATE KEY-----
       MIIEowIBAAKCAQEA...
       -----END RSA PRIVATE KEY-----
 ```
 
-If you prefer to keep the private key in a separate Kubernetes Secret (e.g. managed by an external secrets operator), create the secret first and then reference it:
+To find the Installation ID: click **Install App** in the left sidebar of the GitHub App settings, choose an org, then look at the URL after installation:
+```
+https://github.com/organizations/<org>/settings/installations/12345678
+```
+The number at the end is the Installation ID.
+
+#### Per-team installation mode (users connect their own accounts)
+
+```yaml
+api:
+  githubApp:
+    appId: "123456"              # App ID from GitHub App settings
+    slug: "canette-yourorg"      # App slug (URL-friendly name)
+    callbackUrl: "https://canette.example.com/api/v1/github-app/callback"
+    privateKey: |
+      -----BEGIN RSA PRIVATE KEY-----
+      MIIEowIBAAKCAQEA...
+      -----END RSA PRIVATE KEY-----
+```
+
+No `installationId` is needed — users install the app themselves.
+
+#### Both modes together
+
+Set all fields to support both the system credential and the per-team install wizard simultaneously:
 
 ```yaml
 api:
   githubApp:
     appId: "123456"
     installationId: "12345678"
-    privateKeySecretRef:
-      name: my-github-app-secret   # name of the existing K8s Secret
-      key: private-key             # key within that Secret
+    slug: "canette-yourorg"
+    callbackUrl: "https://canette.example.com/api/v1/github-app/callback"
+    privateKey: |
+      -----BEGIN RSA PRIVATE KEY-----
+      ...
+      -----END RSA PRIVATE KEY-----
 ```
 
-Run `helm upgrade` to apply the changes. Both the API and builder pods will receive the GitHub App configuration as environment variables.
+If you prefer to keep the private key in a separate Kubernetes Secret, use `privateKeySecretRef` instead of `privateKey`:
+
+```yaml
+api:
+  githubApp:
+    appId: "123456"
+    slug: "canette-yourorg"
+    callbackUrl: "https://canette.example.com/api/v1/github-app/callback"
+    privateKeySecretRef:
+      name: my-github-app-secret
+      key: private-key
+```
+
+Run `helm upgrade` to apply the changes. Both the API and builder pods receive the configuration as environment variables.
 
 <Callout type="info">
   When providing the private key inline in `values.yaml`, Helm stores it in a Kubernetes Secret (`canette-api-secrets`). Treat that Secret with the same care as any other credential.
@@ -90,31 +121,44 @@ Run `helm upgrade` to apply the changes. Both the API and builder pods will rece
 
 ## Using the GitHub App credential
 
-Once the cluster is configured:
+### System credential
 
-1. Go to **Settings → Git Credentials** in the canette UI.
-2. Click **Add credential**, enter a name (e.g. `GitHub App`), choose the **GitHub** provider, and select the **GitHub App** type.
-3. Click **Add credential** — no secret fields are shown because the credentials live in the cluster configuration.
-4. Assign this credential to an app in its git settings.
+Once configured, a **GitHub App (system)** entry appears in the **GitHub App** section of every team's credentials page. Select it when adding an app in canette to use it for git access.
 
-When a build is triggered, the builder generates a fresh installation token at that moment and uses it as `x-access-token` for the git clone. When a webhook is auto-registered, the API generates a token at registration time. Tokens are never stored.
+### Per-team installation wizard
+
+When `slug` and `callbackUrl` are configured, users see a **"Connect GitHub Account or Org"** button in the **GitHub App** section of their team settings:
+
+1. Click **Connect GitHub Account or Org**.
+2. GitHub opens and asks which account or organisation to install on, and whether to grant access to all repositories or specific ones.
+3. After approval, canette stores the installation and it appears in the team's credential list.
+4. Team members can then select it when configuring an app.
+
+Installations are team-scoped and persist independently of who added them.
+
+## How tokens work
+
+When a build is triggered or a webhook is registered, canette generates a fresh installation token (1-hour lifetime) on demand using the private key. The token is used immediately as `x-access-token` in git clone URLs or as an API bearer token, and is never stored anywhere.
 
 ## Rotating the private key
 
-1. Go to the GitHub App settings → **Private keys** → **Generate a private key** to create a new key.
-2. Update your Helm values (or the referenced Kubernetes Secret) with the new key content.
-3. Run `helm upgrade`. The old key can then be deleted from the GitHub App settings.
+1. Generate a new private key from the GitHub App settings.
+2. Update your Helm values (or the referenced Kubernetes Secret) with the new key.
+3. Run `helm upgrade`. The old key can be deleted from the GitHub App settings afterwards.
 
 ## Troubleshooting
 
-**`GitHub App not configured` error when adding a credential**
-The Helm chart values are not set, or the pods have not restarted after the upgrade. Check that `GITHUB_APP_ID` is present in the API pod's environment.
+**"Connect GitHub Account or Org" button is not visible**
+`GITHUB_APP_SLUG` is not set in the API configuration. Set `api.githubApp.slug` in Helm values and run `helm upgrade`.
+
+**`GitHub App not configured` error**
+`GITHUB_APP_ID` or the private key is missing. Check the API pod's environment variables.
 
 **`GitHub App token exchange failed (401)`**
-The private key does not match the configured App ID, or the key has been revoked. Regenerate a private key from the GitHub App settings and update the Helm values.
+The private key does not match the configured App ID, or the key has been revoked. Regenerate a private key from the GitHub App settings and update Helm values.
 
-**`GitHub App token exchange failed (404)`**
-The Installation ID is incorrect, or the app has not been installed on the organisation. Reinstall from the GitHub App settings page.
+**`GitHub App token exchange failed (404)` or build fails with a per-team credential**
+The installation has been suspended or uninstalled on GitHub. The team member needs to reconnect by going to the team's **GitHub App** settings and clicking **Connect** again.
 
 **Clone succeeds but webhook auto-registration fails**
-Ensure the GitHub App has **Webhooks: Read & Write** permission. If the permission was recently added, re-install the app on the organisation for the updated permission to take effect.
+Ensure the GitHub App has **Webhooks: Read & Write** permission. If recently added, reinstall the app on the organisation for the updated permission to take effect.

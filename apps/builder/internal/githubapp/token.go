@@ -21,19 +21,23 @@ import (
 )
 
 // GenerateInstallationToken mints a GitHub App installation access token.
-// It reads GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY
-// from the environment. The returned token is valid for 1 hour and is used
-// as x-access-token in git clone URLs, identical to a PAT.
-func GenerateInstallationToken(ctx context.Context) (string, error) {
+// installationID: if non-empty, uses that installation directly (per-team credential).
+// Otherwise falls back to the GITHUB_APP_INSTALLATION_ID env var (system credential).
+// The returned token is valid for 1 hour and is used as x-access-token in git
+// clone URLs, identical to a PAT.
+func GenerateInstallationToken(ctx context.Context, installationID string) (string, error) {
 	appID := os.Getenv("GITHUB_APP_ID")
-	installID := os.Getenv("GITHUB_APP_INSTALLATION_ID")
+	resolvedInstallID := installationID
+	if resolvedInstallID == "" {
+		resolvedInstallID = os.Getenv("GITHUB_APP_INSTALLATION_ID")
+	}
 	privateKeyPEM := readSecretOrEnv("GITHUB_APP_PRIVATE_KEY")
 
 	var missing []string
 	if appID == "" {
 		missing = append(missing, "GITHUB_APP_ID")
 	}
-	if installID == "" {
+	if resolvedInstallID == "" {
 		missing = append(missing, "GITHUB_APP_INSTALLATION_ID")
 	}
 	if privateKeyPEM == "" {
@@ -48,7 +52,7 @@ func GenerateInstallationToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("sign JWT (app_id=%s): %w", appID, err)
 	}
 
-	url := fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", installID)
+	url := fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", resolvedInstallID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
@@ -59,14 +63,14 @@ func GenerateInstallationToken(ctx context.Context) (string, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("token exchange request (app_id=%s, installation_id=%s): %w", appID, installID, err)
+		return "", fmt.Errorf("token exchange request (app_id=%s, installation_id=%s): %w", appID, resolvedInstallID, err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
 	if resp.StatusCode != http.StatusCreated {
 		return "", fmt.Errorf("GitHub App token exchange failed (HTTP %d, app_id=%s, installation_id=%s): %s",
-			resp.StatusCode, appID, installID, strings.TrimSpace(string(body)))
+			resp.StatusCode, appID, resolvedInstallID, strings.TrimSpace(string(body)))
 	}
 
 	var result struct {

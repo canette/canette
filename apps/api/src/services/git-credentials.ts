@@ -16,6 +16,7 @@ function mapCredential(row: GitCredentialRow): GitCredential {
     name: row.name,
     provider: row.provider as GitProvider,
     type: row.type as GitCredentialType,
+    ...(row.installation_id ? { installationId: row.installation_id } : {}),
     createdAt: row.created_at,
     // encrypted_value intentionally omitted
   }
@@ -44,6 +45,7 @@ export async function initSystemCredentials(db: DB): Promise<void> {
         type: "github_app",
         encrypted_value: encrypt(""),
         ssh_known_hosts: null,
+        installation_id: null,
         created_at: now,
       })
       .onConflict((oc) => oc.column("id").doNothing())
@@ -59,7 +61,7 @@ export async function initSystemCredentials(db: DB): Promise<void> {
 // ── Access helpers ────────────────────────────────────────────────────────────
 
 // Returns true if userId is a member of the given team.
-async function isTeamMember(db: DB, teamId: string, userId: string): Promise<boolean> {
+export async function isTeamMember(db: DB, teamId: string, userId: string): Promise<boolean> {
   const row = await db
     .selectFrom("team_members")
     .select("id")
@@ -162,6 +164,63 @@ export async function createCredential(
     throw err
   }
 
+  const row = await db
+    .selectFrom("git_credentials")
+    .selectAll()
+    .where("id", "=", id)
+    .executeTakeFirstOrThrow()
+  return mapCredential(row)
+}
+
+// upsertGithubAppInstallation creates or updates a team-owned GitHub App credential
+// identified by its installation_id. Called from the GitHub App callback.
+export async function upsertGithubAppInstallation(
+  db: DB,
+  teamId: string,
+  installationId: string,
+  accountLogin: string,
+): Promise<GitCredential> {
+  const name = `${accountLogin} (GitHub App)`
+  const now = new Date().toISOString()
+
+  // Check if a credential with this installation_id already exists for this team.
+  const existing = await db
+    .selectFrom("git_credentials")
+    .select("id")
+    .where("team_id", "=", teamId)
+    .where("installation_id", "=", installationId)
+    .executeTakeFirst()
+
+  if (existing) {
+    // Update the name in case the account was renamed.
+    await db
+      .updateTable("git_credentials")
+      .set({ name })
+      .where("id", "=", existing.id)
+      .execute()
+    const row = await db
+      .selectFrom("git_credentials")
+      .selectAll()
+      .where("id", "=", existing.id)
+      .executeTakeFirstOrThrow()
+    return mapCredential(row)
+  }
+
+  const id = crypto.randomUUID()
+  await db
+    .insertInto("git_credentials")
+    .values({
+      id,
+      team_id: teamId,
+      name,
+      provider: "github",
+      type: "github_app",
+      encrypted_value: encrypt(""),
+      ssh_known_hosts: null,
+      installation_id: installationId,
+      created_at: now,
+    })
+    .execute()
   const row = await db
     .selectFrom("git_credentials")
     .selectAll()

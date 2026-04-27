@@ -12,6 +12,7 @@ import { webhooksRouter } from "./routes/webhooks"
 import { webhookReceiverRouter } from "./routes/webhook-receiver"
 import { adminRouter } from "./routes/admin"
 import { usersRouter } from "./routes/users"
+import { githubAppRouter } from "./routes/github-app"
 
 export function createApp() {
     const app = new Hono()
@@ -52,6 +53,7 @@ export function createApp() {
     api.route("/", webhooksRouter)
     api.route("/admin", adminRouter)
     api.route("/users", usersRouter)
+    api.route("/github-app", githubAppRouter)
 
     app.get("/healthz", (c) => c.json({ ok: true }))
 

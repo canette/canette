@@ -144,8 +144,12 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 
 			switch cred.Type {
 			case "github_app":
-				// Generate a fresh installation token — never stored, valid 1 hour.
-				token, tokenErr := githubapp.GenerateInstallationToken(ctx)
+				// Use per-credential installation ID if set; otherwise fall back to env var (system credential).
+				perCredInstallID := ""
+				if cred.InstallationID != nil {
+					perCredInstallID = *cred.InstallationID
+				}
+				token, tokenErr := githubapp.GenerateInstallationToken(ctx, perCredInstallID)
 				if tokenErr != nil {
 					lastErr = fmt.Errorf("generate GitHub App token: %w", tokenErr)
 					return
