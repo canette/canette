@@ -4,10 +4,23 @@
 // ENCRYPTION_KEY must be a 64-char hex string (32 bytes) in the environment.
 // The process throws at module load if the key is missing or malformed.
 
+import { readFileSync } from "node:fs"
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto"
 
+// readSecretOrEnv reads from a file if <KEY>_FILE is set, else falls back to
+// the plain env var. Supports Kubernetes file-mount (production) and env vars (local dev).
+function readSecretOrEnv(key: string): string | undefined {
+  const filePath = process.env[`${key}_FILE`]
+  if (filePath) {
+    try {
+      return readFileSync(filePath, "utf8").trimEnd()
+    } catch {}
+  }
+  return process.env[key]
+}
+
 function getMasterKey(): Buffer {
-  const hex = process.env.ENCRYPTION_KEY
+  const hex = readSecretOrEnv("ENCRYPTION_KEY")
   if (!hex || hex.length !== 64 || !/^[0-9a-f]+$/i.test(hex)) {
     throw new Error(
       "ENCRYPTION_KEY must be a 64-character hex string. " +

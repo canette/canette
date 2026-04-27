@@ -18,6 +18,8 @@ spec:
         app.kubernetes.io/name: postgres
     spec:
       priorityClassName: canette-postgres-critical
+      securityContext:
+        fsGroup: 999
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
@@ -29,7 +31,7 @@ spec:
                 name: postgres-credentials
           volumeMounts:
             - name: data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql
           resources:
             {{- toYaml .Values.postgres.resources | nindent 12 }}
           readinessProbe:

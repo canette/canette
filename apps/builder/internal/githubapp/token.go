@@ -27,7 +27,7 @@ import (
 func GenerateInstallationToken(ctx context.Context) (string, error) {
 	appID := os.Getenv("GITHUB_APP_ID")
 	installID := os.Getenv("GITHUB_APP_INSTALLATION_ID")
-	privateKeyPEM := os.Getenv("GITHUB_APP_PRIVATE_KEY")
+	privateKeyPEM := readSecretOrEnv("GITHUB_APP_PRIVATE_KEY")
 
 	var missing []string
 	if appID == "" {
@@ -138,4 +138,15 @@ func parsePrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 
 func base64URLEncode(data []byte) string {
 	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+// readSecretOrEnv reads a secret value from a file if <KEY>_FILE is set,
+// falling back to the plain environment variable.
+func readSecretOrEnv(key string) string {
+	if path := os.Getenv(key + "_FILE"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			return strings.TrimRight(string(data), "\n")
+		}
+	}
+	return os.Getenv(key)
 }

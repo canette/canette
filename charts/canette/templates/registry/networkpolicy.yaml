@@ -1,0 +1,40 @@
+{{- if .Values.registry.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: registry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: registry
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: registry
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # API pod (image listing / deletion)
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: canette-api
+        # Builder service pod (registry auth secret management)
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: canette-builder
+        # BuildKit daemon (image push after build)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "canette.buildNamespace" . }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: buildkitd
+        # Gateway/ingress-controller (external registry access via HTTPRoute)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.controller.gateway.namespace }}
+      ports:
+        - protocol: TCP
+          port: 5000
+{{- end }}

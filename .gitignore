@@ -13,7 +13,6 @@ out/
 build/
 apps/docs/.docusaurus/
 apps/docs/build/
-canette-config
 apps/logstreamer/logstreamer
 apps/builder/git-init
 apps/builder/canette-build

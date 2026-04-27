@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: canette-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: canette-api
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: canette-api
+  policyTypes:
+    - Ingress
+  ingress:
+    # UI server-side fetches (Next.js server components call the API in-cluster)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: canette-ui
+      ports:
+        - protocol: TCP
+          port: 3001
+    # Gateway/ingress-controller (webhooks and any direct external API access)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.controller.gateway.namespace }}
+      ports:
+        - protocol: TCP
+          port: 3001

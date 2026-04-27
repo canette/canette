@@ -21,26 +21,57 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            suffix: arm64
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push edge images
+      - name: Build and push platform images
         env:
           IMAGE_REPO: ghcr.io/${{ github.repository_owner }}
-          TAG: edge
+          TAG: edge-${{ matrix.suffix }}
+          PLATFORMS: ${{ matrix.platform }}
         run: ./scripts/build-images.sh --push
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifests
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}
+        run: |
+          for image in canette-api canette-ui canette-builder canette-controller \
+                       canette-builder-git-init canette-builder-image-build canette-logstreamer; do
+            docker buildx imagetools create \
+              -t ${REPO}/${image}:edge \
+              ${REPO}/${image}:edge-amd64 \
+              ${REPO}/${image}:edge-arm64
+          done
