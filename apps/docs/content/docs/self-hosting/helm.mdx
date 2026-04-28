@@ -1,5 +1,5 @@
 ---
-title: Helm installation
+title: Helm reference
 description: Deploy canette to your cluster using the Helm chart.
 ---
 
@@ -12,83 +12,60 @@ The canette Helm chart deploys the API, UI, builder, controller, logstreamer, an
 - Helm 3.8+
 - Kubernetes 1.27+ with Gateway API CRDs installed
 - A Gateway API implementation (Traefik, Cilium, etc.)
+- A pre-existing Gateway resource — see [Installation](/docs/getting-started/installation) for the full setup checklist
 
 ## Install
 
-The chart is published to GitHub Container Registry and can be installed directly — no repository clone required:
+The chart is published to GitHub Container Registry. Create a `values.yaml` and install:
 
 ```bash
-helm upgrade --install canette oci://ghcr.io/canette/canette \
-  --version 0.1.0 \
+helm install canette oci://ghcr.io/canette/canette \
   -n canette-system --create-namespace \
-  --set domain="apps.example.com" \
-  --set ui.hostname="canette.example.com" \
-  --set api.githubClientId="<client-id>" \
-  --set api.githubClientSecret="<client-secret>"
+  -f values.yaml
 ```
 
-Replace `0.1.0` with the version you want to install. Available versions are listed on the [canette-chart package page](https://github.com/orgs/canette/packages/container/package/canette-chart).
+Omitting `--version` installs the latest release. To pin a specific version:
+
+```bash
+helm install canette oci://ghcr.io/canette/canette \
+  --version 1.2.3 \
+  -n canette-system --create-namespace \
+  -f values.yaml
+```
+
+Available versions are listed on the [canette package page](https://github.com/orgs/canette/packages/container/package/canette).
+
+The `-n` flag controls the system namespace. canette always creates a second namespace for build jobs named `{system}-build` — with the default above that becomes `canette-system-build`.
 
 ## Install from source
 
 If you have the repository cloned, you can install directly from the chart directory:
 
 ```bash
-helm upgrade --install canette charts/canette \
+helm install canette charts/canette \
   -n canette-system --create-namespace \
-  --set domain="apps.example.com" \
-  --set ui.hostname="canette.example.com" \
-  --set api.githubClientId="<client-id>" \
-  --set api.githubClientSecret="<client-secret>"
+  -f values.yaml
 ```
 
-The `-n` flag controls the system namespace. canette always creates a second namespace for build jobs named `{system}-build` — with the default above that becomes `canette-system-build`.
-
-## Using a custom image registry
-
-Service images default to `ghcr.io/canette/canette/{service}:{appVersion}`, where `appVersion` is the version embedded in the Helm chart. Installing or upgrading the chart automatically uses the matching image versions — no image flags needed for a standard install.
-
-To use a different registry or override the tag:
-
-```bash
-# Use a different registry
---set image.repo="my-registry/canette"
-
-# Use the edge build (latest commit on main — development only)
---set image.tag="edge"
-```
-
-<Callout type="warn">
-  **Do not use `:edge` in production.** The `edge` tag is rebuilt on every commit to `main` and is not immutable — a pod restart can silently pull a newer image, leaving components running at mismatched versions. Stick with the chart's default versioned tag for any environment where stability matters.
-</Callout>
-
-`domain` is the base domain for all dynamic hostnames:
-- **App URLs**: `{app}-{project}.apps.example.com`
-- **In-cluster registry**: `registry.apps.example.com` (when `registry.enabled=true`)
-
-The `controller.pullRepo` value is no longer required when using the in-cluster registry — it auto-derives to `registry.<domain>/`.
-
-For anything beyond a quick test, use a values file:
-
-```bash
-helm upgrade --install canette charts/canette -n canette-system --create-namespace -f my-values.yaml
-```
-
-### Multiple instances
+## Multiple instances
 
 Because all namespaces are derived from `-n`, you can run isolated installations side by side:
 
 ```bash
-# Production — apps at {app}-{project}.apps.example.com, registry at registry.apps.example.com
-helm upgrade --install canette charts/canette -n canette-system --create-namespace -f prod-values.yaml
+# Production — apps at {app}-{project}.apps.example.com
+helm install canette oci://ghcr.io/canette/canette \
+  -n canette-system --create-namespace -f prod-values.yaml
 
-# Staging — apps at {app}-{project}.staging.example.com, registry at registry.staging.example.com
-helm upgrade --install canette-staging charts/canette -n canette-staging --create-namespace -f staging-values.yaml
+# Staging — apps at {app}-{project}.staging.example.com
+helm install canette-staging oci://ghcr.io/canette/canette \
+  -n canette-staging --create-namespace -f staging-values.yaml
 ```
 
 This creates `canette-system` + `canette-system-build` for production, and `canette-staging` + `canette-staging-build` for staging — no resource conflicts.
 
 ## Key values
+
+The sections below cover the most commonly used values. For the full list with descriptions, see [`charts/canette/values.yaml`](https://github.com/canette/canette/blob/main/charts/canette/values.yaml) in the repository.
 
 ### Required
 
@@ -97,9 +74,9 @@ This creates `canette-system` + `canette-system-build` for production, and `cane
 | `domain` | Base domain for all dynamic hostnames, e.g. `apps.example.com`. App URLs use `{app}-{project}.<domain>`; the in-cluster registry is exposed at `registry.<domain>`. |
 | `ui.hostname` | Public hostname for the UI, e.g. `canette.example.com` |
 
-### Authentication (optional, but needed to log in via OAuth)
+### Authentication (optional)
 
-Email magic link login is enabled by default. To add GitHub or Google OAuth, provide the following values:
+Email and password login is enabled by default — no OAuth app required. To add GitHub or Google OAuth:
 
 | Value | Description |
 |-------|-------------|
@@ -110,20 +87,24 @@ Email magic link login is enabled by default. To add GitHub or Google OAuth, pro
 
 ### Images (optional)
 
-All service images default to `{image.repo}/{serviceName}:{image.tag}`.
+All service images default to `{image.repo}/{serviceName}:{image.tag}`, where `image.tag` defaults to the chart's `appVersion`. Installing or upgrading the chart automatically uses the matching image versions — no image overrides needed for a standard install.
 
 | Value | Default | Description |
 |-------|---------|-------------|
-| `image.repo` | `ghcr.io/canette/canette` | Base repository for all canette service images |
-| `image.tag` | `Chart.AppVersion` | Tag applied to all service images. Defaults to the chart's `appVersion` — versioned releases are tracked automatically. Set to `edge` to use the latest development build. |
+| `image.repo` | `ghcr.io/canette` | Base repository for all canette service images |
+| `image.tag` | `Chart.AppVersion` | Tag applied to all service images. Set to `edge` to use the latest development build. |
 | `api.image` | derived | Override the API image |
 | `ui.image` | derived | Override the UI image |
 | `builder.image` | derived | Override the builder image |
-| `builder.builderImage` | derived (`image-build`) | Override the Railpack+buildctl build job image |
-| `builder.gitInitImage` | derived (`git-init`) | Override the git-init build job image |
+| `builder.builderImage` | derived | Override the Railpack+buildctl build job image |
+| `builder.gitInitImage` | derived | Override the git-init build job image |
 | `controller.image` | derived | Override the controller image |
 | `logstreamer.image` | derived | Override the logstreamer image |
 | `migrations.enabled` | `false` | Set to `true` to run migrations as a Helm pre-upgrade Job instead of at API startup |
+
+<Callout type="warn">
+  **Do not use `:edge` in production.** The `edge` tag is rebuilt on every commit to `main` and is not immutable — a pod restart can silently pull a newer image, leaving components running at mismatched versions. Stick with the chart's default versioned tag for any environment where stability matters.
+</Callout>
 
 ### API configuration (optional)
 
@@ -133,8 +114,8 @@ All service images default to `{image.repo}/{serviceName}:{image.tag}`.
 | `api.defaultResources.memoryRequest` | `128Mi` | Default memory request for every app deployment |
 | `api.defaultResources.cpuLimit` | `500m` | Default CPU limit for every app deployment |
 | `api.defaultResources.memoryLimit` | `512Mi` | Default memory limit for every app deployment |
-| `api.webhookBaseUrl` | `""` | Public base URL used when constructing webhook URLs registered with git providers. Leave empty to use the UI hostname. Set this if your API is accessible at a different hostname than the UI (e.g. only the API is publicly exposed). |
-| `api.disableEmailSignup` | `false` | Disable email/password sign-up. Existing users can still sign in with email. Set to `true` on closed-access deployments where user accounts are created by an admin. |
+| `api.webhookBaseUrl` | `""` | Public base URL used when constructing webhook URLs registered with git providers. Leave empty to use the UI hostname. Set this if your API is accessible at a different hostname than the UI. |
+| `api.disableEmailSignup` | `false` | Disable new user sign-up via email. Existing users can still sign in. Set to `true` on closed-access deployments where accounts are created by an admin. |
 
 Resource values use standard Kubernetes quantity notation: `100m` (millicores), `256Mi` (mebibytes), `1` (full core or gigabyte).
 
@@ -246,7 +227,6 @@ The encryption key used to protect git credentials and app secrets at rest is **
 To provide your own key (disaster recovery, cluster migration):
 
 ```yaml
-# my-values.yaml
 encryptionKey: "your-32-character-key-here"
 ```
 
@@ -257,16 +237,22 @@ encryptionKey: "your-32-character-key-here"
 ## Upgrading
 
 ```bash
-helm upgrade canette charts/canette --reuse-values
+helm upgrade canette oci://ghcr.io/canette/canette --reuse-values
 ```
 
-Migrations run automatically as a pre-upgrade hook Job before the services restart.
+To upgrade to a specific version:
+
+```bash
+helm upgrade canette oci://ghcr.io/canette/canette --version 1.2.3 --reuse-values
+```
+
+Migrations run automatically at API startup after the upgrade.
 
 ## Uninstalling
 
 ```bash
-helm uninstall canette
-kubectl delete namespace canette-system canette-build
+helm uninstall canette -n canette-system
+kubectl delete namespace canette-system canette-system-build
 ```
 
 <Callout type="warn">
@@ -275,27 +261,19 @@ kubectl delete namespace canette-system canette-build
 
 ## Operations
 
-### Updating registry credentials
+### Rotating registry credentials
 
-To rotate or add registry credentials without changing other values:
-
-```bash
-helm upgrade canette charts/canette --reuse-values \
-  --set externalRegistry.username=myuser \
-  --set externalRegistry.password=mytoken
-```
-
-To keep credentials out of shell history, use a gitignored values file instead:
+To rotate credentials without changing other values, use a gitignored secrets file:
 
 ```yaml
-# secrets.yaml
+# secrets.yaml  (add to .gitignore)
 externalRegistry:
   username: myuser
   password: mytoken
 ```
 
 ```bash
-helm upgrade canette charts/canette --reuse-values -f secrets.yaml
+helm upgrade canette oci://ghcr.io/canette/canette --reuse-values -f secrets.yaml
 ```
 
 After upgrading, restart the builder to pick up the new credentials:
@@ -306,19 +284,8 @@ kubectl rollout restart deployment/canette-builder -n canette-system
 
 ### Updating resource defaults
 
-Resource defaults are Helm values — change them with an upgrade:
-
-```bash
-helm upgrade canette charts/canette --reuse-values \
-  --set api.defaultResources.cpuRequest=250m \
-  --set api.defaultResources.memoryRequest=256Mi \
-  --set api.defaultResources.cpuLimit=1 \
-  --set api.defaultResources.memoryLimit=1Gi
-```
-
-Or in a values file:
-
 ```yaml
+# values.yaml
 api:
   defaultResources:
     cpuRequest: "250m"
@@ -327,18 +294,11 @@ api:
     memoryLimit: "1Gi"
 ```
 
-The new values take effect on the next deployment for each app. Existing live apps continue to use the resource values from when they were last deployed.
-
-### Updating the webhook base URL
-
-The webhook base URL is also a Helm value:
-
 ```bash
-helm upgrade canette charts/canette --reuse-values \
-  --set api.webhookBaseUrl="https://api.example.com"
+helm upgrade canette oci://ghcr.io/canette/canette --reuse-values -f values.yaml
 ```
 
-Leave it empty (the default) to use the UI hostname. Only set it if your API is reachable at a different public hostname than the UI.
+The new values take effect on the next deployment for each app. Existing live apps continue to use the resource values from when they were last deployed.
 
 ### Restarting a service
 
