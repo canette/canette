@@ -6,6 +6,15 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 5      
+  - package-ecosystem: "gomod"
+    directories:
+      - "/apps/controller"
+      - "/apps/builder"
+      - "/apps/logstreamer"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 5
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
