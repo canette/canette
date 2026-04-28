@@ -99,7 +99,7 @@ async function tryAutoRegister(
 
   const cred = await db
     .selectFrom("git_credentials")
-    .select(["type", "encrypted_value"])
+    .select(["type", "encrypted_value", "installation_id"])
     .where("id", "=", app.git_credential_id)
     .executeTakeFirst()
   if (!cred || (cred.type !== "pat" && cred.type !== "github_app")) {
@@ -109,7 +109,7 @@ async function tryAutoRegister(
   let pat: string
   try {
     pat = cred.type === "github_app"
-      ? await generateInstallationToken()
+      ? await generateInstallationToken(cred.installation_id ?? undefined)
       : decrypt(cred.encrypted_value)
   } catch (err) {
     console.error("webhook auto-register: failed to obtain token", err)
@@ -371,13 +371,13 @@ export async function deleteWebhook(
     if (parsed) {
       const cred = await db
         .selectFrom("git_credentials")
-        .select(["type", "encrypted_value"])
+        .select(["type", "encrypted_value", "installation_id"])
         .where("id", "=", accessRow.git_credential_id)
         .executeTakeFirst()
       if (cred?.type === "pat" || cred?.type === "github_app") {
         try {
           const pat = cred.type === "github_app"
-            ? await generateInstallationToken()
+            ? await generateInstallationToken(cred.installation_id ?? undefined)
             : decrypt(cred.encrypted_value)
           await tryDeregister(parsed, row.provider_hook_id, pat)
         } catch {

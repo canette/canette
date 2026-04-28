@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, use } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,7 +12,8 @@ import { Badge } from "@/components/ui/badge"
 import { AppShell } from "@/components/app-shell"
 import { useSession } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
-import { ArrowLeft, Eye, EyeOff } from "lucide-react"
+import { ArrowLeft, Eye, EyeOff, Loader2 } from "lucide-react"
+import { GitHubIcon } from "@/components/icons/github-icon"
 import * as api from "@/lib/api"
 import type { GitCredential, GitCredentialType, GitProvider, Team, TeamMember } from "@canette/types"
 
@@ -45,6 +47,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const { id: teamId } = use(params)
   const { data: session } = useSession()
   const isAdmin = session?.user?.role === "admin"
+  const searchParams = useSearchParams()
 
   const [team, setTeam] = useState<Team | null>(null)
   const [members, setMembers] = useState<TeamMember[]>([])
@@ -73,6 +76,10 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [savingCred, setSavingCred] = useState(false)
   const [editCredError, setEditCredError] = useState("")
 
+  // GitHub App installation
+  const [connectingGithubApp, setConnectingGithubApp] = useState(false)
+  const [githubAppNotice, setGithubAppNotice] = useState<string | null>(null)
+
   const load = useCallback(async () => {
     try {
       const [teamData, credData] = await Promise.all([
@@ -88,6 +95,20 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   }, [teamId])
 
   useEffect(() => { load() }, [load])
+
+  // Handle redirect back from GitHub App installation flow.
+  useEffect(() => {
+    const status = searchParams.get("github_app")
+    const error = searchParams.get("error")
+    if (status === "installed") {
+      setGithubAppNotice("GitHub App connected successfully.")
+      load()
+    } else if (status === "pending") {
+      setGithubAppNotice("GitHub App installation is pending admin approval on GitHub.")
+    } else if (error === "github-app-callback-failed") {
+      setGithubAppNotice("Failed to complete GitHub App installation. Please try again.")
+    }
+  }, [searchParams, load])
 
   async function handleAddMember(e: React.FormEvent) {
     e.preventDefault()
@@ -167,6 +188,22 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     }
   }
 
+  async function handleConnectGithubApp() {
+    setConnectingGithubApp(true)
+    try {
+      const result = await api.githubApp.getInstallUrl(teamId)
+      if (!result.available || !result.url) {
+        setGithubAppNotice("Per-Team GitHub App support is not configured on this instance. Ask your admin to set it up.")
+        return
+      }
+      window.location.href = result.url
+    } catch {
+      setGithubAppNotice("Failed to get GitHub App install URL. Please try again.")
+    } finally {
+      setTimeout(() => setConnectingGithubApp(false), 2000)
+    }
+  }
+
   if (loading) {
     return (
       <AppShell breadcrumb={[{ label: "canette", href: "/dashboard" }, { label: "Teams", href: "/dashboard/teams" }, { label: "…" }]}>
@@ -183,9 +220,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     )
   }
 
-  // Only show team credentials (not system), system shown read-only below
-  const teamCreds = credentials.filter((c) => c.teamId !== null)
-  const systemCreds = credentials.filter((c) => c.teamId === null)
+  const systemGithubApp = credentials.find((c) => c.teamId === null && c.type === "github_app")
+  const teamGithubAppCreds = credentials.filter((c) => c.teamId !== null && c.type === "github_app")
+  const teamCreds = credentials.filter((c) => c.teamId !== null && c.type !== "github_app")
 
   return (
     <AppShell
@@ -502,25 +539,82 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             </form>
 
-            {/* System credentials (read-only) */}
-            {systemCreds.length > 0 && (
-              <>
-                <Separator />
-                <div className="px-6 py-3">
-                  <p className="text-xs text-muted-foreground font-medium mb-2">SYSTEM CREDENTIALS</p>
-                  {systemCreds.map((cred) => (
-                    <div key={cred.id} className="flex items-center gap-4 py-2">
-                      <span className="text-sm font-medium w-48 truncate">{cred.name}</span>
-                      <span className="text-xs text-muted-foreground w-20">{providerLabel(cred.provider)}</span>
-                      <span className="text-xs text-muted-foreground w-24">{typeLabel(cred.type)}</span>
-                      <Badge variant="secondary" className="text-xs">system</Badge>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
           </CardContent>
         </Card>
+
+        {/* GitHub App */}
+        {(systemGithubApp || teamGithubAppCreds.length > 0 || true) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">GitHub App</CardTitle>
+              <CardDescription>
+                Connect your GitHub account or org to grant canette access to repositories.
+                {!team.isPersonal && <span><br/>All team members can use the connected credentials when adding Applications.</span>}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {githubAppNotice && (
+                <div className="px-6 py-3 bg-muted/40 border-b border-border/50">
+                  <p className="text-sm text-muted-foreground">{githubAppNotice}</p>
+                </div>
+              )}
+
+              {systemGithubApp && (
+                <>
+                  <div className="px-6 py-3 border-b border-border/50">
+                    <p className="text-xs text-muted-foreground font-medium mb-2">SYSTEM INSTALLATION</p>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-medium flex-1">{systemGithubApp.name}</span>
+                      <Badge variant="secondary" className="text-xs">configured by admin</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">Available to all teams. Access is configured by your instance admin.</p>
+                  </div>
+                </>
+              )}
+
+              {teamGithubAppCreds.length > 0 && (
+                <>
+                  <div className="px-6 py-1.5 flex items-center gap-4 border-b border-border/50">
+                    <span className="text-xs text-muted-foreground flex-1">TEAM INSTALLATIONS</span>
+                    <span className="text-xs text-muted-foreground w-20">CONNECTED</span>
+                    <span className="w-7" />
+                  </div>
+                  {teamGithubAppCreds.map((cred, i) => (
+                    <div key={cred.id}>
+                      {i > 0 && <Separator />}
+                      <div className="flex items-center gap-4 px-6 py-3 group">
+                        <span className="text-sm font-medium flex-1 truncate">{cred.name}</span>
+                        <span className="text-xs text-muted-foreground w-20">{timeAgo(cred.createdAt)}</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"
+                          onClick={() => handleDeleteCred(cred.id)}
+                          title="Remove installation"
+                        >
+                          ×
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  <Separator />
+                </>
+              )}
+
+              <div className="px-6 py-4">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleConnectGithubApp}
+                  disabled={connectingGithubApp}
+                >
+                  {connectingGithubApp ? <Loader2 className="size-4 animate-spin" /> : <GitHubIcon size={18} />}
+                  Connect GitHub Account or Org
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
       </div>
     </AppShell>

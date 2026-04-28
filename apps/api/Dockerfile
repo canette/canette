@@ -21,6 +21,7 @@ COPY apps/api/migrations ./apps/api/migrations
 COPY apps/api/scripts ./apps/api/scripts
 COPY apps/api/src ./apps/api/src
 COPY apps/api/tests ./apps/api/tests
+COPY apps/api/.env.test ./apps/api/.env.test
 
 RUN bun run test:api
 RUN bun run build:api

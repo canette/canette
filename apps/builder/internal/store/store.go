@@ -67,9 +67,10 @@ type ScanPolicy struct {
 // GitCredential is a decrypted-ready credential row.
 type GitCredential struct {
 	ID             string
-	Type           string  // "pat" | "ssh_key"
+	Type           string  // "pat" | "ssh_key" | "github_app"
 	EncryptedValue string  // AES-256-GCM blob — caller must decrypt
 	SSHKnownHosts  *string // only set for ssh_key type
+	InstallationID *string // only set for github_app type (per-team installations)
 }
 
 // Store wraps a *sql.DB and exposes builder-specific queries.
@@ -263,10 +264,10 @@ func (s *Store) SetDeploymentCanetteConfig(ctx context.Context, deploymentID, ya
 // GetGitCredential fetches a git_credential row by ID.
 func (s *Store) GetGitCredential(ctx context.Context, id string) (*GitCredential, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, type, encrypted_value, ssh_known_hosts
+		SELECT id, type, encrypted_value, ssh_known_hosts, installation_id
 		FROM git_credentials WHERE id = $1`, id)
 	var c GitCredential
-	if err := row.Scan(&c.ID, &c.Type, &c.EncryptedValue, &c.SSHKnownHosts); err != nil {
+	if err := row.Scan(&c.ID, &c.Type, &c.EncryptedValue, &c.SSHKnownHosts, &c.InstallationID); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}

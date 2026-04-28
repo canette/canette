@@ -52,6 +52,12 @@ export const teams = {
     request<void>(`/teams/${teamId}/credentials/${id}`, { method: "DELETE" }),
 }
 
+// GitHub App
+export const githubApp = {
+  getInstallUrl: (teamId: string) =>
+    request<{ available: boolean; url?: string }>(`/github-app/install-url?teamId=${teamId}`),
+}
+
 // Projects
 export const projects = {
   list: () => request<PaginatedResponse<Project>>("/projects"),

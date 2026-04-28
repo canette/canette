@@ -8,7 +8,6 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -16,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@
 import { ArrowLeft, ChevronDown, Download, ExternalLink, Eye, EyeOff, Loader2, RefreshCw, TriangleAlert, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AppShell } from "@/components/app-shell"
+import { CredentialSelect } from "@/components/credential-select"
 import * as api from "@/lib/api"
 import type { App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, ScanSummary } from "@canette/types"
 
@@ -1365,23 +1365,11 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
                           <Input id="appPath" placeholder="/" value={appPath} onChange={(e) => setAppPath(e.target.value)} />
                         </div>
                       </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="gitCredentialId">Credential</Label>
-                        <Select
-                          value={gitCredentialId || "__none__"}
-                          onValueChange={(v) => setGitCredentialId(v === "__none__" ? "" : v)}
-                        >
-                          <SelectTrigger id="gitCredentialId">
-                            <SelectValue placeholder="No credentials — public repo" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">No credentials — public repo</SelectItem>
-                            {credentials.map((c) => (
-                              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      <CredentialSelect
+                        credentials={credentials}
+                        value={gitCredentialId}
+                        onChange={setGitCredentialId}
+                      />
                     </>
                   ) : (
                     <div className="grid grid-cols-2 gap-4">
