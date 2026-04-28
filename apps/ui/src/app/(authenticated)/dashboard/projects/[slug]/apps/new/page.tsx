@@ -9,7 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { cn } from "@/lib/utils"
 import { HelpTooltip } from "@/components/ui/tooltip"
 import { CanetteLogo } from "@/components/canette-logo"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CredentialSelect } from "@/components/credential-select"
 import * as api from "@/lib/api"
 import type { GitCredential, Project } from "@canette/types"
