@@ -1,241 +1,111 @@
 ---
 title: In-cluster registry
-description: Set up the in-cluster container registry with HTTPS, TLS certificates, and k3s pull configuration.
+description: How the canette in-cluster container registry works and how to configure it.
 ---
 
-canette ships with an optional in-cluster container registry (distribution/registry). This page covers how to expose it externally over HTTPS, configure k3s nodes to pull from it, and authenticate pushes from build pods.
+import { Callout } from "fumadocs-ui/components/callout"
 
-The recommended approach is to give the registry a real hostname via Traefik, back it with a certificate from mkcert (or any CA your nodes trust), and point everything — Mac, nodes, in-cluster pods — at the same external hostname. This avoids the three-address problem where `localhost`, the node IP, and the in-cluster DNS name all refer to different things.
+canette ships with an optional in-cluster container registry (`registry:2`) enabled by default. This page explains how it works, how credentials are managed, and how to set up TLS for local development clusters where Let's Encrypt isn't an option.
 
----
+## How the registry works
 
-## 1. Pick a hostname
+When `registry.enabled=true` (the default), the Helm chart sets up:
 
-Choose a hostname that resolves to your cluster's ingress IP from every place that needs to push or pull: your Mac, the k3s node, and pods inside the cluster.
+- A `registry:2` deployment in the `canette-system` namespace, listening on port 5000
+- An `HTTPRoute` that exposes it at `registry.{domain}` through your Gateway
+- Auto-generated credentials stored in the `canette-registry-credentials` Secret, reused on every `helm upgrade`
+- A docker config Secret (`canette-registry-auth`) mounted into every build job automatically
 
-Options:
-- A real subdomain with a DNS A record pointing at the node IP: `registry.k8s.example.com`
-- A `.traefik.me` wildcard address: `registry.192-168-64-2.traefik.me` (resolves to `192.168.64.2`)
-- A local `/etc/hosts` entry on every machine (fragile, not recommended for nodes)
+There are two distinct paths for registry traffic:
 
-The `.traefik.me` service is convenient for local k3s clusters — the subdomain encodes the IP and resolves publicly, so DNS works everywhere without any configuration.
+| Who | Address | Protocol |
+|-----|---------|----------|
+| BuildKit (push from build jobs) | `registry.canette-system.svc.cluster.local:5000` | HTTP — internal ClusterIP, no TLS |
+| Kubelets (pull to run app pods) | `registry.{domain}` | HTTPS — through your Gateway |
 
-Throughout this page `REGISTRY_HOST` refers to your chosen hostname, for example:
+BuildKit pushes over plain HTTP to the internal ClusterIP address. Kubelets pull over HTTPS through the Gateway, so **TLS termination on the Gateway is required** for image pulls to work.
 
-```
-REGISTRY_HOST=registry.192-168-64-2.traefik.me
-REGISTRY_PORT=32500   # the NodePort registry Service is exposed on
-```
+## Credentials
 
----
+Registry credentials are auto-generated on first install and reused on every upgrade — no configuration needed. Build jobs receive the credentials automatically via the `canette-registry-auth` docker config Secret.
 
-## 2. Create a TLS certificate with mkcert
+To rotate credentials or set your own, see the [Helm reference](/docs/self-hosting/helm#registry-authentication).
 
-[mkcert](https://github.com/FiloSottile/mkcert) creates locally-trusted certificates without a commercial CA.
+## TLS for local development (mkcert)
 
-### On your Mac
+On a local cluster (k3s, kind, etc.) without a public IP, [Let's Encrypt](/docs/getting-started/installation#1-gateway-api-with-tls-termination) won't work. [mkcert](https://github.com/FiloSottile/mkcert) generates locally-trusted certificates backed by a CA you install yourself.
+
+<Callout type="info">
+  This is more involved than cert-manager. You need to install the mkcert CA in your cluster, on every node that runs workloads, and on any client machine that pushes images. Budget 15–20 minutes.
+</Callout>
+
+### Step 1 — Generate a certificate
 
 ```bash
-# Install mkcert if needed
 brew install mkcert
 mkcert -install   # installs the local CA into the macOS keychain
 
-# Generate a cert for your registry hostname
-mkcert "${REGISTRY_HOST}"
-# Produces: <REGISTRY_HOST>.pem  and  <REGISTRY_HOST>-key.pem
+mkcert "registry.apps.example.com"
+# Produces: registry.apps.example.com.pem  and  registry.apps.example.com-key.pem
 ```
 
-### Copy the CA to the k3s node
-
-Every node that pulls images needs to trust the mkcert CA. Get the CA file location:
-
-```bash
-mkcert -CAROOT
-# e.g. /Users/you/Library/Application Support/mkcert
-```
-
-Copy `rootCA.pem` to the node:
-
-```bash
-scp "$(mkcert -CAROOT)/rootCA.pem" root@<NODE_IP>:/usr/local/share/ca-certificates/mkcert-rootCA.crt
-ssh root@<NODE_IP> update-ca-certificates
-```
-
-On RHEL/CentOS nodes use `/etc/pki/ca-trust/source/anchors/` and `update-ca-trust extract` instead.
-
----
-
-## 3. Create the TLS Secret in Kubernetes
+### Step 2 — Create the TLS Secret in Kubernetes
 
 ```bash
 kubectl create secret tls registry-tls \
   --namespace canette-system \
-  --cert="${REGISTRY_HOST}.pem" \
-  --key="${REGISTRY_HOST}-key.pem"
+  --cert="registry.apps.example.com.pem" \
+  --key="registry.apps.example.com-key.pem"
 ```
 
----
+### Step 3 — Configure your Gateway to use the cert
 
-## 4. Expose the registry via Traefik IngressRoute
+How you reference this Secret depends on your Gateway implementation. With Traefik, reference it in your `Gateway` resource or annotate the `HTTPRoute`. Consult your Gateway implementation's docs for the exact approach.
 
-Create a Traefik `IngressRoute` that terminates TLS and forwards to the registry Service.
+### Step 4 — Install the mkcert CA on each node
 
-```yaml
-# registry-ingressroute.yaml
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: registry-external
-  namespace: canette-system
-spec:
-  entryPoints:
-    - websecure
-  routes:
-    - match: Host(`${REGISTRY_HOST}`)
-      kind: Rule
-      services:
-        - name: registry
-          port: 5000
-  tls:
-    secretName: registry-tls
-```
-
-Apply it:
+Every node that runs app pods needs to trust the mkcert CA so that kubelets can pull images from `registry.{domain}`.
 
 ```bash
-envsubst < registry-ingressroute.yaml | kubectl apply -f -
+# Find the CA file
+mkcert -CAROOT
+# e.g. /Users/you/Library/Application Support/mkcert
+
+# Copy to each node (Ubuntu/Debian)
+scp "$(mkcert -CAROOT)/rootCA.pem" root@<NODE_IP>:/usr/local/share/ca-certificates/mkcert-rootCA.crt
+ssh root@<NODE_IP> update-ca-certificates
 ```
 
-Verify the registry is reachable from your Mac:
+On RHEL/CentOS nodes: copy to `/etc/pki/ca-trust/source/anchors/` and run `update-ca-trust extract`.
 
-```bash
-curl -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/"
-# Should return: {}
-```
-
----
-
-## 5. Configure k3s to use the registry
-
-k3s has a built-in registry mirror configuration at `/etc/rancher/k3s/registries.yaml`. Edit (or create) this file **on every k3s node**:
+For k3s, also add the CA to `/etc/rancher/k3s/registries.yaml` on each node:
 
 ```yaml
-# /etc/rancher/k3s/registries.yaml
-mirrors:
-  "${REGISTRY_HOST}:${REGISTRY_PORT}":
-    endpoint:
-      - "https://${REGISTRY_HOST}:${REGISTRY_PORT}"
-
 configs:
-  "${REGISTRY_HOST}:${REGISTRY_PORT}":
+  "registry.apps.example.com":
     tls:
-      # Not required if you already ran update-ca-certificates with the mkcert CA.
-      # Uncomment to pin the CA instead:
-      # ca_file: "/usr/local/share/ca-certificates/mkcert-rootCA.crt"
-    auth:
-      username: "${REGISTRY_USER}"
-      password: "${REGISTRY_PASSWORD}"
+      ca_file: "/usr/local/share/ca-certificates/mkcert-rootCA.crt"
 ```
 
-Restart k3s for the changes to take effect:
+Then restart k3s: `systemctl restart k3s`.
 
-```bash
-systemctl restart k3s
-```
+## Using an external registry instead
 
-If the registry has no authentication configured (default canette install), omit the `auth` block entirely.
-
----
-
-## 6. Push the builder base image from your Mac
-
-Docker on Mac needs to know about the registry and its credentials:
-
-```bash
-docker login "${REGISTRY_HOST}:${REGISTRY_PORT}"
-```
-
-Build and push the canette builder base image:
-
-```bash
-IMAGE_REPO="${REGISTRY_HOST}:${REGISTRY_PORT}" ./scripts/build-images.sh --push
-```
-
-Because the registry is now HTTPS (trusted by macOS via mkcert), `docker buildx` will work with its default builder — no insecure builder setup is needed.
-
----
-
-## 7. In-cluster push from build pods
-
-Build pods push images using `buildctl`. By default the in-cluster registry is accessed over plain HTTP using the cluster-internal DNS name (`registry.canette-system.svc.cluster.local:5000`). If you configure authentication on the registry you need to supply credentials to buildctl.
-
-### Option A — keep internal push unauthenticated (recommended for simple setups)
-
-The canette registry Service is only reachable inside the cluster. If you are comfortable with any pod in the cluster being able to push, no additional configuration is needed. The `BUILDKITD_ADDR` for build jobs points at the internal address and pushes over plain HTTP.
-
-### Option B — authenticated internal push
-
-If you add HTTP basic auth to the registry (via an htpasswd file mounted in the registry pod), you need to give build pods a `docker config.json` with the credentials.
-
-1. Create the secret:
-
-```bash
-kubectl create secret docker-registry registry-auth \
-  --namespace canette-system \
-  --docker-server="registry.canette-system.svc.cluster.local:5000" \
-  --docker-username="${REGISTRY_USER}" \
-  --docker-password="${REGISTRY_PASSWORD}"
-```
-
-2. Mount the secret in the build pod. In `apps/builder/internal/k8s/jobs.go`, add a volume and volume mount to the image-build container that maps the secret to `/root/.docker/config.json`:
-
-```go
-// In BuildJob volumes:
-{
-    Name: "docker-config",
-    VolumeSource: corev1.VolumeSource{
-        Secret: &corev1.SecretVolumeSource{
-            SecretName: "registry-auth",
-            Items: []corev1.KeyToPath{
-                {Key: ".dockerconfigjson", Path: "config.json"},
-            },
-        },
-    },
-},
-
-// In the image-build container volume mounts:
-{Name: "docker-config", MountPath: "/root/.docker", ReadOnly: true},
-```
-
-buildctl automatically picks up credentials from `/root/.docker/config.json` when pushing.
-
----
-
-## 8. Configure the canette builder
-
-Set these environment variables (via Helm values or a local `.env` file) to point the builder at the external registry hostname:
-
-```bash
-# Push address used inside build pods (in-cluster HTTP, or HTTPS if using option B)
-IMAGE_REPO=registry.canette-system.svc.cluster.local:5000/
-
-# Pull address for the builder base image (external HTTPS hostname + NodePort)
-BUILDER_IMAGE=${REGISTRY_HOST}:${REGISTRY_PORT}/canette-builder-image-build:latest
-
-# Registry base URL for digest fetching (same host as IMAGE_REPO, http scheme)
-REGISTRY_BASE_URL=http://registry.canette-system.svc.cluster.local:5000
-```
-
-In `charts/canette/values.yaml`:
+To disable the in-cluster registry and push to an external one (GHCR, ECR, Docker Hub, etc.):
 
 ```yaml
-builder:
-  imageRepo: "registry.canette-system.svc.cluster.local:5000/"
-  builderImage: "registry.192-168-64-2.traefik.me:32500/canette-builder-image-build:latest"
-  registryBaseUrl: "http://registry.canette-system.svc.cluster.local:5000"
+registry:
+  enabled: false
+
+externalRegistry:
+  username: "<username>"
+  password: "<password>"
+
+controller:
+  pullRepo: "ghcr.io/myorg/"
 ```
 
----
+See the [Helm reference](/docs/self-hosting/helm#infrastructure-optional) for the full set of external registry values.
 
 ## Troubleshooting
 
@@ -243,7 +113,6 @@ builder:
 |---------|-------------|-----|
 | `x509: certificate signed by unknown authority` on Mac | mkcert CA not in keychain | Run `mkcert -install` |
 | `x509: certificate signed by unknown authority` on node | mkcert CA not installed | Copy `rootCA.pem` and run `update-ca-certificates` |
-| `http: server gave HTTP response to HTTPS client` | Docker trying HTTPS on an HTTP registry | Add registry to insecure-registries OR switch to HTTPS with mkcert |
-| k3s pods get `ImagePullBackOff` | Node doesn't trust the CA or `registries.yaml` wrong | Check `registries.yaml` syntax, restart k3s, verify cert trust |
-| `401 Unauthorized` on push | Missing or wrong credentials | `docker login` on Mac, check `registries.yaml` auth block on node |
-| Digest fetch returns 404 | `REGISTRY_BASE_URL` uses external hostname but cert not trusted inside cluster | Use internal DNS name for `REGISTRY_BASE_URL` |
+| `ImagePullBackOff` on app pods | Node doesn't trust the CA or DNS doesn't resolve | Check CA install, verify `registry.{domain}` resolves to Gateway IP from the node |
+| `401 Unauthorized` on push | Build job credentials out of sync | Run `helm upgrade --reuse-values` to regenerate the docker config Secret |
+| Registry HTTPRoute not resolving | Gateway not configured for that hostname | Check your Gateway's listener configuration covers `registry.{domain}` |

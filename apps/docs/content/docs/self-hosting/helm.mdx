@@ -18,7 +18,7 @@ The canette Helm chart deploys the API, UI, builder, controller, logstreamer, an
 The chart is published to GitHub Container Registry and can be installed directly — no repository clone required:
 
 ```bash
-helm upgrade --install canette oci://ghcr.io/canette/canette-chart \
+helm upgrade --install canette oci://ghcr.io/canette/canette \
   --version 0.1.0 \
   -n canette-system --create-namespace \
   --set domain="apps.example.com" \
@@ -96,8 +96,17 @@ This creates `canette-system` + `canette-system-build` for production, and `cane
 |-------|-------------|
 | `domain` | Base domain for all dynamic hostnames, e.g. `apps.example.com`. App URLs use `{app}-{project}.<domain>`; the in-cluster registry is exposed at `registry.<domain>`. |
 | `ui.hostname` | Public hostname for the UI, e.g. `canette.example.com` |
+
+### Authentication (optional, but needed to log in via OAuth)
+
+Email magic link login is enabled by default. To add GitHub or Google OAuth, provide the following values:
+
+| Value | Description |
+|-------|-------------|
 | `api.githubClientId` | GitHub OAuth app client ID |
 | `api.githubClientSecret` | GitHub OAuth app client secret (or use `api.githubClientSecretRef`) |
+| `api.googleClientId` | Google OAuth client ID |
+| `api.googleClientSecret` | Google OAuth client secret (or use `api.googleClientSecretRef`) |
 
 ### Images (optional)
 
