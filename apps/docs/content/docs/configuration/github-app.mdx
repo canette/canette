@@ -146,6 +146,9 @@ When a build is triggered or a webhook is registered, canette generates a fresh 
 **"Connect GitHub Account or Org" button is not visible**
 `GITHUB_APP_PUBLIC_LINK` is not set in the API configuration. Set `api.githubApp.publicLink` in Helm values and run `helm upgrade`.
 
+**System credential does not appear in the credentials list**
+Both `api.githubApp.appId` and `api.githubApp.installationId` must be set. If only `appId` is configured (per-team mode only), no system credential is created.
+
 **`GitHub App not configured` error**
 `GITHUB_APP_ID` or the private key is missing. Check the API pod's environment variables.
 
