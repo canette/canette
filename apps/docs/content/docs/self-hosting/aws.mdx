@@ -1,0 +1,54 @@
+---
+title: AWS (EKS)
+description: Installing canette on Amazon EKS with ALB and ACM for TLS termination.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+<Callout type="warn">
+  This page is a work in progress. The AWS-specific installation path has not been fully tested yet.
+</Callout>
+
+This page covers the EKS-specific pieces for running canette on AWS: using the AWS Load Balancer Controller with Application Load Balancer (ALB) as the Gateway implementation, and AWS Certificate Manager (ACM) for TLS — replacing the cert-manager + Let's Encrypt setup used on generic clusters.
+
+## Prerequisites
+
+- An EKS cluster (Kubernetes 1.27+)
+- [AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/) installed
+- Gateway API CRDs installed
+- A Route 53 hosted zone for your domain (or any DNS provider)
+- An ACM certificate covering your domain and wildcard (`*.apps.example.com` + `canette.example.com`)
+
+## Gateway setup
+
+The AWS Load Balancer Controller can act as a Gateway API implementation, provisioning an ALB per Gateway resource. TLS termination happens at the ALB using your ACM certificate — no cert-manager required.
+
+## DNS
+
+Create a wildcard record in Route 53 pointing `*.apps.example.com` at the ALB's DNS name. You can use [external-dns](https://github.com/kubernetes-sigs/external-dns) to manage this automatically, or add the record manually after the ALB is provisioned.
+
+## Node groups and build jobs
+
+Rootless BuildKit requires user namespace support. On EKS, AL2023 nodes support this out of the box. For AL2 nodes, you may need to configure `user.max_user_namespaces` via a launch template userdata script.
+
+## Values
+
+```yaml
+domain: apps.example.com
+ui:
+  hostname: canette.example.com
+
+controller:
+  gateway:
+    name: canette-gateway     # name of your ALB Gateway resource
+    namespace: canette-system
+```
+
+## Install
+
+```bash
+helm install canette oci://ghcr.io/canette/canette \
+  --namespace canette-system \
+  --create-namespace \
+  -f values.yaml
+```

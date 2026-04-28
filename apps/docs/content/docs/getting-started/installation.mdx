@@ -3,35 +3,113 @@ title: Installation
 description: Install canette on your Kubernetes cluster using Helm.
 ---
 
-## Prerequisites
+import { Callout } from "fumadocs-ui/components/callout"
 
-- Kubernetes cluster (1.27+)
-- [Helm](https://helm.sh) 3.x
-- A Gateway API implementation (Traefik, Cilium, Kong, etc.)
-- A container registry (in-cluster or external)
+The canette Helm chart deploys the full platform into your cluster: API, UI, builder, controller, logstreamer, BuildKit daemon, in-cluster PostgreSQL, and an in-cluster container registry. The registry is exposed through your Gateway — the same one that serves the UI and your app URLs — so a working Gateway with TLS termination is the main prerequisite.
 
-## Install with Helm
+## Before you install
+
+### 1. Gateway API with TLS termination
+
+canette creates `HTTPRoute` resources for the UI, the registry, and every app you deploy. A Gateway must exist before installation.
+
+Check that Gateway API CRDs are installed:
 
 ```bash
-helm install canette oci://ghcr.io/canette/charts/canette \
-  --namespace canette-system \
-  --create-namespace \
-  --set github.clientId=<your-github-client-id> \
-  --set github.clientSecret=<your-github-client-secret>
+kubectl get crd gateways.gateway.networking.k8s.io
 ```
 
-## Configure GitHub OAuth
+Check what Gateways exist in your cluster:
 
-1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-2. Create a new OAuth App
-3. Set the callback URL to `https://<your-canette-url>/api/auth/callback/github`
-4. Copy the Client ID and Client Secret into your Helm values
+```bash
+kubectl get gateways -A
+```
 
-## Verify the installation
+Note the Gateway's **name** and **namespace** — you'll need them in your values file. The defaults canette expects are `can-gateway` in `kube-system`; override them if yours are different.
+
+The Gateway must handle TLS termination — without it, the in-cluster registry HTTPRoute serves plain HTTP and kubelets will refuse to pull images from it. How you set up TLS depends on your environment:
+
+- **cert-manager + Let's Encrypt** — the standard approach for clusters with a public IP. Install [cert-manager](https://cert-manager.io) and configure an `Issuer` or `ClusterIssuer` pointing at Let's Encrypt; your Gateway implementation picks up certificates automatically.
+- **mkcert (local testing)** — generates locally-trusted certificates without a commercial CA, but requires manually installing the CA in the cluster and on every client machine. See [In-cluster registry](/docs/self-hosting/registry) for a step-by-step walkthrough.
+- **AWS ALB + ACM** — on EKS, the AWS Load Balancer Controller combined with AWS Certificate Manager handles TLS at the load balancer level without cert-manager. See the [AWS installation guide](/docs/self-hosting/aws) for details.
+
+### 2. A domain with wildcard DNS
+
+canette builds URLs from a single base domain:
+
+| Resource | Hostname |
+|----------|----------|
+| App URLs | `{app}-{project}.{domain}` |
+| In-cluster registry | `registry.{domain}` |
+| UI | configured separately via `ui.hostname` |
+
+Point a wildcard record at your Gateway's external IP:
+
+```bash
+# Find your Gateway's external IP
+kubectl get gateway -n <gateway-namespace> <gateway-name> \
+  -o jsonpath='{.status.addresses[0].value}'
+```
+
+Then create: `*.apps.example.com → <gateway-ip>` (and make sure `canette.example.com` also resolves there).
+
+### 3. Node configuration for builds
+
+Build jobs run rootless BuildKit. Nodes that run builds need user namespace support enabled — see [Requirements](/docs/self-hosting/requirements) for the kernel settings per Linux distribution.
+
+## Install
+
+Create a `values.yaml`:
+
+```yaml
+domain: apps.example.com         # base domain — *.apps.example.com → Gateway IP
+ui:
+  hostname: canette.example.com  # public URL for the canette UI
+
+controller:
+  gateway:
+    name: traefik                 # name of your pre-existing Gateway resource
+    namespace: traefik            # namespace where the Gateway lives
+```
+
+Then install:
+
+```bash
+helm install canette oci://ghcr.io/canette/canette \
+  --namespace canette-system \
+  --create-namespace \
+  -f values.yaml
+```
+
+## Authentication
+
+By default, canette enables email and password login — no OAuth app or SMTP required to evaluate it. You can create an account directly from the login page.
+
+To add GitHub or Google OAuth, include either or both in your values file:
+
+```yaml
+api:
+  githubClientId: "<client-id>"
+  githubClientSecret: "<client-secret>"
+
+  googleClientId: "<client-id>"
+  googleClientSecret: "<client-secret>"
+```
+
+Create a GitHub OAuth App at [github.com/settings/developers](https://github.com/settings/developers) with the callback URL `https://<your-canette-hostname>/api/auth/callback/github`.
+
+## Verify
 
 ```bash
 kubectl -n canette-system rollout status deploy/canette-api
 kubectl -n canette-system rollout status deploy/canette-ui
 ```
 
-Then open the URL assigned to the `canette-ui` service in your browser.
+Then open `ui.hostname` in your browser — you should see the canette login page.
+
+## Next steps
+
+- [Your first deploy](/docs/getting-started/first-deploy) — create a project and deploy an app
+- [Helm reference](/docs/self-hosting/helm) — full values reference, upgrading, and operations
+- [Requirements](/docs/self-hosting/requirements) — node requirements for rootless builds
+- [Production setup](/docs/getting-started/production) — external database, external registry, HA considerations

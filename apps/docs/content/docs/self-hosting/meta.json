@@ -1,4 +1,4 @@
 {
   "title": "Self-hosting",
-  "pages": ["requirements", "helm", "registry"]
+  "pages": ["requirements", "helm", "registry", "aws", "env-vars"]
 }

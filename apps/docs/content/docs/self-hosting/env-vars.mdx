@@ -1,0 +1,81 @@
+---
+title: Environment variable reference
+description: Configure canette services directly with environment variables instead of Helm.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+<Callout type="info">
+  The Helm chart is the recommended way to deploy canette. It sets all of these variables for you and manages secrets safely. Use this page if you are deploying canette without Helm — for example, on bare metal, with a custom orchestrator, or in a development environment running services locally.
+</Callout>
+
+Each canette service is a single binary or container. All configuration is provided through environment variables — there are no config files.
+
+## API (`canette-api`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | yes | PostgreSQL connection string, e.g. `postgresql://user:pass@host:5432/canette` |
+| `ENCRYPTION_KEY` | yes | 32-byte AES-256-GCM key used to encrypt git credentials and app secrets at rest. Generate with `openssl rand -hex 32`. |
+| `BETTER_AUTH_SECRET` | yes | Secret used to sign auth sessions. Generate with `openssl rand -hex 32`. |
+| `UI_URL` | yes | Public base URL of the UI, e.g. `https://canette.example.com`. Used for CORS and redirect URLs. |
+| `BETTER_AUTH_URL` | yes | Same as `UI_URL` — used by better-auth for callback URL construction. |
+| `LOGSTREAMER_URL` | yes | Internal URL of the logstreamer service, e.g. `http://logstreamer:8080`. |
+| `LOGSTREAMER_SECRET` | yes | Shared secret for API → logstreamer authentication. Must match `LOGSTREAMER_SECRET` on the logstreamer. |
+| `PORT` | no | Port the API listens on. Default: `3000`. |
+| `GITHUB_CLIENT_ID` | no | GitHub OAuth app client ID. |
+| `GITHUB_CLIENT_SECRET` | no | GitHub OAuth app client secret. |
+| `GOOGLE_CLIENT_ID` | no | Google OAuth client ID. |
+| `GOOGLE_CLIENT_SECRET` | no | Google OAuth client secret. |
+| `GITHUB_APP_ID` | no | GitHub App ID (for GitHub App git credential type). |
+| `GITHUB_APP_INSTALLATION_ID` | no | GitHub App installation ID (for system credential mode). |
+| `GITHUB_APP_PUBLIC_LINK` | no | GitHub App public URL or slug, e.g. `https://github.com/apps/my-app`. |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | no | Path to the GitHub App RSA private key PEM file. |
+| `DEFAULT_CPU_REQUEST` | no | Default CPU request for app deployments. Default: `100m`. |
+| `DEFAULT_MEMORY_REQUEST` | no | Default memory request for app deployments. Default: `128Mi`. |
+| `DEFAULT_CPU_LIMIT` | no | Default CPU limit for app deployments. Default: `500m`. |
+| `DEFAULT_MEMORY_LIMIT` | no | Default memory limit for app deployments. Default: `512Mi`. |
+| `WEBHOOK_BASE_URL` | no | Public base URL used when registering webhooks with git providers. Defaults to `UI_URL`. |
+| `DISABLE_EMAIL_SIGNUP` | no | Set to `true` to prevent new users from signing up via email. Default: `false`. |
+| `RUN_MIGRATIONS` | no | Set to `false` to skip running database migrations at startup. Default: `true`. |
+
+## Builder (`canette-builder`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | yes | PostgreSQL connection string. |
+| `ENCRYPTION_KEY` | yes | Same key as the API — used to decrypt git credentials for cloning. |
+| `IMAGE_REPO` | yes | Registry address build jobs push images to, e.g. `registry.canette-system.svc.cluster.local:5000/`. Include the trailing slash. |
+| `BUILDKITD_ADDR` | yes | BuildKit daemon address, e.g. `tcp://buildkitd.canette-system-build.svc.cluster.local:1234`. |
+| `BUILDER_IMAGE` | yes | Image used for the build step in build jobs (railpack + buildctl), e.g. `ghcr.io/canette/canette-builder-image-build:1.0.0`. |
+| `GIT_INIT_IMAGE` | yes | Image used for the git-clone init container in build jobs, e.g. `ghcr.io/canette/canette-builder-git-init:1.0.0`. |
+| `BUILDER_NAMESPACE` | yes | Kubernetes namespace where build jobs are created, e.g. `canette-system-build`. |
+| `REGISTRY_AUTH_SECRET` | no | Name of the Kubernetes Secret containing docker config JSON for registry authentication. Mounted into build job pods. |
+| `TRIVY_IMAGE` | no | Trivy image for vulnerability scanning jobs. Default: `aquasec/trivy:0.51.0`. |
+| `POLL_INTERVAL` | no | How often to poll for pending builds. Default: `5s`. |
+| `MAX_CONCURRENT` | no | Maximum number of concurrent builds. Default: `3`. |
+| `GITHUB_APP_ID` | no | GitHub App ID (for GitHub App git credential type). |
+| `GITHUB_APP_INSTALLATION_ID` | no | GitHub App installation ID. |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | no | Path to the GitHub App RSA private key PEM file. |
+
+## Controller (`canette-controller`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | yes | PostgreSQL connection string. |
+| `ENCRYPTION_KEY` | yes | Same key as the API — used to decrypt app secrets when creating Kubernetes Secrets. |
+| `GATEWAY_NAME` | yes | Name of the Gateway resource that app HTTPRoutes attach to. |
+| `GATEWAY_NAMESPACE` | yes | Namespace of the Gateway resource. |
+| `PULL_REPO` | yes | Registry prefix kubelets use to pull app images, e.g. `registry.example.com/`. Must be reachable from cluster nodes. Include the trailing slash. |
+| `BUILDER_NAMESPACE` | yes | Kubernetes namespace where build jobs run — used to watch build Job status. |
+| `CLUSTER_DOMAIN` | no | Cluster DNS domain. Default: `cluster.local`. |
+| `POLL_INTERVAL` | no | How often to poll for pending deployments. Default: `5s`. |
+| `LOG_TAIL_INTERVAL` | no | How often to tail build logs. Default: `10s`. |
+| `MAX_CONCURRENT` | no | Maximum number of concurrent deployments. Default: `3`. |
+
+## Logstreamer (`canette-logstreamer`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `LOGSTREAMER_SECRET` | yes | Shared secret — requests from the API must include this as a Bearer token. |
+| `ADDR` | no | Address and port to listen on. Default: `:8080`. |
