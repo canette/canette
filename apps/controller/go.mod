@@ -6,7 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
-	go.uber.org/zap v1.27.0
+	go.uber.org/zap v1.27.1
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.31.0
 	k8s.io/apimachinery v0.31.0
