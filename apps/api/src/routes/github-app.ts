@@ -10,12 +10,19 @@ export const githubAppRouter = new Hono<AppEnv>()
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
+// normalizePublicLink accepts either a full URL or a bare slug and always returns
+// a full https://github.com/apps/{slug} URL.
+function normalizePublicLink(value: string): string {
+  if (value.startsWith("https://")) return value.replace(/\/$/, "")
+  return `https://github.com/apps/${value.replace(/^\//, "")}`
+}
+
 // GET /api/v1/github-app/install-url?teamId=:teamId
 // Returns the GitHub App installation URL for the current team.
-// Only available when GITHUB_APP_SLUG and GITHUB_APP_ID are configured.
+// Only available when GITHUB_APP_PUBLIC_LINK and GITHUB_APP_ID are configured.
 githubAppRouter.get("/install-url", requireAuth, async (c) => {
-  const slug = process.env.GITHUB_APP_SLUG
-  if (!slug || !process.env.GITHUB_APP_ID) {
+  const publicLink = process.env.GITHUB_APP_PUBLIC_LINK
+  if (!publicLink || !process.env.GITHUB_APP_ID) {
     return c.json({ available: false })
   }
 
@@ -31,7 +38,7 @@ githubAppRouter.get("/install-url", requireAuth, async (c) => {
   }
 
   const state = createStateToken(teamId, session.user.id)
-  const url = `https://github.com/apps/${slug}/installations/new?state=${state}`
+  const url = `${normalizePublicLink(publicLink)}/installations/new?state=${state}`
   return c.json({ available: true, url })
 })
 

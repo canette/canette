@@ -210,13 +210,13 @@ api:
     # installationId is only required for system credential mode (admin-configured single installation).
     # Leave empty if you want users to connect their own GitHub accounts via the per-team install wizard.
     installationId: ""
-    # slug is the GitHub App's URL-friendly name (visible in https://github.com/apps/{slug}).
+    # publicLink is the GitHub App's public URL, shown as "Public link" in the GitHub App settings.
+    # Accepts either the full URL (https://github.com/apps/my-app) or just the slug (my-app).
     # Required for the per-team installation wizard.
-    slug: ""
-    # callbackUrl is the full URL canette redirects to after a GitHub App installation.
-    # Must match the "Callback URL" configured in your GitHub App settings.
-    # Example: https://canette.company.com/api/v1/github-app/callback
-    callbackUrl: ""
+    publicLink: ""
+    # In your GitHub App settings, set the "Setup URL" (under Post installation) to:
+    #   https://canette.company.com/api/v1/github-app/callback
+    # This is not a Helm value — it is configured directly on the GitHub App.
     # Inline RSA private key PEM (escape newlines as \n).
     # Use privateKeySecretRef instead if you manage secrets externally.
     privateKey: ""

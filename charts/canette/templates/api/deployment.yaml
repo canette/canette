@@ -101,19 +101,12 @@ spec:
                 secretKeyRef:
                   name: canette-api-secrets
                   key: github-app-installation-id
-            {{- if .Values.api.githubApp.slug }}
-            - name: GITHUB_APP_SLUG
+            {{- if .Values.api.githubApp.publicLink }}
+            - name: GITHUB_APP_PUBLIC_LINK
               valueFrom:
                 secretKeyRef:
                   name: canette-api-secrets
-                  key: github-app-slug
-            {{- end }}
-            {{- if .Values.api.githubApp.callbackUrl }}
-            - name: GITHUB_APP_CALLBACK_URL
-              valueFrom:
-                secretKeyRef:
-                  name: canette-api-secrets
-                  key: github-app-callback-url
+                  key: github-app-public-link
             {{- end }}
             - name: GITHUB_APP_PRIVATE_KEY_FILE
               value: /run/secrets/github-app-private-key

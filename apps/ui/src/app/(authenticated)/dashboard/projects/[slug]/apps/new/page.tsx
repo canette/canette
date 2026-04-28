@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import { HelpTooltip } from "@/components/ui/tooltip"
 import { CanetteLogo } from "@/components/canette-logo"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { CredentialSelect } from "@/components/credential-select"
 import * as api from "@/lib/api"
 import type { GitCredential, Project } from "@canette/types"
 
@@ -264,23 +265,11 @@ export default function NewAppPage() {
                   </div>
 
                   {credentials.length > 0 && (
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="gitCredentialId">Credential</Label>
-                      <Select
-                        value={gitCredentialId || "__none__"}
-                        onValueChange={(v) => setGitCredentialId(v === "__none__" ? "" : v)}
-                      >
-                        <SelectTrigger id="gitCredentialId">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">No credentials — public repo</SelectItem>
-                          {credentials.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    <CredentialSelect
+                      credentials={credentials}
+                      value={gitCredentialId}
+                      onChange={setGitCredentialId}
+                    />
                   )}
 
                   <div className="grid grid-cols-2 gap-4">

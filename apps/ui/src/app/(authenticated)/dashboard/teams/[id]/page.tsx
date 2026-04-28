@@ -192,7 +192,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     try {
       const result = await api.githubApp.getInstallUrl(teamId)
       if (!result.available || !result.url) {
-        setGithubAppNotice("GitHub App is not configured on this instance. Ask your admin to set it up.")
+        setGithubAppNotice("Per-Team GitHub App support is not configured on this instance. Ask your admin to set it up.")
         return
       }
       window.location.href = result.url
