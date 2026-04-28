@@ -1,38 +1,27 @@
 // HMAC-signed state tokens for the GitHub App installation callback.
 // Binds a (teamId, userId) pair to the callback with a 10-minute expiry.
-// Uses ENCRYPTION_KEY as the signing key (already required at startup).
+// Uses BETTER_AUTH_SECRET as the signing key via HS256.
 
-import { createHmac, timingSafeEqual } from "node:crypto"
+import { SignJWT, jwtVerify } from "jose"
 
-const STATE_TTL_MS = 10 * 60 * 1000
+const STATE_TTL_SECONDS = 10 * 60
 
-function signingKey(): Buffer {
-  return Buffer.from(process.env.ENCRYPTION_KEY ?? "", "hex")
+function signingKey(): Uint8Array {
+  return new TextEncoder().encode(process.env.BETTER_AUTH_SECRET ?? "")
 }
 
-export function createStateToken(teamId: string, userId: string): string {
-  const exp = Date.now() + STATE_TTL_MS
-  const payload = Buffer.from(JSON.stringify({ teamId, userId, exp })).toString("base64url")
-  const sig = createHmac("sha256", signingKey()).update(payload).digest("base64url")
-  return `${payload}.${sig}`
+export async function createStateToken(teamId: string, userId: string): Promise<string> {
+  return new SignJWT({ teamId, userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime(`${STATE_TTL_SECONDS}s`)
+    .sign(signingKey())
 }
 
-export function verifyStateToken(state: string): { teamId: string; userId: string } | null {
-  const dot = state.lastIndexOf(".")
-  if (dot === -1) return null
-  const payload = state.slice(0, dot)
-  const sig = state.slice(dot + 1)
-  const expectedSig = createHmac("sha256", signingKey()).update(payload).digest("base64url")
+export async function verifyStateToken(state: string): Promise<{ teamId: string; userId: string } | null> {
   try {
-    if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) return null
-  } catch {
-    return null
-  }
-  try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))
-    if (typeof parsed.teamId !== "string" || typeof parsed.userId !== "string" || typeof parsed.exp !== "number") return null
-    if (Date.now() > parsed.exp) return null
-    return { teamId: parsed.teamId, userId: parsed.userId }
+    const { payload } = await jwtVerify(state, signingKey())
+    if (typeof payload.teamId !== "string" || typeof payload.userId !== "string") return null
+    return { teamId: payload.teamId, userId: payload.userId }
   } catch {
     return null
   }

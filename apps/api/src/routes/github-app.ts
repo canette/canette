@@ -37,7 +37,7 @@ githubAppRouter.get("/install-url", requireAuth, async (c) => {
     return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
   }
 
-  const state = createStateToken(teamId, session.user.id)
+  const state = await createStateToken(teamId, session.user.id)
   const url = `${normalizePublicLink(publicLink)}/installations/new?state=${state}`
   return c.json({ available: true, url })
 })
@@ -56,7 +56,7 @@ githubAppRouter.get("/callback", async (c) => {
     return c.redirect(`${uiBase}/dashboard?error=github-app-missing-state`)
   }
 
-  const claims = verifyStateToken(state)
+  const claims = await verifyStateToken(state)
   if (!claims) {
     return c.redirect(`${uiBase}/dashboard?error=github-app-invalid-state`)
   }

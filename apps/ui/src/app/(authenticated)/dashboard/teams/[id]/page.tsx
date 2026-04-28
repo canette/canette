@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge"
 import { AppShell } from "@/components/app-shell"
 import { useSession } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
-import { ArrowLeft, Eye, EyeOff } from "lucide-react"
+import { ArrowLeft, Eye, EyeOff, Loader2 } from "lucide-react"
+import { GitHubIcon } from "@/components/icons/github-icon"
 import * as api from "@/lib/api"
 import type { GitCredential, GitCredentialType, GitProvider, Team, TeamMember } from "@canette/types"
 
@@ -199,7 +200,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     } catch {
       setGithubAppNotice("Failed to get GitHub App install URL. Please try again.")
     } finally {
-      setConnectingGithubApp(false)
+      setTimeout(() => setConnectingGithubApp(false), 2000)
     }
   }
 
@@ -547,8 +548,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             <CardHeader>
               <CardTitle className="text-base">GitHub App</CardTitle>
               <CardDescription>
-                Connect your GitHub account or org to grant canette access to specific repositories.
-                {!team.isPersonal && <span><br/>All team members can use a connected installation when adding Applications.</span>}
+                Connect your GitHub account or org to grant canette access to repositories.
+                {!team.isPersonal && <span><br/>All team members can use the connected credentials when adding Applications.</span>}
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -607,7 +608,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                   onClick={handleConnectGithubApp}
                   disabled={connectingGithubApp}
                 >
-                  {connectingGithubApp ? "Redirecting…" : "+ Connect GitHub Account or Org"}
+                  {connectingGithubApp ? <Loader2 className="size-4 animate-spin" /> : <GitHubIcon size={18} />}
+                  Connect GitHub Account or Org
                 </Button>
               </div>
             </CardContent>

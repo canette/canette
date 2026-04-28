@@ -30,10 +30,10 @@ function mapCredential(row: GitCredentialRow): GitCredential {
 const GITHUB_APP_CREDENTIAL_ID = "github-app-cluster"
 
 // initSystemCredentials upserts or removes the cluster GitHub App credential
-// based on whether GITHUB_APP_ID is present in the environment.
+// based on whether both GITHUB_APP_ID and GITHUB_APP_INSTALLATION_ID are present.
 // Call once at API startup.
 export async function initSystemCredentials(db: DB): Promise<void> {
-  if (process.env.GITHUB_APP_ID) {
+  if (process.env.GITHUB_APP_ID && process.env.GITHUB_APP_INSTALLATION_ID) {
     const now = new Date().toISOString()
     await db
       .insertInto("git_credentials")
