@@ -15,9 +15,9 @@ export default function HomePage() {
               Fast and User-Friendly PaaS for Kubernetes
             </span>
             <h1 className="text-4xl font-bold tracking-tight lg:text-5xl leading-tight">
-              Deploy fast.
+              Easy deploys
               <br />
-              Keep it in your cluster.
+              in your own cluster
             </h1>
             <p className="text-lg text-muted-foreground leading-relaxed">
               canette is a lightweight deployment platform that runs inside any
