@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS canette-bins
+FROM golang:1.26.2-alpine AS canette-bins
 
 WORKDIR /src
 COPY go.mod go.sum ./
