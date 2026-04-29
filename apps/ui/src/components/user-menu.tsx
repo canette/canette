@@ -1,6 +1,6 @@
 "use client"
 
-import Image from "next/image"
+import * as Avatar from "@radix-ui/react-avatar"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { signOut } from "@/lib/auth-client"
@@ -34,25 +34,19 @@ export function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="relative flex items-center justify-center h-8 w-8 rounded-full bg-muted hover:bg-muted/80 border border-border text-xs font-semibold overflow-hidden transition-colors"
+        <Avatar.Root
+          className="relative flex items-center justify-center h-8 w-8 rounded-md bg-muted hover:bg-muted/80 border border-border overflow-hidden transition-colors cursor-pointer"
           aria-label="User menu"
         >
-          {user.image ? (
-            // next/image validates the URL against remotePatterns in next.config.ts,
-            // preventing arbitrary external image sources.
-            <Image
-              src={user.image}
-              alt={user.name}
-              width={32}
-              height={32}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <span>{initials(user.name)}</span>
-          )}
-        </button>
+          <Avatar.Image
+            src={user.image ?? undefined}
+            alt={user.name}
+            className="h-full w-full object-cover"
+          />
+          <Avatar.Fallback className="flex items-center justify-center h-full w-full text-xs font-semibold">
+            {initials(user.name)}
+          </Avatar.Fallback>
+        </Avatar.Root>
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="end">

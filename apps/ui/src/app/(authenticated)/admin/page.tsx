@@ -320,9 +320,9 @@ export default function AdminPage() {
                 ) : (
                   <>
                     <div className="px-6 py-1.5 flex items-center gap-4 border-b border-border/50">
-                      <span className="text-xs text-muted-foreground flex-1">NAME</span>
-                      <span className="text-xs text-muted-foreground w-20 text-right">MEMBERS</span>
-                      <span className="text-xs text-muted-foreground w-20 text-right">PROJECTS</span>
+                      <span className="text-xs text-muted-foreground uppercase flex-1">Name</span>
+                      <span className="text-xs text-muted-foreground uppercase w-20 text-right">Members</span>
+                      <span className="text-xs text-muted-foreground uppercase w-20 text-right">Projects</span>
                     </div>
                     {adminTeams.map((team, i) => (
                       <div key={team.id}>

@@ -90,6 +90,7 @@ export interface Database {
     encrypted_value: string
     ssh_known_hosts: string | null
     installation_id: string | null  // only set for github_app type (per-team installations)
+    connected_by_user_id: string | null  // user who connected this GitHub App installation
     created_at: string
   }
 

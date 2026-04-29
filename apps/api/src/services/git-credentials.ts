@@ -17,6 +17,7 @@ function mapCredential(row: GitCredentialRow): GitCredential {
     provider: row.provider as GitProvider,
     type: row.type as GitCredentialType,
     ...(row.installation_id ? { installationId: row.installation_id } : {}),
+    ...(row.connected_by_user_id ? { connectedByUserId: row.connected_by_user_id } : {}),
     createdAt: row.created_at,
     // encrypted_value intentionally omitted
   }
@@ -173,14 +174,16 @@ export async function createCredential(
 }
 
 // upsertGithubAppInstallation creates or updates a team-owned GitHub App credential
-// identified by its installation_id. Called from the GitHub App callback.
+// identified by its installation_id. Called from the GitHub App callback and link flow.
+// userId is stored as connected_by_user_id on insert (not on update — ownership is immutable).
 export async function upsertGithubAppInstallation(
   db: DB,
   teamId: string,
   installationId: string,
   accountLogin: string,
+  userId: string,
 ): Promise<GitCredential> {
-  const name = `${accountLogin} (GitHub App)`
+  const name = accountLogin
   const now = new Date().toISOString()
 
   // Check if a credential with this installation_id already exists for this team.
@@ -192,7 +195,7 @@ export async function upsertGithubAppInstallation(
     .executeTakeFirst()
 
   if (existing) {
-    // Update the name in case the account was renamed.
+    // Update the name in case the account was renamed. Never overwrite connected_by_user_id.
     await db
       .updateTable("git_credentials")
       .set({ name })
@@ -218,6 +221,7 @@ export async function upsertGithubAppInstallation(
       encrypted_value: encrypt(""),
       ssh_known_hosts: null,
       installation_id: installationId,
+      connected_by_user_id: userId,
       created_at: now,
     })
     .execute()
@@ -227,6 +231,81 @@ export async function upsertGithubAppInstallation(
     .where("id", "=", id)
     .executeTakeFirstOrThrow()
   return mapCredential(row)
+}
+
+// listLinkableInstallations returns GitHub App installations the caller personally connected
+// on other teams, that are not yet linked to targetTeamId.
+// Only installations where connected_by_user_id = userId are returned — never someone else's.
+export async function listLinkableInstallations(
+  db: DB,
+  teamId: string,
+  userId: string,
+): Promise<{ id: string; name: string }[]> {
+  const member = await isTeamMember(db, teamId, userId)
+  if (!member) return []
+
+  // installation_ids already linked to the target team
+  const alreadyLinked = await db
+    .selectFrom("git_credentials")
+    .select("installation_id")
+    .where("team_id", "=", teamId)
+    .where("type", "=", "github_app")
+    .where("installation_id", "is not", null)
+    .execute()
+  const linkedIds = alreadyLinked.map((r) => r.installation_id as string)
+
+  let query = db
+    .selectFrom("git_credentials")
+    .select(["id", "installation_id", "name"])
+    .where("type", "=", "github_app")
+    .where("team_id", "is not", null)
+    .where("team_id", "!=", teamId)
+    .where("connected_by_user_id", "=", userId)
+    .where("installation_id", "is not", null)
+
+  if (linkedIds.length > 0) {
+    query = query.where("installation_id", "not in", linkedIds)
+  }
+
+  const rows = await query.execute()
+
+  // Deduplicate by installation_id (same install linked to multiple teams by same user)
+  const seen = new Set<string>()
+  const result: { id: string; name: string }[] = []
+  for (const row of rows) {
+    if (!seen.has(row.installation_id!)) {
+      seen.add(row.installation_id!)
+      result.push({ id: row.id, name: row.name })
+    }
+  }
+  return result
+}
+
+// linkInstallationToTeam links a GitHub App installation the caller personally connected
+// to an additional team they belong to. Accepts the credential id (not the raw GitHub
+// installationId) — the installationId is fetched from the DB to prevent client tampering.
+export async function linkInstallationToTeam(
+  db: DB,
+  teamId: string,
+  userId: string,
+  credentialId: string,
+): Promise<GitCredential> {
+  const member = await isTeamMember(db, teamId, userId)
+  if (!member) throw new ServiceError("Not found", "NOT_FOUND", 404)
+
+  // Security boundary: only the user who connected the installation can link it.
+  // The installationId is never taken from the client — it is read from the DB here.
+  const source = await db
+    .selectFrom("git_credentials")
+    .select(["installation_id", "name"])
+    .where("id", "=", credentialId)
+    .where("type", "=", "github_app")
+    .where("connected_by_user_id", "=", userId)
+    .executeTakeFirst()
+
+  if (!source?.installation_id) throw new ServiceError("Not found", "NOT_FOUND", 404)
+
+  return upsertGithubAppInstallation(db, teamId, source.installation_id, source.name, userId)
 }
 
 export async function updateCredential(

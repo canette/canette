@@ -2,7 +2,8 @@ import { Hono } from "hono"
 import { db } from "../db/db"
 import { requireAuth } from "../middleware/require-auth"
 import type { AppEnv } from "../types"
-import { upsertGithubAppInstallation, isTeamMember } from "../services/git-credentials"
+import { upsertGithubAppInstallation, isTeamMember, listLinkableInstallations, linkInstallationToTeam } from "../services/git-credentials"
+import { ServiceError } from "../services/errors"
 import { getInstallationDetails } from "../services/github-app-token"
 import { createStateToken, verifyStateToken } from "../utils/github-app-state"
 
@@ -75,11 +76,42 @@ githubAppRouter.get("/callback", async (c) => {
     const details = await getInstallationDetails(installationId)
     const accountLogin = details?.account?.login ?? installationId
 
-    await upsertGithubAppInstallation(db, teamId, installationId, accountLogin)
+    await upsertGithubAppInstallation(db, teamId, installationId, accountLogin, claims.userId)
   } catch (err) {
     console.error("GitHub App callback error", err)
     return c.redirect(`${uiBase}/dashboard/teams/${teamId}?tab=credentials&error=github-app-callback-failed`)
   }
 
   return c.redirect(`${uiBase}/dashboard/teams/${teamId}?tab=credentials&github_app=installed`)
+})
+
+// GET /api/v1/github-app/linkable?teamId=:teamId
+// Returns GitHub App installations the current user personally connected on other teams,
+// excluding any already linked to teamId.
+githubAppRouter.get("/linkable", requireAuth, async (c) => {
+  const teamId = c.req.query("teamId")
+  if (!teamId) {
+    return c.json({ error: "teamId is required", code: "VALIDATION_ERROR" }, 400)
+  }
+  const session = c.get("session")
+  const installations = await listLinkableInstallations(db, teamId, session.user.id)
+  return c.json({ installations })
+})
+
+// POST /api/v1/github-app/link
+// Links an installation the caller personally connected to an additional team they belong to.
+githubAppRouter.post("/link", requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const { teamId, credentialId } = body as { teamId?: string; credentialId?: string }
+  if (!teamId || !credentialId) {
+    return c.json({ error: "teamId and credentialId are required", code: "VALIDATION_ERROR" }, 400)
+  }
+  const session = c.get("session")
+  try {
+    const cred = await linkInstallationToTeam(db, teamId, session.user.id, credentialId)
+    return c.json(cred, 201)
+  } catch (err) {
+    if (err instanceof ServiceError) return c.json({ error: err.message, code: err.code }, err.status as 400 | 403 | 404 | 409 | 422)
+    throw err
+  }
 })

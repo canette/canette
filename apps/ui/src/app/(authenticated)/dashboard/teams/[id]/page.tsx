@@ -5,8 +5,10 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { AppShell } from "@/components/app-shell"
@@ -79,6 +81,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   // GitHub App installation
   const [connectingGithubApp, setConnectingGithubApp] = useState(false)
   const [githubAppNotice, setGithubAppNotice] = useState<string | null>(null)
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false)
+  const [linkableInstallations, setLinkableInstallations] = useState<{ id: string; name: string }[]>([])
+  const [linkingInstallationId, setLinkingInstallationId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -191,6 +196,29 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   async function handleConnectGithubApp() {
     setConnectingGithubApp(true)
     try {
+      const { installations } = await api.githubApp.getLinkableInstallations(teamId)
+      if (installations.length > 0) {
+        setLinkableInstallations(installations)
+        setLinkDialogOpen(true)
+        return
+      }
+      const result = await api.githubApp.getInstallUrl(teamId)
+      if (!result.available || !result.url) {
+        setGithubAppNotice("Per-Team GitHub App support is not configured on this instance. Ask your admin to set it up.")
+        return
+      }
+      window.location.href = result.url
+    } catch {
+      setGithubAppNotice("Failed to get GitHub App install URL. Please try again.")
+    } finally {
+      setConnectingGithubApp(false)
+    }
+  }
+
+  async function handleConnectNewAccount() {
+    setLinkDialogOpen(false)
+    setConnectingGithubApp(true)
+    try {
       const result = await api.githubApp.getInstallUrl(teamId)
       if (!result.available || !result.url) {
         setGithubAppNotice("Per-Team GitHub App support is not configured on this instance. Ask your admin to set it up.")
@@ -201,6 +229,21 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       setGithubAppNotice("Failed to get GitHub App install URL. Please try again.")
     } finally {
       setTimeout(() => setConnectingGithubApp(false), 2000)
+    }
+  }
+
+  async function handleLinkInstallation(credentialId: string) {
+    setLinkingInstallationId(credentialId)
+    try {
+      const cred = await api.githubApp.linkInstallation(teamId, credentialId)
+      setCredentials((prev) => [cred, ...prev])
+      setLinkableInstallations((prev) => prev.filter((i) => i.id !== credentialId))
+      if (linkableInstallations.length <= 1) setLinkDialogOpen(false)
+      setGithubAppNotice("GitHub App installation linked to this team.")
+    } catch (e) {
+      setGithubAppNotice(e instanceof Error ? e.message : "Failed to link installation.")
+    } finally {
+      setLinkingInstallationId(null)
     }
   }
 
@@ -264,8 +307,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             {!team.isPersonal && members.length > 0 && (
               <>
                 <div className="px-6 py-1.5 flex items-center gap-4 border-b border-border/50">
-                  <span className="text-xs text-muted-foreground flex-1">NAME / EMAIL</span>
-                  <span className="text-xs text-muted-foreground w-20">JOINED</span>
+                  <span className="text-xs text-muted-foreground uppercase flex-1">Name / Email</span>
+                  <span className="text-xs text-muted-foreground uppercase w-20">Joined</span>
                   {isAdmin && <span className="w-7" />}
                 </div>
                 {members.map((member, i) => (
@@ -332,10 +375,10 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             {teamCreds.length > 0 && (
               <>
                 <div className="px-6 py-1.5 flex items-center gap-4 border-b border-border/50">
-                  <span className="text-xs text-muted-foreground w-48">NAME</span>
-                  <span className="text-xs text-muted-foreground w-20">PROVIDER</span>
-                  <span className="text-xs text-muted-foreground w-24">TYPE</span>
-                  <span className="text-xs text-muted-foreground flex-1">ADDED</span>
+                  <span className="text-xs text-muted-foreground uppercase w-48">Name</span>
+                  <span className="text-xs text-muted-foreground uppercase w-20">Provider</span>
+                  <span className="text-xs text-muted-foreground uppercase w-24">Type</span>
+                  <span className="text-xs text-muted-foreground uppercase flex-1">Added</span>
                 </div>
                 {teamCreds.map((cred, i) => (
                   <div key={cred.id}>
@@ -435,15 +478,16 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Label>Provider</Label>
-                  <select
-                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                    value={credProvider}
-                    onChange={(e) => setCredProvider(e.target.value as GitProvider)}
-                  >
-                    {PROVIDERS.map((p) => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </select>
+                  <Select value={credProvider} onValueChange={(v) => setCredProvider(v as GitProvider)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROVIDERS.map((p) => (
+                        <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
@@ -554,15 +598,23 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             </CardHeader>
             <CardContent className="p-0">
               {githubAppNotice && (
-                <div className="px-6 py-3 bg-muted/40 border-b border-border/50">
+                <div className="px-6 py-3 bg-muted/40 border-b border-border/50 flex items-center justify-between gap-4">
                   <p className="text-sm text-muted-foreground">{githubAppNotice}</p>
+                  <button
+                    type="button"
+                    onClick={() => setGithubAppNotice(null)}
+                    className="text-muted-foreground hover:text-foreground shrink-0"
+                    aria-label="Dismiss"
+                  >
+                    ×
+                  </button>
                 </div>
               )}
 
               {systemGithubApp && (
                 <>
                   <div className="px-6 py-3 border-b border-border/50">
-                    <p className="text-xs text-muted-foreground font-medium mb-2">SYSTEM INSTALLATION</p>
+                    <p className="text-xs text-muted-foreground uppercase font-medium mb-2">System installation</p>
                     <div className="flex items-center gap-4">
                       <span className="text-sm font-medium flex-1">{systemGithubApp.name}</span>
                       <Badge variant="secondary" className="text-xs">configured by admin</Badge>
@@ -575,8 +627,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               {teamGithubAppCreds.length > 0 && (
                 <>
                   <div className="px-6 py-1.5 flex items-center gap-4 border-b border-border/50">
-                    <span className="text-xs text-muted-foreground flex-1">TEAM INSTALLATIONS</span>
-                    <span className="text-xs text-muted-foreground w-20">CONNECTED</span>
+                    <span className="text-xs text-muted-foreground uppercase flex-1">Team installations</span>
+                    <span className="w-20" />
+                    <span className="text-xs text-muted-foreground uppercase w-20 text-right">Connected</span>
                     <span className="w-7" />
                   </div>
                   {teamGithubAppCreds.map((cred, i) => (
@@ -584,7 +637,20 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                       {i > 0 && <Separator />}
                       <div className="flex items-center gap-4 px-6 py-3 group">
                         <span className="text-sm font-medium flex-1 truncate">{cred.name}</span>
-                        <span className="text-xs text-muted-foreground w-20">{timeAgo(cred.createdAt)}</span>
+                        {cred.installationId && cred.connectedByUserId === session?.user?.id ? (
+                          <a
+                            href={`https://github.com/settings/installations/${cred.installationId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-muted-foreground hover:text-foreground w-20 text-right opacity-0 group-hover:opacity-100"
+                            title="Configure repo access on GitHub"
+                          >
+                            Configure ↗
+                          </a>
+                        ) : (
+                          <span className="w-20" />
+                        )}
+                        <span className="text-xs text-muted-foreground w-20 text-right">{timeAgo(cred.createdAt)}</span>
                         <Button
                           size="sm"
                           variant="ghost"
@@ -617,6 +683,50 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         )}
 
       </div>
+
+      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Connect GitHub App</DialogTitle>
+            <DialogDescription>
+              Link your existing Github App to this team or connect a new GitHub account or org.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="px-6 pb-2 flex flex-col gap-2">
+            <p className="text-xs text-amber-600 dark:text-amber-500 border-l-2 border-amber-400 pl-2 leading-relaxed mb-2">
+              GitHub App permissions apply to all teams — you cannot restrict access per team. For fine-grained per-team access control, use fine-grained PAT tokens instead.
+            </p>
+            <p className="text-xs text-muted-foreground uppercase font-medium">Your installations</p>
+            {linkableInstallations.map((inst) => (
+              <div key={inst.id} className="flex items-center gap-3 py-1">
+                <span className="text-sm flex-1">{inst.name}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleLinkInstallation(inst.id)}
+                  disabled={linkingInstallationId === inst.id}
+                >
+                  {linkingInstallationId === inst.id
+                    ? <Loader2 className="size-4 animate-spin" />
+                    : "Link to this team"}
+                </Button>
+              </div>
+            ))}
+          </div>
+          <div className="px-6 pb-6 pt-2 border-t border-border/50 mt-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={handleConnectNewAccount}
+            >
+              <GitHubIcon size={15} />
+              Connect a different account or org
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </AppShell>
   )
 }

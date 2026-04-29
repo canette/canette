@@ -27,6 +27,9 @@ export function CredentialSelect({ credentials, value, onChange, id = "gitCreden
             <SelectItem key={c.id} value={c.id} textValue={c.name}>
               <span className="flex items-center gap-2">
                 {c.name}
+                {c.type === "github_app" && (
+                  <Badge variant="secondary" className="text-xs font-normal">GitHub App</Badge>
+                )}
                 {c.teamId === null && (
                   <Badge variant="secondary" className="text-xs font-normal">system</Badge>
                 )}
