@@ -5,7 +5,17 @@ updates:
     schedule:
       interval: "weekly"
     cooldown:
-      default-days: 5      
+      default-days: 5
+    groups:
+      fumadocs:
+        patterns:
+          - "fumadocs-*"
+          - "lucide-react"
+      minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "gomod"
     directories:
       - "/apps/controller"
@@ -15,9 +25,24 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 5
+    groups:
+      k8s:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
-      default-days: 5      
+      default-days: 5
+    groups:
+      minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
