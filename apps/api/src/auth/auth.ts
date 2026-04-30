@@ -5,15 +5,32 @@ import { passwordPolicyPlugin } from "./password"
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
+export const coreAuthOptions = {
+  advanced: {
+    database: {
+      generateId: "uuid" as const,
+    },
+  },
+  plugins: [passwordPolicyPlugin(), admin({ adminRole: "admin", defaultRole: "developer" })],
+  emailAndPassword: {
+    enabled: true,
+  },
+  user: {
+    additionalFields: {
+      role: {
+        type: "string" as const,
+        defaultValue: "developer",
+        input: false,
+      },
+    },
+  },
+}
+
 export const auth = betterAuth({
+  ...coreAuthOptions,
   database: pool,
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins: [process.env.UI_URL ?? "http://localhost:3000"],
-  advanced: {
-    database: {
-      generateId: "uuid",
-    },
-  },
   socialProviders: {
     ...(process.env.GITHUB_CLIENT_ID
       ? {
@@ -31,19 +48,6 @@ export const auth = betterAuth({
           },
         }
       : {}),
-  },
-  plugins: [passwordPolicyPlugin(), admin({ adminRole: "admin", defaultRole: "developer" })],
-  emailAndPassword: {
-    enabled: true,
-  },
-  user: {
-    additionalFields: {
-      role: {
-        type: "string" as const,
-        defaultValue: "developer",
-        input: false,
-      },
-    },
   },
   databaseHooks: {
     user: {
