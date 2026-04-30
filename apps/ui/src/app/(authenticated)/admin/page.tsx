@@ -106,6 +106,11 @@ export default function AdminPage() {
   const [resetResult, setResetResult] = useState<SyncResult | null>(null)
   const [resetError, setResetError] = useState("")
 
+  // team deletion
+  const [deleteTeamConfirm, setDeleteTeamConfirm] = useState<AdminTeamOverview | null>(null)
+  const [deletingTeam, setDeletingTeam] = useState(false)
+  const [deleteTeamError, setDeleteTeamError] = useState("")
+
   useEffect(() => {
     if (sessionLoading) return
     const u = session?.user as Record<string, unknown> | undefined
@@ -291,6 +296,21 @@ export default function AdminPage() {
     }
   }
 
+  async function handleDeleteTeam() {
+    if (!deleteTeamConfirm) return
+    setDeleteTeamError("")
+    setDeletingTeam(true)
+    try {
+      await api.teams.delete(deleteTeamConfirm.id)
+      setAdminTeams((prev) => prev.filter((t) => t.id !== deleteTeamConfirm.id))
+      setDeleteTeamConfirm(null)
+    } catch (e: unknown) {
+      setDeleteTeamError(e instanceof Error ? e.message : "Failed to delete team")
+    } finally {
+      setDeletingTeam(false)
+    }
+  }
+
   const currentUserId = typeof session?.user?.id === "string" ? session.user.id : undefined
 
   if (sessionLoading || loading) {
@@ -458,8 +478,9 @@ export default function AdminPage() {
                               <p className="text-xs text-muted-foreground pl-10 pr-6 py-2.5">No members.</p>
                             )}
                             {!team.isPersonal && (
-                              <div className="pl-10 pr-6 py-3 border-t border-border/50">
-                                {addMemberTeamId === team.id ? (
+                              <div className="pl-10 pr-6 py-2 border-t border-border/50 flex items-center justify-between">
+                                <div className="flex-1">
+                                  {addMemberTeamId === team.id ? (
                                   <form onSubmit={(e) => handleAdminAddMember(e, team.id)} className="flex flex-col gap-2">
                                     <div className="flex gap-2 items-center">
                                       <input
@@ -488,6 +509,15 @@ export default function AdminPage() {
                                     + Add member
                                   </button>
                                 )}
+                                </div>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-xs text-muted-foreground hover:text-destructive shrink-0"
+                                  onClick={() => { setDeleteTeamError(""); setDeleteTeamConfirm(team) }}
+                                >
+                                  Delete team
+                                </Button>
                               </div>
                             )}
                           </div>
@@ -945,6 +975,27 @@ export default function AdminPage() {
           </div>
           <DialogFooter>
             <Button onClick={() => { setResetPasswordResult(null); setCopied(false) }}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTeamConfirm !== null} onOpenChange={(open) => { if (!open) setDeleteTeamConfirm(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete team</DialogTitle>
+            <DialogDescription>
+              Permanently delete <strong>{deleteTeamConfirm?.name}</strong>? This will also delete all its projects. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteTeamError && 
+          <div className="flex items-center gap-2 rounded-md border border-input bg-muted px-3 py-2 mx-6 mb-2">
+            <p className="text-sm text-destructive">{deleteTeamError}</p>
+          </div>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTeamConfirm(null)} disabled={deletingTeam}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteTeam} disabled={deletingTeam}>
+              {deletingTeam ? "Deleting…" : "Delete team"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

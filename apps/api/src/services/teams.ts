@@ -208,19 +208,21 @@ export async function deleteTeam(
     throw new ServiceError("Personal teams cannot be deleted", "FORBIDDEN", 403)
   }
 
-  const projectCount = await db
-    .selectFrom("projects")
+  const appCount = await db
+    .selectFrom("apps")
+    .innerJoin("projects", "projects.id", "apps.project_id")
     .select(db.fn.countAll<number>().as("count"))
-    .where("team_id", "=", teamId)
+    .where("projects.team_id", "=", teamId)
     .executeTakeFirstOrThrow()
-  if (Number(projectCount.count) > 0) {
+  if (Number(appCount.count) > 0) {
     throw new ServiceError(
-      "Remove all projects from the team before deleting it",
+      "This team still has apps. Join the team and delete all apps before deleting it.",
       "CONFLICT",
       409
     )
   }
 
+  await db.deleteFrom("projects").where("team_id", "=", teamId).execute()
   await db.deleteFrom("teams").where("id", "=", teamId).execute()
 }
 
