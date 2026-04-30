@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminTeamOverview, App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanPolicy, SyncResult, Team, TeamMember, User, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminTeamOverview, App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanPolicy, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -156,7 +156,10 @@ export const admin = {
   listUsers: () => request<User[]>("/admin/users"),
   updateUserRole: (id: string, role: UserRole) =>
     request<User>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify({ role }) }),
-  deleteUser: (id: string) => request<void>(`/admin/users/${id}`, { method: "DELETE" }),
+  getUserDeletionImpact: (id: string) => request<UserDeletionImpact>(`/admin/users/${id}/deletion-impact`),
+  getTeamMembers: (teamId: string) => request<TeamMember[]>(`/admin/teams/${teamId}/members`),
+  deleteUser: (id: string, force?: boolean) =>
+    request<void>(`/admin/users/${id}`, { method: "DELETE", body: JSON.stringify({ force }) }),
   getOverview: () => request<AdminProjectOverview[]>("/admin/overview"),
   getTeams: () => request<AdminTeamOverview[]>("/admin/teams"),
   sync: () => request<SyncResult>("/admin/sync", { method: "POST" }),

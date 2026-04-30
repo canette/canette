@@ -56,11 +56,6 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [credentials, setCredentials] = useState<GitCredential[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Members
-  const [addEmail, setAddEmail] = useState("")
-  const [addingMember, setAddingMember] = useState(false)
-  const [memberError, setMemberError] = useState("")
-
   // Credentials
   const [credName, setCredName] = useState("")
   const [credProvider, setCredProvider] = useState<GitProvider>("github")
@@ -114,32 +109,6 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       setGithubAppNotice("Failed to complete GitHub App installation. Please try again.")
     }
   }, [searchParams, load])
-
-  async function handleAddMember(e: React.FormEvent) {
-    e.preventDefault()
-    if (!addEmail.trim()) return
-    setMemberError("")
-    setAddingMember(true)
-    try {
-      await api.teams.addMember(teamId, { email: addEmail.trim() })
-      setAddEmail("")
-      const teamData = await api.teams.get(teamId)
-      setMembers(teamData.members)
-    } catch (e: unknown) {
-      setMemberError(e instanceof Error ? e.message : "Failed to add member")
-    } finally {
-      setAddingMember(false)
-    }
-  }
-
-  async function handleRemoveMember(userId: string) {
-    try {
-      await api.teams.removeMember(teamId, userId)
-      setMembers((prev) => prev.filter((m) => m.userId !== userId))
-    } catch {
-      // ignore
-    }
-  }
 
   async function handleAddCred(e: React.FormEvent) {
     e.preventDefault()
@@ -308,56 +277,26 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               <>
                 <div className="px-6 py-1.5 flex items-center gap-4 border-b border-border/50">
                   <span className="text-xs text-muted-foreground uppercase flex-1">Name / Email</span>
-                  <span className="text-xs text-muted-foreground uppercase w-20">Joined</span>
-                  {isAdmin && <span className="w-7" />}
+                  <span className="text-xs text-muted-foreground uppercase text-right w-20">Joined</span>
                 </div>
                 {members.map((member, i) => (
                   <div key={member.userId}>
                     {i > 0 && <Separator />}
-                    <div className="flex items-center gap-4 px-6 py-3 group">
+                    <div className="flex items-center gap-4 px-6 py-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{member.name}</p>
                         <p className="text-xs text-muted-foreground truncate">{member.email}</p>
                       </div>
-                      <span className="text-xs text-muted-foreground w-20">{timeAgo(member.joinedAt)}</span>
-                      {isAdmin && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"
-                          disabled={member.userId === team.ownerId}
-                          title={member.userId === team.ownerId ? "Cannot remove team owner" : "Remove member"}
-                          onClick={() => handleRemoveMember(member.userId)}
-                        >
-                          ×
-                        </Button>
-                      )}
+                      <span className="text-xs text-muted-foreground text-right w-20">{timeAgo(member.joinedAt)}</span>
                     </div>
                   </div>
                 ))}
-                <Separator />
               </>
             )}
-
             {!team.isPersonal && isAdmin && (
-              <form onSubmit={handleAddMember} className="px-6 py-4 flex flex-col gap-3">
-                <div className="flex gap-3 items-end">
-                  <div className="flex flex-col gap-1.5 flex-1">
-                    <Label htmlFor="member-email">Add member by email</Label>
-                    <Input
-                      id="member-email"
-                      type="email"
-                      placeholder="user@example.com"
-                      value={addEmail}
-                      onChange={(e) => setAddEmail(e.target.value)}
-                    />
-                  </div>
-                  <Button type="submit" size="sm" disabled={!addEmail.trim() || addingMember}>
-                    {addingMember ? "Adding…" : "Add"}
-                  </Button>
-                </div>
-                {memberError && <p className="text-sm text-destructive">{memberError}</p>}
-              </form>
+              <p className="text-xs text-muted-foreground px-6 py-3 border-t border-border/50">
+                Manage members in <a href="/admin" className="underline hover:text-foreground">Admin → Teams</a>.
+              </p>
             )}
           </CardContent>
         </Card>

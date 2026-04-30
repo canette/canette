@@ -4,6 +4,7 @@ import type { Selectable, Updateable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
+import { appNamespace } from "../utils/k8s"
 import { isTeamMember } from "./membership"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
@@ -196,7 +197,7 @@ export async function updateProject(
   }
 
   if (slugChanging) {
-    const oldNamespace = `can-${projectId.slice(0, 7)}-${project.slug.slice(0, 50)}`
+    const oldNamespace = appNamespace(projectId, project.slug)
     await db
       .updateTable("deployments")
       .set({ applied_manifest: null })

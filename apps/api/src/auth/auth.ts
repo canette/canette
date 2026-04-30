@@ -8,7 +8,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 export const coreAuthOptions = {
   advanced: {
     database: {
-      generateId: "uuid" as const,
+      generateId: () => crypto.randomUUID(),
     },
   },
   plugins: [passwordPolicyPlugin(), admin({ adminRole: "admin", defaultRole: "developer" })],

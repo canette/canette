@@ -8,7 +8,7 @@ rules:
   # Namespace management — required to create per-project namespaces at runtime
   - apiGroups: [""]
     resources: ["namespaces"]
-    verbs: ["create", "get", "patch"]
+    verbs: ["create", "get", "patch", "delete"]
   # App workload resources in dynamically created can-* namespaces
   - apiGroups: ["apps"]
     resources: ["deployments"]

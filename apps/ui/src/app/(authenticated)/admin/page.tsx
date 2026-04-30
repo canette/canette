@@ -9,11 +9,12 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { Checkbox } from "@/components/ui/checkbox"
 import { ChevronDown, Copy, Check } from "lucide-react"
 import { useSession } from "@/lib/auth-client"
 import { AppShell } from "@/components/app-shell"
 import * as api from "@/lib/api"
-import type { AdminProjectOverview, AdminTeamOverview, ResourceDefaults, ScanPolicy, SyncResult, User, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminTeamOverview, ResourceDefaults, ScanPolicy, SyncResult, TeamMember, User, UserDeletionImpact, WebhookSettings } from "@canette/types"
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -73,10 +74,22 @@ export default function AdminPage() {
   // per-project expansion in overview
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
 
+  // team member management
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set())
+  const [teamMembers, setTeamMembers] = useState<Map<string, TeamMember[]>>(new Map())
+  const [teamMembersLoading, setTeamMembersLoading] = useState<Set<string>>(new Set())
+  const [addMemberTeamId, setAddMemberTeamId] = useState<string | null>(null)
+  const [addMemberEmail, setAddMemberEmail] = useState("")
+  const [addingMember, setAddingMember] = useState(false)
+  const [addMemberError, setAddMemberError] = useState("")
+
   // user actions
   const [actionError, setActionError] = useState("")
   const [pendingAction, setPendingAction] = useState<string | null>(null) // user id being acted on
   const [deleteConfirm, setDeleteConfirm] = useState<User | null>(null)
+  const [deletionImpact, setDeletionImpact] = useState<UserDeletionImpact | null>(null)
+  const [deletionImpactLoading, setDeletionImpactLoading] = useState(false)
+  const [deleteImpactAcknowledged, setDeleteImpactAcknowledged] = useState(false)
   const [roleToggleConfirm, setRoleToggleConfirm] = useState<User | null>(null)
   const [resetPasswordConfirm, setResetPasswordConfirm] = useState<User | null>(null)
   const [resetPasswordPending, setResetPasswordPending] = useState<string | null>(null)
@@ -121,12 +134,34 @@ export default function AdminPage() {
     }
   }
 
-  async function handleDelete(userId: string) {
+  async function openDeleteConfirm(user: User) {
+    setDeleteConfirm(user)
+    setDeletionImpact(null)
+    setDeleteImpactAcknowledged(false)
+    setDeletionImpactLoading(true)
+    try {
+      const impact = await api.admin.getUserDeletionImpact(user.id)
+      setDeletionImpact(impact)
+    } catch {
+      // impact fetch failed — we'll still show the dialog, delete may fail with a clear error
+    } finally {
+      setDeletionImpactLoading(false)
+    }
+  }
+
+  async function handleDelete(userId: string, force: boolean) {
     setActionError("")
     setPendingAction(userId)
     try {
-      await api.admin.deleteUser(userId)
+      await api.admin.deleteUser(userId, force)
       setUsers((prev) => prev.filter((u) => u.id !== userId))
+      setTeamMembers((prev) => {
+        const next = new Map(prev)
+        for (const [teamId, members] of next) {
+          next.set(teamId, members.filter((m) => m.userId !== userId))
+        }
+        return next
+      })
       setDeleteConfirm(null)
     } catch (e: unknown) {
       setActionError(e instanceof Error ? e.message : "Failed to delete user")
@@ -204,6 +239,56 @@ export default function AdminPage() {
       if (next.has(id)) next.delete(id); else next.add(id)
       return next
     })
+  }
+
+  async function toggleTeam(teamId: string) {
+    setExpandedTeams((prev) => {
+      const next = new Set(prev)
+      if (next.has(teamId)) { next.delete(teamId); return next }
+      next.add(teamId)
+      return next
+    })
+    if (!teamMembers.has(teamId)) {
+      setTeamMembersLoading((prev) => new Set(prev).add(teamId))
+      try {
+        const members = await api.admin.getTeamMembers(teamId)
+        setTeamMembers((prev) => new Map(prev).set(teamId, members))
+      } finally {
+        setTeamMembersLoading((prev) => { const next = new Set(prev); next.delete(teamId); return next })
+      }
+    }
+  }
+
+  async function handleAdminAddMember(e: React.FormEvent, teamId: string) {
+    e.preventDefault()
+    if (!addMemberEmail.trim()) return
+    setAddMemberError("")
+    setAddingMember(true)
+    try {
+      await api.teams.addMember(teamId, { email: addMemberEmail.trim() })
+      setAddMemberEmail("")
+      setAddMemberTeamId(null)
+      const members = await api.admin.getTeamMembers(teamId)
+      setTeamMembers((prev) => new Map(prev).set(teamId, members))
+      setAdminTeams((prev) => prev.map((t) => t.id === teamId ? { ...t, memberCount: members.length } : t))
+    } catch (e: unknown) {
+      setAddMemberError(e instanceof Error ? e.message : "Failed to add member")
+    } finally {
+      setAddingMember(false)
+    }
+  }
+
+  async function handleAdminRemoveMember(teamId: string, userId: string) {
+    try {
+      await api.teams.removeMember(teamId, userId)
+      setTeamMembers((prev) => {
+        const updated = (prev.get(teamId) ?? []).filter((m) => m.userId !== userId)
+        return new Map(prev).set(teamId, updated)
+      })
+      setAdminTeams((prev) => prev.map((t) => t.id === teamId ? { ...t, memberCount: t.memberCount - 1 } : t))
+    } catch {
+      // ignore
+    }
   }
 
   const currentUserId = typeof session?.user?.id === "string" ? session.user.id : undefined
@@ -285,7 +370,7 @@ export default function AdminPage() {
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                                onClick={() => setDeleteConfirm(user)}
+                                onClick={() => openDeleteConfirm(user)}
                                 disabled={pendingAction === user.id || resetPasswordPending === user.id}
                               >
                                 Delete
@@ -318,28 +403,98 @@ export default function AdminPage() {
                 {adminTeams.length === 0 ? (
                   <p className="text-muted-foreground text-sm px-6 pb-4">No teams yet.</p>
                 ) : (
-                  <>
-                    <div className="px-6 py-1.5 flex items-center gap-4 border-b border-border/50">
-                      <span className="text-xs text-muted-foreground uppercase flex-1">Name</span>
-                      <span className="text-xs text-muted-foreground uppercase w-20 text-right">Members</span>
-                      <span className="text-xs text-muted-foreground uppercase w-20 text-right">Projects</span>
-                    </div>
-                    {adminTeams.map((team, i) => (
+                  adminTeams.map((team, i) => {
+                    const expanded = expandedTeams.has(team.id)
+                    const members = teamMembers.get(team.id)
+                    const membersLoading = teamMembersLoading.has(team.id)
+                    return (
                       <div key={team.id}>
                         {i > 0 && <Separator />}
-                        <div className="flex items-center gap-4 px-6 py-3">
+                        <button
+                          type="button"
+                          className="w-full flex items-center gap-4 px-6 py-3 hover:bg-muted/40 transition-colors text-left"
+                          onClick={() => toggleTeam(team.id)}
+                        >
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             <span className="text-sm font-medium truncate">{team.name}</span>
                             {team.isPersonal && (
                               <Badge variant="secondary" className="text-xs font-normal shrink-0">personal</Badge>
                             )}
                           </div>
-                          <span className="text-xs text-muted-foreground w-20 text-right">{team.memberCount}</span>
-                          <span className="text-xs text-muted-foreground w-20 text-right">{team.projectCount}</span>
-                        </div>
+                          <span className="text-xs text-muted-foreground w-16 text-right">{team.memberCount} member{team.memberCount !== 1 ? "s" : ""}</span>
+                          <span className="text-xs text-muted-foreground w-20 text-right">{team.projectCount} project{team.projectCount !== 1 ? "s" : ""}</span>
+                          <Chevron open={expanded} />
+                        </button>
+                        {expanded && (
+                          <div className="border-t border-border/50 bg-muted/20">
+                            {membersLoading && (
+                              <p className="text-xs text-muted-foreground px-10 py-3">Loading…</p>
+                            )}
+                            {!membersLoading && members && members.length > 0 && (
+                              members.map((member, j) => (
+                                <div key={member.userId}>
+                                  {j > 0 && <Separator />}
+                                  <div className="flex items-center gap-3 pl-10 pr-6 py-2.5 group">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm truncate">{member.name}</p>
+                                      <p className="text-xs text-muted-foreground truncate">{member.email}</p>
+                                    </div>
+                                    {!team.isPersonal && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 shrink-0"
+                                        onClick={() => handleAdminRemoveMember(team.id, member.userId)}
+                                        title="Remove member"
+                                      >
+                                        ×
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                            {!membersLoading && members && members.length === 0 && (
+                              <p className="text-xs text-muted-foreground pl-10 pr-6 py-2.5">No members.</p>
+                            )}
+                            {!team.isPersonal && (
+                              <div className="pl-10 pr-6 py-3 border-t border-border/50">
+                                {addMemberTeamId === team.id ? (
+                                  <form onSubmit={(e) => handleAdminAddMember(e, team.id)} className="flex flex-col gap-2">
+                                    <div className="flex gap-2 items-center">
+                                      <input
+                                        type="email"
+                                        placeholder="user@example.com"
+                                        value={addMemberEmail}
+                                        onChange={(e) => setAddMemberEmail(e.target.value)}
+                                        className="h-8 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                                        autoFocus
+                                      />
+                                      <Button type="submit" size="sm" className="h-8" disabled={!addMemberEmail.trim() || addingMember}>
+                                        {addingMember ? "Adding…" : "Add"}
+                                      </Button>
+                                      <Button type="button" size="sm" variant="ghost" className="h-8" onClick={() => { setAddMemberTeamId(null); setAddMemberEmail(""); setAddMemberError("") }}>
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                    {addMemberError && <p className="text-xs text-destructive">{addMemberError}</p>}
+                                  </form>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                    onClick={() => { setAddMemberTeamId(team.id); setAddMemberEmail(""); setAddMemberError("") }}
+                                  >
+                                    + Add member
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </>
+                    )
+                  })
                 )}
                 <div className="px-6 py-3 border-t border-border/50">
                   <Link href="/dashboard/teams/new" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
@@ -685,22 +840,61 @@ export default function AdminPage() {
       </Dialog>
 
       {/* Confirm before deleting a user */}
-      <Dialog open={deleteConfirm !== null} onOpenChange={(open) => { if (!open) setDeleteConfirm(null) }}>
+      <Dialog open={deleteConfirm !== null} onOpenChange={(open) => { if (!open) { setDeleteConfirm(null); setDeletionImpact(null); setDeleteImpactAcknowledged(false) } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete user?</DialogTitle>
-            <DialogDescription>
-              This will permanently delete <strong>{deleteConfirm?.name}</strong> ({deleteConfirm?.email}) and all their data. This cannot be undone.
+            <DialogDescription asChild>
+              <div>
+                <span>Permanently delete <strong>{deleteConfirm?.name}</strong> ({deleteConfirm?.email}).</span>
+                {deletionImpactLoading && (
+                  <span className="block mt-2 text-xs text-muted-foreground">Checking account data…</span>
+                )}
+                {!deletionImpactLoading && deletionImpact && (
+                  <>
+                    {deletionImpact.sharedTeamsReowned.length > 0 && (
+                      <span className="block mt-2 text-xs text-muted-foreground">
+                        Ownership of {deletionImpact.sharedTeamsReowned.length === 1 ? "team" : "teams"} <strong>{deletionImpact.sharedTeamsReowned.join(", ")}</strong> will be transferred to you.
+                      </span>
+                    )}
+                    {deletionImpact.personalTeam && deletionImpact.personalTeam.inFlightAppNames.length > 0 && (
+                      <span className="block mt-2 text-sm text-destructive">
+                        Cannot delete: {deletionImpact.personalTeam.inFlightAppNames.length === 1 ? "app" : "apps"} <strong>{deletionImpact.personalTeam.inFlightAppNames.join(", ")}</strong> {deletionImpact.personalTeam.inFlightAppNames.length === 1 ? "is" : "are"} currently building or deploying. Stop {deletionImpact.personalTeam.inFlightAppNames.length === 1 ? "it" : "them"} first.
+                      </span>
+                    )}
+                    {deletionImpact.personalTeam && deletionImpact.personalTeam.inFlightAppNames.length === 0 && deletionImpact.personalTeam.projectCount > 0 && (
+                      <span className="block mt-2 text-sm text-amber-600 dark:text-amber-500">
+                        This will permanently delete {deletionImpact.personalTeam.projectCount} project{deletionImpact.personalTeam.projectCount !== 1 ? "s" : ""} and {deletionImpact.personalTeam.appCount} app{deletionImpact.personalTeam.appCount !== 1 ? "s" : ""}. Running apps will be stopped. Kubernetes resources will be cleaned up in the background.
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
             </DialogDescription>
           </DialogHeader>
+          {!deletionImpactLoading && deletionImpact?.personalTeam && deletionImpact.personalTeam.inFlightAppNames.length === 0 && deletionImpact.personalTeam.projectCount > 0 && (
+            <label className="flex items-center gap-2 px-6 text-sm cursor-pointer select-none">
+              <Checkbox
+                checked={deleteImpactAcknowledged}
+                onCheckedChange={(v) => setDeleteImpactAcknowledged(v === true)}
+              />
+              I understand all projects and apps will be permanently deleted
+            </label>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setDeleteConfirm(null); setDeletionImpact(null); setDeleteImpactAcknowledged(false) }}>Cancel</Button>
             <Button
               variant="destructive"
-              disabled={pendingAction === deleteConfirm?.id}
+              disabled={
+                pendingAction === deleteConfirm?.id ||
+                deletionImpactLoading ||
+                !!(deletionImpact?.personalTeam?.inFlightAppNames.length) ||
+                !!(deletionImpact?.personalTeam && deletionImpact.personalTeam.projectCount > 0 && !deleteImpactAcknowledged)
+              }
               onClick={() => {
                 if (!deleteConfirm) return
-                handleDelete(deleteConfirm.id)
+                const force = !!(deletionImpact?.personalTeam && deletionImpact.personalTeam.projectCount > 0)
+                handleDelete(deleteConfirm.id, force)
               }}
             >
               {pendingAction === deleteConfirm?.id ? "Deleting…" : "Delete user"}
