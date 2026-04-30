@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -7,10 +8,11 @@ interface Props {
   credentials: GitCredential[]
   value: string        // "" means "no credential"
   onChange: (value: string) => void
+  teamId?: string
   id?: string
 }
 
-export function CredentialSelect({ credentials, value, onChange, id = "gitCredentialId" }: Props) {
+export function CredentialSelect({ credentials, value, onChange, teamId, id = "gitCredentialId" }: Props) {
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={id}>Credential</Label>
@@ -38,6 +40,18 @@ export function CredentialSelect({ credentials, value, onChange, id = "gitCreden
           ))}
         </SelectContent>
       </Select>
+      {credentials.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          For private repos,{" "}
+          <Link
+            href={teamId ? `/dashboard/teams/${teamId}` : "/dashboard/teams"}
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            add a credential
+          </Link>{" "}
+          first.
+        </p>
+      )}
     </div>
   )
 }

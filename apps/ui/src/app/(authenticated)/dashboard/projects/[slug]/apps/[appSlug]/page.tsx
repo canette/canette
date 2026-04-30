@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils"
 import { AppShell } from "@/components/app-shell"
 import { CredentialSelect } from "@/components/credential-select"
 import * as api from "@/lib/api"
-import type { App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, ScanSummary } from "@canette/types"
+import type { App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, Project, ScanSummary } from "@canette/types"
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -896,6 +896,7 @@ export default function AppDetailPage() {
   const { slug: projectSlug, appSlug } = useParams<{ slug: string; appSlug: string }>()
   const router = useRouter()
   const [app, setApp] = useState<App | null>(null)
+  const [project, setProject] = useState<Project | null>(null)
   const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -965,9 +966,11 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
     Promise.all([
       api.apps.getBySlug(projectSlug, appSlug),
       api.projects.listCredentials(projectSlug).catch(() => [] as GitCredential[]),
+      api.projects.get(projectSlug),
     ])
-      .then(([a, creds]) => {
+      .then(([a, creds, proj]) => {
         setApp(a)
+        setProject(proj)
         setName(a.name)
         setSourceType(a.sourceType)
         setGitUrl(a.gitUrl)
@@ -1165,7 +1168,10 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
           <CardContent className="flex flex-col gap-3">
             {actionError && <p className="text-sm text-destructive">{actionError}</p>}
             {currentDeployment?.status === "failed" && currentDeployment.errorMessage && (
-              <p className="text-sm text-destructive font-mono">{currentDeployment.errorMessage}</p>
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5">
+                <p className="text-xs font-medium text-destructive mb-1">Build failed</p>
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">{currentDeployment.errorMessage}</p>
+              </div>
             )}
             {liveDeployment && app.liveUrl && (
               <a
@@ -1372,6 +1378,7 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
                         credentials={credentials}
                         value={gitCredentialId}
                         onChange={setGitCredentialId}
+                        teamId={project?.teamId}
                       />
                     </>
                   ) : (

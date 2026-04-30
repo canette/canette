@@ -263,13 +263,12 @@ export default function NewAppPage() {
                     )}
                   </div>
 
-                  {credentials.length > 0 && (
-                    <CredentialSelect
-                      credentials={credentials}
-                      value={gitCredentialId}
-                      onChange={setGitCredentialId}
-                    />
-                  )}
+                  <CredentialSelect
+                    credentials={credentials}
+                    value={gitCredentialId}
+                    onChange={setGitCredentialId}
+                    teamId={project?.teamId}
+                  />
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="flex flex-col gap-1.5">
