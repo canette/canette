@@ -9,6 +9,11 @@ export const auth = betterAuth({
   database: pool,
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins: [process.env.UI_URL ?? "http://localhost:3000"],
+  advanced: {
+    database: {
+      generateId: "uuid",
+    },
+  },
   socialProviders: {
     ...(process.env.GITHUB_CLIENT_ID
       ? {
