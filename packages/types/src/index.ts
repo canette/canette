@@ -203,6 +203,15 @@ export interface SyncResult {
   message: string
 }
 
+export interface UserDeletionImpact {
+  personalTeam: {
+    projectCount: number
+    appCount: number
+    inFlightAppNames: string[]
+  } | null
+  sharedTeamsReowned: string[]
+}
+
 // API envelope types
 
 export interface ApiError {

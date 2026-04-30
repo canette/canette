@@ -1,9 +1,10 @@
 import type { DB } from "../db/db"
-import type { AdminAppSummary, AdminProjectOverview, DeploymentStatus, ResourceDefaults, ScanPolicy, SyncResult, User, UserRole, WebhookSettings } from "@canette/types"
+import type { AdminAppSummary, AdminProjectOverview, DeploymentStatus, ResourceDefaults, ScanPolicy, SyncResult, TeamMember, User, UserDeletionImpact, UserRole, WebhookSettings } from "@canette/types"
 import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
+import { appNamespace } from "../utils/k8s"
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
@@ -96,33 +97,201 @@ export async function updateUserRole(
   return mapUser(row)
 }
 
+export async function getUserDeletionImpact(db: DB, userId: string): Promise<UserDeletionImpact> {
+  const [personalTeam, sharedTeams] = await Promise.all([
+    db.selectFrom("teams").select(["id"]).where("owner_id", "=", userId).where("is_personal", "=", true).executeTakeFirst(),
+    db.selectFrom("teams").select("name").where("owner_id", "=", userId).where("is_personal", "=", false).execute(),
+  ])
+
+  let personalTeamImpact: UserDeletionImpact["personalTeam"] = null
+  if (personalTeam) {
+    const projects = await db
+      .selectFrom("projects")
+      .select("id")
+      .where("team_id", "=", personalTeam.id)
+      .execute()
+
+    let appCount = 0
+    const inFlightAppNames: string[] = []
+
+    if (projects.length > 0) {
+      const projectIds = projects.map((p) => p.id)
+      const apps = await db
+        .selectFrom("apps")
+        .select(["id", "name"])
+        .where("project_id", "in", projectIds)
+        .execute()
+
+      appCount = apps.length
+
+      if (apps.length > 0) {
+        const appIds = apps.map((a) => a.id)
+        const deployments = await db
+          .selectFrom("deployments")
+          .select(["app_id", "status", "created_at"])
+          .where("app_id", "in", appIds)
+          .orderBy("created_at", "desc")
+          .execute()
+
+        const latestByApp = new Map<string, string>()
+        for (const d of deployments) {
+          if (!latestByApp.has(d.app_id)) latestByApp.set(d.app_id, d.status)
+        }
+
+        const inFlight = new Set(["building", "scanning", "pending_deployment", "deploying"])
+        const appNameById = new Map(apps.map((a) => [a.id, a.name]))
+        for (const [appId, status] of latestByApp) {
+          if (inFlight.has(status)) inFlightAppNames.push(appNameById.get(appId) ?? appId)
+        }
+      }
+    }
+
+    personalTeamImpact = { projectCount: projects.length, appCount, inFlightAppNames }
+  }
+
+  return {
+    personalTeam: personalTeamImpact,
+    sharedTeamsReowned: sharedTeams.map((t) => t.name),
+  }
+}
+
 export async function deleteUser(
   db: DB,
   id: string,
-  requesterId: string
+  requesterId: string,
+  options: { force?: boolean } = {}
 ): Promise<boolean> {
   if (id === requesterId) {
     throw new ServiceError("Cannot delete your own account", "FORBIDDEN", 403)
   }
-  // Block deletion if the user owns any team — admin must delete the team first.
-  const ownedTeam = await db
-    .selectFrom("teams")
-    .select("name")
+
+  // Reassign ownership of shared teams to the requesting admin — owner_id carries
+  // no access-control meaning on non-personal teams, it's just metadata.
+  await db
+    .updateTable("teams")
+    .set({ owner_id: requesterId, updated_at: new Date().toISOString() })
     .where("owner_id", "=", id)
-    .limit(1)
+    .where("is_personal", "=", false)
+    .execute()
+
+  const personalTeam = await db
+    .selectFrom("teams")
+    .select(["id"])
+    .where("owner_id", "=", id)
+    .where("is_personal", "=", true)
     .executeTakeFirst()
-  if (ownedTeam) {
-    throw new ServiceError(
-      `Cannot delete this user: they own the team "${ownedTeam.name}". Delete or transfer ownership of the team first.`,
-      "CONFLICT",
-      409
-    )
+
+  if (personalTeam) {
+    const projects = await db
+      .selectFrom("projects")
+      .select(["id", "slug"])
+      .where("team_id", "=", personalTeam.id)
+      .execute()
+
+    if (projects.length > 0) {
+      if (!options.force) {
+        const n = projects.length
+        throw new ServiceError(
+          `User has ${n} project${n === 1 ? "" : "s"}. Use force deletion to remove everything.`,
+          "CONFLICT",
+          409
+        )
+      }
+
+      const projectIds = projects.map((p) => p.id)
+      const apps = await db
+        .selectFrom("apps")
+        .select(["id", "name"])
+        .where("project_id", "in", projectIds)
+        .execute()
+
+      if (apps.length > 0) {
+        const appIds = apps.map((a) => a.id)
+        const deployments = await db
+          .selectFrom("deployments")
+          .select(["app_id", "status", "created_at"])
+          .where("app_id", "in", appIds)
+          .orderBy("created_at", "desc")
+          .execute()
+
+        const latestByApp = new Map<string, string>()
+        for (const d of deployments) {
+          if (!latestByApp.has(d.app_id)) latestByApp.set(d.app_id, d.status)
+        }
+
+        const inFlight = new Set(["building", "scanning", "pending_deployment", "deploying"])
+        const blocked = apps.filter((a) => {
+          const s = latestByApp.get(a.id)
+          return s !== undefined && inFlight.has(s)
+        })
+        if (blocked.length > 0) {
+          const names = blocked.map((a) => a.name).join(", ")
+          throw new ServiceError(
+            `Cannot delete: ${blocked.length} app${blocked.length === 1 ? " is" : "s are"} actively building or deploying (${names}). Stop them first.`,
+            "CONFLICT",
+            409
+          )
+        }
+
+        const now = new Date().toISOString()
+
+        // Stop live deployments so the controller can tear down K8s resources.
+        await db
+          .updateTable("deployments")
+          .set({ status: "stopped", error_message: null, updated_at: now })
+          .where("app_id", "in", appIds)
+          .where("status", "=", "live")
+          .execute()
+
+        await db
+          .updateTable("apps")
+          .set({ live_url: null })
+          .where("id", "in", appIds)
+          .execute()
+      }
+
+      // Queue namespace deletions before removing project records.
+      const now = new Date().toISOString()
+      for (const project of projects) {
+        const ns = appNamespace(project.id, project.slug)
+        await db
+          .insertInto("pending_namespace_deletions")
+          .values({ id: crypto.randomUUID(), namespace: ns, created_at: now })
+          .onConflict((oc) => oc.doNothing())
+          .execute()
+      }
+
+      // Delete projects; apps/deployments/etc cascade.
+      await db.deleteFrom("projects").where("id", "in", projectIds).execute()
+    }
+
+    await db.deleteFrom("team_members").where("team_id", "=", personalTeam.id).execute()
+    await db.deleteFrom("teams").where("id", "=", personalTeam.id).execute()
   }
-  const result = await db
-    .deleteFrom("user")
-    .where("id", "=", id)
-    .executeTakeFirst()
+
+  const result = await db.deleteFrom("user").where("id", "=", id).executeTakeFirst()
   return (result.numDeletedRows ?? 0n) > 0n
+}
+
+// ── Team member management (admin-scoped, no membership check) ────────────────
+
+export async function getTeamMembersForAdmin(db: DB, teamId: string): Promise<TeamMember[] | null> {
+  const team = await db.selectFrom("teams").select("id").where("id", "=", teamId).executeTakeFirst()
+  if (!team) return null
+  const rows = await db
+    .selectFrom("team_members as tm")
+    .innerJoin("user as u", "u.id", "tm.user_id")
+    .select(["tm.user_id", "tm.created_at", "u.name", "u.email", "u.image"])
+    .where("tm.team_id", "=", teamId)
+    .orderBy("tm.created_at", "asc")
+    .execute()
+  return rows.map((r) => ({
+    userId: r.user_id,
+    name: r.name,
+    email: r.email,
+    image: r.image ?? undefined,
+    joinedAt: r.created_at,
+  }))
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────

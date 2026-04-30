@@ -1,8 +1,8 @@
 import type { DB } from "../db/db"
+import { appNamespace } from "../utils/k8s"
 
 // getAppNamespace returns the Kubernetes namespace components needed to proxy log streams.
 // Returns null if the user does not have access to the app.
-// The namespace format must match AppNamespace() in apps/controller/internal/k8s/resources.go.
 export async function getAppNamespace(
   db: DB,
   appId: string,
@@ -22,10 +22,9 @@ export async function getAppNamespace(
     .executeTakeFirst()
   if (!row) return null
 
-  const slug = row.project_slug.length > 50 ? row.project_slug.slice(0, 50) : row.project_slug
   return {
     appSlug: row.app_slug,
-    namespace: `can-${row.project_id.slice(0, 8)}-${slug}`,
+    namespace: appNamespace(row.project_id, row.project_slug),
   }
 }
 

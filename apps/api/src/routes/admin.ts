@@ -12,6 +12,8 @@ import {
   getProjectsOverview,
   getResourceDefaults,
   getScanPolicy,
+  getTeamMembersForAdmin,
+  getUserDeletionImpact,
   getWebhookSettings,
   listUsers,
   resetStuckBuilds,
@@ -84,12 +86,26 @@ adminRouter.post("/users/:id/reset-password", async (c) => {
   }
 })
 
+// Get deletion impact summary for a user (projects, apps, in-flight builds)
+// GET /api/v1/admin/users/:id/deletion-impact
+adminRouter.get("/users/:id/deletion-impact", async (c) => {
+  try {
+    const impact = await getUserDeletionImpact(db, c.req.param("id"))
+    return c.json(impact)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
 // Delete a user
 // DELETE /api/v1/admin/users/:id
+// Body: { force?: boolean } — required when user has projects; stops live apps and cascades
 adminRouter.delete("/users/:id", async (c) => {
   const session = c.get("session")
+  const body = await c.req.json<{ force?: boolean }>().catch(() => ({} as { force?: boolean }))
   try {
-    const deleted = await deleteUser(db, c.req.param("id"), session.user.id)
+    const deleted = await deleteUser(db, c.req.param("id"), session.user.id, { force: body.force })
     if (!deleted) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
     return c.body(null, 204)
   } catch (e) {
@@ -110,6 +126,14 @@ adminRouter.get("/overview", async (c) => {
 adminRouter.get("/teams", async (c) => {
   const teams = await listTeamsOverview(db)
   return c.json(teams)
+})
+
+// Get members of any team (admin, no membership required)
+// GET /api/v1/admin/teams/:id/members
+adminRouter.get("/teams/:id/members", async (c) => {
+  const members = await getTeamMembersForAdmin(db, c.req.param("id"))
+  if (!members) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  return c.json(members)
 })
 
 // Force-sync: re-queue all live apps for reconciliation
