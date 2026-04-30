@@ -212,6 +212,66 @@ func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug 
 	return nil
 }
 
+// DeleteAllPodsForApp force-deletes all pods for an app. Used by teardown to
+// clear pods immediately rather than waiting for Deployment cascading deletion.
+func DeleteAllPodsForApp(ctx context.Context, client kubernetes.Interface, namespace, appSlug string) error {
+	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.Set{"canette.dev/app": appSlug}.String(),
+	})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("list pods: %w", err)
+	}
+	grace := int64(0)
+	for _, pod := range pods.Items {
+		if err := client.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{
+			GracePeriodSeconds: &grace,
+		}); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("delete pod %s: %w", pod.Name, err)
+		}
+	}
+	return nil
+}
+
+// DeleteStuckPods force-deletes pods stuck in ImagePullBackOff, ErrImagePull, or
+// CrashLoopBackOff. Returns the number of pods deleted.
+func DeleteStuckPods(ctx context.Context, client kubernetes.Interface, namespace, appSlug string) (int, error) {
+	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.Set{"canette.dev/app": appSlug}.String(),
+	})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("list pods: %w", err)
+	}
+	grace := int64(0)
+	deleted := 0
+	for _, pod := range pods.Items {
+		stuck := false
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.State.Waiting != nil {
+				switch cs.State.Waiting.Reason {
+				case "ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff":
+					stuck = true
+				}
+			}
+		}
+		if !stuck {
+			continue
+		}
+		if err := client.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{
+			GracePeriodSeconds: &grace,
+		}); err != nil && !errors.IsNotFound(err) {
+			return deleted, fmt.Errorf("delete pod %s: %w", pod.Name, err)
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
 func objectName(obj map[string]interface{}) (string, bool) {
 	meta, ok := obj["metadata"].(map[string]interface{})
 	if !ok {

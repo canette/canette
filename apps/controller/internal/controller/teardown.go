@@ -24,6 +24,9 @@ func (c *Controller) runTeardown(ctx context.Context, dep store.StoppedDeploymen
 		// non-fatal: idempotent, will retry next poll
 		return
 	}
+	if err := k8sres.DeleteAllPodsForApp(ctx, c.client, appNS, dep.AppSlug); err != nil {
+		log.Warn("delete pods error", zap.Error(err))
+	}
 
 	if err := c.store.ClearAppLiveURL(ctx, dep.AppID); err != nil {
 		log.Warn("clear live url error", zap.Error(err))

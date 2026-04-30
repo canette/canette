@@ -70,6 +70,16 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	}
 
 	// 5. Apply all resources via server-side apply.
+	// Before applying, clear any pods stuck in ImagePullBackOff/ErrImagePull/CrashLoopBackOff
+	// so K8s recreates them without exponential backoff on the new spec.
+	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
+	if n, err := k8sres.DeleteStuckPods(ctx, c.client, appNS, dep.AppSlug); err != nil {
+		log.Warn("failed to delete stuck pods", zap.Error(err))
+	} else if n > 0 {
+		msg := fmt.Sprintf("Deleted %d stuck pod(s) before rollout", n)
+		log.Info(msg, zap.String("namespace", appNS))
+		c.appendLog(ctx, log, dep.ID, "controller", msg)
+	}
 	c.appendLog(ctx, log, dep.ID, "controller", "Applying Kubernetes resources...")
 	if err := k8sres.ApplyAll(ctx, c.dynClient, res); err != nil {
 		lastErr = fmt.Errorf("apply resources: %w", err)
@@ -80,7 +90,6 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	// 6. Watch rollout (poll every 3s, timeout 12min).
 	// K8s progressDeadlineSeconds defaults to 600s (10min); our timeout must exceed that
 	// so we see the real ProgressDeadlineExceeded condition rather than timing out first.
-	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
 	deadline := time.Now().Add(12 * time.Minute)
 	for time.Now().Before(deadline) {
 		select {

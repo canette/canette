@@ -1164,6 +1164,9 @@ const [canetteConfigDraft, setCanetteConfigDraft] = useState("")
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+            {currentDeployment?.status === "failed" && currentDeployment.errorMessage && (
+              <p className="text-sm text-destructive font-mono">{currentDeployment.errorMessage}</p>
+            )}
             {liveDeployment && app.liveUrl && (
               <a
                 href={app.liveUrl}

@@ -69,8 +69,18 @@ func GenerateInstallationToken(ctx context.Context, installationID string) (stri
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
 	if resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("GitHub App token exchange failed (HTTP %d, app_id=%s, installation_id=%s): %s",
-			resp.StatusCode, appID, resolvedInstallID, strings.TrimSpace(string(body)))
+		hint := ""
+		if resp.StatusCode == http.StatusUnauthorized {
+			bodyStr := string(body)
+			if strings.Contains(bodyStr, "Expiration time") ||
+				strings.Contains(bodyStr, "issued at") ||
+				strings.Contains(bodyStr, "'exp'") ||
+				strings.Contains(bodyStr, "'iat'") {
+				hint = " (hint: JWT time validation failed — verify that the builder server's clock is synchronized; clock drift > 60 seconds will cause this error)"
+			}
+		}
+		return "", fmt.Errorf("GitHub App token exchange failed (HTTP %d, app_id=%s, installation_id=%s): %s%s",
+			resp.StatusCode, appID, resolvedInstallID, strings.TrimSpace(string(body)), hint)
 	}
 
 	var result struct {
