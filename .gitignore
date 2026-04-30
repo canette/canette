@@ -6,6 +6,7 @@ node_modules/
 .vscode/
 
 # Build outputs
+*.tsbuildinfo
 .next/
 .source/
 dist/
