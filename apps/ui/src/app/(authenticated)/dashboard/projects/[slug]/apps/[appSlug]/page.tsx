@@ -481,8 +481,8 @@ function EnvCard({ appId, open, onToggle }: { appId: string; open: boolean; onTo
             {hasItems && (
               <>
                 <div className="px-6 py-1.5 flex items-center gap-3 border-b border-border/50">
-                  <span className="font-mono text-xs text-muted-foreground w-48">KEY</span>
-                  <span className="text-xs text-muted-foreground">VALUE</span>
+                  <span className="font-mono text-xs text-muted-foreground uppercase w-48">Key</span>
+                  <span className="text-xs text-muted-foreground uppercase">Value</span>
                 </div>
                 {envVars.map((v) => (
                   <EnvRow

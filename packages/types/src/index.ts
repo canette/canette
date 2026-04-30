@@ -51,7 +51,8 @@ export interface GitCredential {
   name: string
   provider: GitProvider
   type: GitCredentialType
-  installationId?: string  // only present for github_app type (per-team installations)
+  installationId?: string    // only present for github_app type (per-team installations)
+  connectedByUserId?: string // only present for github_app type (per-team installations)
   createdAt: string
   // encrypted_value is never returned by the API
 }

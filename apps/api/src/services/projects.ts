@@ -4,6 +4,7 @@ import type { Selectable, Updateable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
+import { isTeamMember } from "./membership"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
@@ -28,18 +29,6 @@ function mapProject(row: ProjectRow): Project {
 
 function isValidProjectSlug(slug: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,49}$/.test(slug) && !slug.endsWith("-")
-}
-
-// ── Team membership check ─────────────────────────────────────────────────────
-
-async function isTeamMember(db: DB, teamId: string, userId: string): Promise<boolean> {
-  const row = await db
-    .selectFrom("team_members")
-    .select("id")
-    .where("team_id", "=", teamId)
-    .where("user_id", "=", userId)
-    .executeTakeFirst()
-  return !!row
 }
 
 // ── Service functions ─────────────────────────────────────────────────────────

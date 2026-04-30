@@ -7,7 +7,12 @@ import { createApp } from "./app"
 if (process.env.RUN_MIGRATIONS !== "false") {
   const migrationsDir = process.env.MIGRATIONS_DIR
     ?? resolve(process.cwd(), "migrations")
-  await runMigrations(db, migrationsDir)
+  try {
+    await runMigrations(db, migrationsDir)
+  } catch (err) {
+    console.error("Migration failed, refusing to start:", err)
+    process.exit(1)
+  }
 }
 
 initSystemCredentials(db).catch((err) => {

@@ -56,6 +56,10 @@ export const teams = {
 export const githubApp = {
   getInstallUrl: (teamId: string) =>
     request<{ available: boolean; url?: string }>(`/github-app/install-url?teamId=${teamId}`),
+  getLinkableInstallations: (teamId: string) =>
+    request<{ installations: { installationId: string; name: string }[] }>(`/github-app/linkable?teamId=${teamId}`),
+  linkInstallation: (teamId: string, installationId: string) =>
+    request<GitCredential>(`/github-app/link`, { method: "POST", body: JSON.stringify({ teamId, installationId }) }),
 }
 
 // Projects
