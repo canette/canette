@@ -5,8 +5,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -68,9 +70,18 @@ func run() error {
 	cloneCmd := exec.Command("git", "clone", "--depth=1", "--branch", gitRef, cloneURL, sourcePath)
 	cloneCmd.Env = append(os.Environ(), credEnv...)
 	cloneCmd.Stdout = os.Stdout
-	cloneCmd.Stderr = os.Stderr
+	var stderrBuf bytes.Buffer
+	cloneCmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 	if err := cloneCmd.Run(); err != nil {
-		return fmt.Errorf("git clone: %w", err)
+		errOut := stderrBuf.String()
+		hint := ""
+		if strings.Contains(errOut, "could not read Username") ||
+			strings.Contains(errOut, "terminal prompts disabled") ||
+			strings.Contains(errOut, "Authentication failed") ||
+			strings.Contains(errOut, "Permission denied") {
+			hint = "\nHint: authentication failed — make sure you have added a PAT or SSH credential to this app in the canette UI."
+		}
+		return fmt.Errorf("git clone: %w%s", err, hint)
 	}
 
 	shaOut, err := exec.Command("git", "-C", sourcePath, "rev-parse", "HEAD").Output()
