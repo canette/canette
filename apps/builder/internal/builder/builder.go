@@ -118,6 +118,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	defer func() {
 		if lastErr != nil {
 			log.Error("build failed", zap.Error(lastErr))
+			_ = b.store.AppendLog(ctx, dep.ID, "stdout", "[canette] build failed: "+lastErr.Error())
 			if err := b.store.MarkFailed(ctx, dep.ID, lastErr.Error()); err != nil {
 				log.Error("failed to mark deployment failed", zap.Error(err))
 			}
@@ -157,7 +158,11 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 				secretCredType = "pat" // git-init uses x-access-token, same as PAT
 				secretCredValue = token
 			case "ssh_key":
-				decrypted, decErr := crypto.Decrypt(cred.EncryptedValue, b.cryptoKey)
+				if cred.EncryptedValue == nil {
+					lastErr = fmt.Errorf("ssh_key credential has no encrypted value")
+					return
+				}
+				decrypted, decErr := crypto.Decrypt(*cred.EncryptedValue, b.cryptoKey)
 				if decErr != nil {
 					lastErr = fmt.Errorf("decrypt credential: %w", decErr)
 					return
@@ -166,7 +171,11 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 				secretCredValue = decrypted
 				secretKnownHosts = cred.SSHKnownHosts
 			default: // "pat"
-				decrypted, decErr := crypto.Decrypt(cred.EncryptedValue, b.cryptoKey)
+				if cred.EncryptedValue == nil {
+					lastErr = fmt.Errorf("pat credential has no encrypted value")
+					return
+				}
+				decrypted, decErr := crypto.Decrypt(*cred.EncryptedValue, b.cryptoKey)
 				if decErr != nil {
 					lastErr = fmt.Errorf("decrypt credential: %w", decErr)
 					return

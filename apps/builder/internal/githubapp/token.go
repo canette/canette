@@ -71,13 +71,7 @@ func GenerateInstallationToken(ctx context.Context, installationID string) (stri
 	if resp.StatusCode != http.StatusCreated {
 		hint := ""
 		if resp.StatusCode == http.StatusUnauthorized {
-			bodyStr := string(body)
-			if strings.Contains(bodyStr, "Expiration time") ||
-				strings.Contains(bodyStr, "issued at") ||
-				strings.Contains(bodyStr, "'exp'") ||
-				strings.Contains(bodyStr, "'iat'") {
-				hint = " (hint: JWT time validation failed — verify that the builder server's clock is synchronized; clock drift > 60 seconds will cause this error)"
-			}
+			hint = " (hint: verify the private key is correct and the builder server's clock is synchronized; clock drift > 60 s causes JWT rejection)"
 		}
 		return "", fmt.Errorf("GitHub App token exchange failed (HTTP %d, app_id=%s, installation_id=%s): %s%s",
 			resp.StatusCode, appID, resolvedInstallID, strings.TrimSpace(string(body)), hint)

@@ -68,7 +68,7 @@ type ScanPolicy struct {
 type GitCredential struct {
 	ID             string
 	Type           string  // "pat" | "ssh_key" | "github_app"
-	EncryptedValue string  // AES-256-GCM blob — caller must decrypt
+	EncryptedValue *string // AES-256-GCM blob — nil for github_app (unused), caller must decrypt for pat/ssh_key
 	SSHKnownHosts  *string // only set for ssh_key type
 	InstallationID *string // only set for github_app type (per-team installations)
 }
