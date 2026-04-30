@@ -82,7 +82,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [connectingGithubApp, setConnectingGithubApp] = useState(false)
   const [githubAppNotice, setGithubAppNotice] = useState<string | null>(null)
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
-  const [linkableInstallations, setLinkableInstallations] = useState<{ id: string; name: string }[]>([])
+  const [linkableInstallations, setLinkableInstallations] = useState<{ installationId: string; name: string }[]>([])
   const [linkingInstallationId, setLinkingInstallationId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -232,12 +232,12 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     }
   }
 
-  async function handleLinkInstallation(credentialId: string) {
-    setLinkingInstallationId(credentialId)
+  async function handleLinkInstallation(installationId: string) {
+    setLinkingInstallationId(installationId)
     try {
-      const cred = await api.githubApp.linkInstallation(teamId, credentialId)
+      const cred = await api.githubApp.linkInstallation(teamId, installationId)
       setCredentials((prev) => [cred, ...prev])
-      setLinkableInstallations((prev) => prev.filter((i) => i.id !== credentialId))
+      setLinkableInstallations((prev) => prev.filter((i) => i.installationId !== installationId))
       if (linkableInstallations.length <= 1) setLinkDialogOpen(false)
       setGithubAppNotice("GitHub App installation linked to this team.")
     } catch (e) {
@@ -698,15 +698,15 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             </p>
             <p className="text-xs text-muted-foreground uppercase font-medium">Your installations</p>
             {linkableInstallations.map((inst) => (
-              <div key={inst.id} className="flex items-center gap-3 py-1">
+              <div key={inst.installationId} className="flex items-center gap-3 py-1">
                 <span className="text-sm flex-1">{inst.name}</span>
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => handleLinkInstallation(inst.id)}
-                  disabled={linkingInstallationId === inst.id}
+                  onClick={() => handleLinkInstallation(inst.installationId)}
+                  disabled={linkingInstallationId === inst.installationId}
                 >
-                  {linkingInstallationId === inst.id
+                  {linkingInstallationId === inst.installationId
                     ? <Loader2 className="size-4 animate-spin" />
                     : "Link to this team"}
                 </Button>

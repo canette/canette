@@ -107,22 +107,22 @@ describe("services/git-credentials", () => {
     it("returns installations the user personally connected on other teams", async () => {
       // From teamBId's perspective: userId connected inst-link-A on teamId
       const result = await listLinkableInstallations(db, "teamBId", "userId")
-      const names = result.map((r) => r.name)
-      expect(names).toContain("link-org-A")
+      const ids = result.map((r) => r.installationId)
+      expect(ids).toContain("inst-link-A")
     })
 
     it("excludes installations connected by a different user even on a shared team", async () => {
       // userId is a member of teamCId but did NOT connect inst-link-C (otherUserId did)
       const result = await listLinkableInstallations(db, "teamBId", "userId")
-      const names = result.map((r) => r.name)
-      expect(names).not.toContain("link-org-C")
+      const ids = result.map((r) => r.installationId)
+      expect(ids).not.toContain("inst-link-C")
     })
 
     it("excludes installations already linked to the target team", async () => {
       // inst-link-A is already on teamId — should not appear when querying from teamId
       const result = await listLinkableInstallations(db, "teamId", "userId")
-      const names = result.map((r) => r.name)
-      expect(names).not.toContain("link-org-A")
+      const ids = result.map((r) => r.installationId)
+      expect(ids).not.toContain("inst-link-A")
     })
 
     it("returns empty array when caller is not a member of teamId", async () => {
@@ -135,53 +135,48 @@ describe("services/git-credentials", () => {
       await upsertGithubAppInstallation(db, "teamBId", "inst-link-A", "link-org-A", "userId")
       // Now from teamId's perspective, inst-link-A is on teamBId — should appear only once
       const result = await listLinkableInstallations(db, "teamId", "userId")
-      const matchingA = result.filter((r) => r.name === "link-org-A")
+      const matchingA = result.filter((r) => r.installationId === "inst-link-A")
       expect(matchingA.length).toBeLessThanOrEqual(1)
     })
   })
 
   describe("linkInstallationToTeam", () => {
-    let credToLinkId: string
-    let credOtherLinkId: string
-
     beforeAll(async () => {
       // userId connected inst-to-link on teamId
-      const a = await upsertGithubAppInstallation(db, "teamId", "inst-to-link", "to-link-org", "userId")
-      credToLinkId = a.id
+      await upsertGithubAppInstallation(db, "teamId", "inst-to-link", "to-link-org", "userId")
       // otherUserId connected inst-other-link on teamCId
-      const b = await upsertGithubAppInstallation(db, "teamCId", "inst-other-link", "other-link-org", "otherUserId")
-      credOtherLinkId = b.id
+      await upsertGithubAppInstallation(db, "teamCId", "inst-other-link", "other-link-org", "otherUserId")
     })
 
     it("links an installation the user personally connected to another team they belong to", async () => {
-      const cred = await linkInstallationToTeam(db, "teamBId", "userId", credToLinkId)
+      const cred = await linkInstallationToTeam(db, "teamBId", "userId", "inst-to-link")
       expect(cred.teamId).toBe("teamBId")
       expect(cred.installationId).toBe("inst-to-link")
       expect(cred.name).toBe("to-link-org")
     })
 
-    it("rejects a credential connected by a different user even if caller shares a team", async () => {
+    it("rejects an installationId connected by a different user even if caller shares a team", async () => {
       // userId is a member of teamCId but did NOT connect inst-other-link
       await expect(
-        linkInstallationToTeam(db, "teamId", "userId", credOtherLinkId)
+        linkInstallationToTeam(db, "teamId", "userId", "inst-other-link")
       ).rejects.toThrow(ServiceError)
     })
 
-    it("rejects a nonexistent credential id", async () => {
+    it("rejects a nonexistent installationId", async () => {
       await expect(
-        linkInstallationToTeam(db, "teamBId", "userId", "00000000-0000-0000-0000-000000000000")
+        linkInstallationToTeam(db, "teamBId", "userId", "inst-does-not-exist")
       ).rejects.toThrow(ServiceError)
     })
 
     it("rejects when caller is not a member of the target team", async () => {
       await expect(
-        linkInstallationToTeam(db, "nonexistent-team", "userId", credToLinkId)
+        linkInstallationToTeam(db, "nonexistent-team", "userId", "inst-to-link")
       ).rejects.toThrow(ServiceError)
     })
 
     it("is idempotent: re-linking returns existing credential without error", async () => {
       // inst-to-link was already linked to teamBId in the first test
-      const cred = await linkInstallationToTeam(db, "teamBId", "userId", credToLinkId)
+      const cred = await linkInstallationToTeam(db, "teamBId", "userId", "inst-to-link")
       expect(cred.installationId).toBe("inst-to-link")
       expect(cred.teamId).toBe("teamBId")
     })

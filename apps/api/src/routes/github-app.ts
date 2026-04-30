@@ -2,7 +2,8 @@ import { Hono } from "hono"
 import { db } from "../db/db"
 import { requireAuth } from "../middleware/require-auth"
 import type { AppEnv } from "../types"
-import { upsertGithubAppInstallation, isTeamMember, listLinkableInstallations, linkInstallationToTeam } from "../services/git-credentials"
+import { upsertGithubAppInstallation, listLinkableInstallations, linkInstallationToTeam } from "../services/git-credentials"
+import { isTeamMember } from "../services/membership"
 import { ServiceError } from "../services/errors"
 import { getInstallationDetails } from "../services/github-app-token"
 import { createStateToken, verifyStateToken } from "../utils/github-app-state"
@@ -102,13 +103,13 @@ githubAppRouter.get("/linkable", requireAuth, async (c) => {
 // Links an installation the caller personally connected to an additional team they belong to.
 githubAppRouter.post("/link", requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}))
-  const { teamId, credentialId } = body as { teamId?: string; credentialId?: string }
-  if (!teamId || !credentialId) {
-    return c.json({ error: "teamId and credentialId are required", code: "VALIDATION_ERROR" }, 400)
+  const { teamId, installationId } = body as { teamId?: string; installationId?: string }
+  if (!teamId || !installationId) {
+    return c.json({ error: "teamId and installationId are required", code: "VALIDATION_ERROR" }, 400)
   }
   const session = c.get("session")
   try {
-    const cred = await linkInstallationToTeam(db, teamId, session.user.id, credentialId)
+    const cred = await linkInstallationToTeam(db, teamId, session.user.id, installationId)
     return c.json(cred, 201)
   } catch (err) {
     if (err instanceof ServiceError) return c.json({ error: err.message, code: err.code }, err.status as 400 | 403 | 404 | 409 | 422)

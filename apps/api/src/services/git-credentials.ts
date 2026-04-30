@@ -4,6 +4,7 @@ import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { encrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
+import { isTeamMember } from "./membership"
 
 // ── Internal row type ─────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ export async function initSystemCredentials(db: DB): Promise<void> {
         encrypted_value: encrypt(""),
         ssh_known_hosts: null,
         installation_id: null,
+        connected_by_user_id: null,
         created_at: now,
       })
       .onConflict((oc) => oc.column("id").doNothing())
@@ -57,19 +59,6 @@ export async function initSystemCredentials(db: DB): Promise<void> {
       .where("id", "=", GITHUB_APP_CREDENTIAL_ID)
       .execute()
   }
-}
-
-// ── Access helpers ────────────────────────────────────────────────────────────
-
-// Returns true if userId is a member of the given team.
-export async function isTeamMember(db: DB, teamId: string, userId: string): Promise<boolean> {
-  const row = await db
-    .selectFrom("team_members")
-    .select("id")
-    .where("team_id", "=", teamId)
-    .where("user_id", "=", userId)
-    .executeTakeFirst()
-  return !!row
 }
 
 // ── Service functions ─────────────────────────────────────────────────────────
@@ -240,72 +229,52 @@ export async function listLinkableInstallations(
   db: DB,
   teamId: string,
   userId: string,
-): Promise<{ id: string; name: string }[]> {
+): Promise<{ installationId: string; name: string }[]> {
   const member = await isTeamMember(db, teamId, userId)
   if (!member) return []
 
-  // installation_ids already linked to the target team
-  const alreadyLinked = await db
+  const alreadyLinkedSubquery = db
     .selectFrom("git_credentials")
     .select("installation_id")
     .where("team_id", "=", teamId)
     .where("type", "=", "github_app")
     .where("installation_id", "is not", null)
-    .execute()
-  const linkedIds = alreadyLinked.map((r) => r.installation_id as string)
 
-  let query = db
+  const rows = await db
     .selectFrom("git_credentials")
-    .select(["id", "installation_id", "name"])
+    .distinct()
+    .select(["installation_id", "name"])
     .where("type", "=", "github_app")
-    .where("team_id", "is not", null)
-    .where("team_id", "!=", teamId)
     .where("connected_by_user_id", "=", userId)
-    .where("installation_id", "is not", null)
-
-  if (linkedIds.length > 0) {
-    query = query.where("installation_id", "not in", linkedIds)
-  }
-
-  const rows = await query.execute()
-
-  // Deduplicate by installation_id (same install linked to multiple teams by same user)
-  const seen = new Set<string>()
-  const result: { id: string; name: string }[] = []
-  for (const row of rows) {
-    if (!seen.has(row.installation_id!)) {
-      seen.add(row.installation_id!)
-      result.push({ id: row.id, name: row.name })
-    }
-  }
-  return result
+    .where("installation_id", "not in", alreadyLinkedSubquery)
+    .execute()
+  return rows.map((r) => ({ installationId: r.installation_id!, name: r.name }))
 }
 
 // linkInstallationToTeam links a GitHub App installation the caller personally connected
-// to an additional team they belong to. Accepts the credential id (not the raw GitHub
-// installationId) — the installationId is fetched from the DB to prevent client tampering.
+// to an additional team they belong to. Ownership is enforced by requiring
+// connected_by_user_id = userId — rejects if the installation was connected by someone else.
 export async function linkInstallationToTeam(
   db: DB,
   teamId: string,
   userId: string,
-  credentialId: string,
+  installationId: string,
 ): Promise<GitCredential> {
   const member = await isTeamMember(db, teamId, userId)
   if (!member) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
   // Security boundary: only the user who connected the installation can link it.
-  // The installationId is never taken from the client — it is read from the DB here.
   const source = await db
     .selectFrom("git_credentials")
     .select(["installation_id", "name"])
-    .where("id", "=", credentialId)
+    .where("installation_id", "=", installationId)
     .where("type", "=", "github_app")
     .where("connected_by_user_id", "=", userId)
     .executeTakeFirst()
 
-  if (!source?.installation_id) throw new ServiceError("Not found", "NOT_FOUND", 404)
+  if (!source) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
-  return upsertGithubAppInstallation(db, teamId, source.installation_id, source.name, userId)
+  return upsertGithubAppInstallation(db, teamId, installationId, source.name, userId)
 }
 
 export async function updateCredential(
