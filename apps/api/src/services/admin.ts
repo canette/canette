@@ -68,7 +68,15 @@ export async function listUsers(db: DB): Promise<User[]> {
     .select(["id", "name", "email", "image", "role", "createdAt"])
     .orderBy("createdAt", "asc")
     .execute()
-  return rows.map(mapUser)
+
+  const credentialAccounts = await db
+    .selectFrom("account")
+    .select("userId")
+    .where("providerId", "=", "credential")
+    .execute()
+  const hasPasswordSet = new Set(credentialAccounts.map((a) => a.userId))
+
+  return rows.map((row) => ({ ...mapUser(row), hasPassword: hasPasswordSet.has(row.id) }))
 }
 
 export async function updateUserRole(

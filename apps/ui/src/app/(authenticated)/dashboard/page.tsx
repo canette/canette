@@ -10,7 +10,6 @@ export default function DashboardPage() {
         <Link href="/dashboard/projects/new">New project</Link>
       </Button>
     }>
-      <h1 className="text-xl font-semibold mb-6">Projects</h1>
       <ProjectList />
     </AppShell>
   )

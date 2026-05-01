@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import * as api from "@/lib/api"
 import type { Project, Team } from "@canette/types"
 
@@ -11,6 +12,7 @@ export function ProjectList() {
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [teamFilter, setTeamFilter] = useState("all")
 
   useEffect(() => {
     Promise.all([
@@ -57,11 +59,32 @@ export function ProjectList() {
   const ungrouped = projects.filter((p) => !knownTeamIds.has(p.teamId))
   if (ungrouped.length > 0) grouped.push({ team: null as unknown as Team, projects: ungrouped })
 
+  const filtered = teamFilter === "all" ? grouped : grouped.filter((g) => g.team?.id === teamFilter)
   const showHeaders = grouped.length > 1
+  const showFilter = teams.length > 1
 
   return (
-    <div className="flex flex-col gap-8">
-      {grouped.map(({ team, projects: groupProjects }) => (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Projects</h1>
+        {showFilter && (
+          <Select value={teamFilter} onValueChange={setTeamFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All teams</SelectItem>
+              {grouped.map(({ team }) => team && (
+                <SelectItem key={team.id} value={team.id}>
+                  {team.isPersonal ? "Personal" : team.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+      <div className="flex flex-col gap-8">
+      {filtered.map(({ team, projects: groupProjects }) => (
         <div key={team?.id ?? "unknown"}>
           {showHeaders && team && (
             <p className="text-xs font-medium text-muted-foreground tracking-wide uppercase mb-3">
@@ -85,6 +108,7 @@ export function ProjectList() {
           </div>
         </div>
       ))}
+      </div>
     </div>
   )
 }

@@ -65,7 +65,7 @@ export function UserMenu() {
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <a href="/admin">Admin</a>
+              <a href="/admin/users">Admin</a>
             </DropdownMenuItem>
           </>
         )}

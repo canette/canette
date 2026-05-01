@@ -50,7 +50,7 @@ Once configured, a **Continue with GitHub** button appears on the login page.
 2. Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**
 3. If prompted, configure the OAuth consent screen first (set User Type to **Internal** for org-only access, or **External** to allow any Google account)
 4. Choose **Application type: Web application**
-5. Under **Authorised redirect URIs**, add: `https://canette.example.com/api/auth/callback/google`
+5. Under **Authorised redirect URIs**, add: `https://canette.example.com/api/auth/callback/google` (leave **Authorised JavaScript origins** empty — that is only needed for browser-side OAuth flows)
 6. Click **Create** and copy the **Client ID** and **Client secret**
 
 ### 2. Configure Helm

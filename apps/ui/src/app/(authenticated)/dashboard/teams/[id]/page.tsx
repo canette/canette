@@ -295,7 +295,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             )}
             {!team.isPersonal && isAdmin && (
               <p className="text-xs text-muted-foreground px-6 py-3 border-t border-border/50">
-                Manage members in <a href="/admin" className="underline hover:text-foreground">Admin → Teams</a>.
+                Manage members in <a href="/admin/teams" className="underline hover:text-foreground">Admin → Teams</a>.
               </p>
             )}
           </CardContent>
