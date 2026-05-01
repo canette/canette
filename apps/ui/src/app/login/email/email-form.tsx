@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PasswordRequirements } from "@/components/ui/password-requirements"
+import { FormError } from "@/components/ui/form-error"
 import { validatePassword } from "@/lib/password"
 
 export function EmailForm({ signupEnabled }: { signupEnabled: boolean }) {
@@ -84,7 +85,7 @@ export function EmailForm({ signupEnabled }: { signupEnabled: boolean }) {
           />
           {mode === "signup" && <PasswordRequirements password={password} />}
         </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <FormError message={error} />}
         <Button
           type="submit"
           className="w-full"
