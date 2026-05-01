@@ -19,7 +19,7 @@ canette/
 ├── apps/
 │   ├── ui/          # Next.js 16 web UI (TypeScript)
 │   ├── api/         # Bun + Hono REST API server (TypeScript)
-│   ├── docs/        # Docusaurus documentation site (TypeScript/MDX)
+│   ├── docs/        # Fumadocs documentation site (TypeScript/MDX)
 │   ├── controller/  # K8s reconciliation controller (Go)
 │   ├── builder/     # Build job manager (Go)
 │   └── logstreamer/ # Live pod log streaming service (Go)
