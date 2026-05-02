@@ -7,7 +7,7 @@ const GITHUB_URL = "https://github.com/canette/canette"
 export function Footer() {
   return (
     <footer className="mt-auto">
-      <div className="max-w-6xl mx-auto px-6 h-12 flex items-center justify-end">
+      <div className="px-6 h-10 flex items-center justify-end">
         <nav className="flex items-center gap-4">
           <a
             href={DOCS_URL}

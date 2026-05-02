@@ -8,7 +8,6 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { HelpTooltip } from "@/components/ui/tooltip"
-import { CanetteLogo } from "@/components/canette-logo"
 import { CredentialSelect } from "@/components/credential-select"
 import * as api from "@/lib/api"
 import type { GitCredential, Project } from "@canette/types"
@@ -149,29 +148,13 @@ export default function NewAppPage() {
   const canSubmit = !!name.trim() && sourceReady && slugState === "available" && !!project && !submitting
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b border-border sticky top-0 z-10 bg-background/80 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center gap-3 text-sm">
-          <a href="/dashboard" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors font-semibold">
-              <CanetteLogo className="size-5 p-0.5" />
-              canette
-            </a>
-          <span className="text-muted-foreground/40">/</span>
-          <a href={`/dashboard/projects/${projectSlug}`} className="text-muted-foreground hover:text-foreground transition-colors">
-            {project?.name ?? projectSlug}
-          </a>
-          <span className="text-muted-foreground/40">/</span>
-          <span className="font-medium">Add app</span>
-        </div>
-      </header>
-
-      <main className="flex-1 flex items-start justify-center px-6 py-12">
-        <Card className="w-full max-w-lg">
-          <CardHeader>
-            <CardTitle>Add app</CardTitle>
-            <CardDescription>Connect a Git repository or Docker image to deploy.</CardDescription>
-          </CardHeader>
-          <CardContent>
+    <div>
+      <h1 className="text-xl font-semibold mb-6">Add app</h1>
+      <Card>
+        <CardHeader>
+          <CardDescription>Connect a Git repository or Docker image to deploy.</CardDescription>
+        </CardHeader>
+        <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="name">Name</Label>
@@ -358,9 +341,8 @@ export default function NewAppPage() {
                 </Button>
               </div>
             </form>
-          </CardContent>
-        </Card>
-      </main>
+        </CardContent>
+      </Card>
     </div>
   )
 }

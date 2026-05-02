@@ -36,8 +36,10 @@ function mapApp(row: AppRow): App {
 
 // ── Slug validation ───────────────────────────────────────────────────────────
 
+const RESERVED_APP_SLUGS = new Set(["new", "deployments", "settings"])
+
 function isValidAppSlug(slug: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(slug) && !slug.endsWith("-")
+  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(slug) && !slug.endsWith("-") && !RESERVED_APP_SLUGS.has(slug)
 }
 
 // ── Service functions ─────────────────────────────────────────────────────────
@@ -47,6 +49,7 @@ export async function isAppSlugAvailable(
   projectId: string,
   slug: string
 ): Promise<boolean> {
+  if (RESERVED_APP_SLUGS.has(slug)) return false
   const row = await db
     .selectFrom("apps")
     .select("id")

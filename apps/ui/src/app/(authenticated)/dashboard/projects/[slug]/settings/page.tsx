@@ -7,8 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft } from "lucide-react"
-import { AppShell } from "@/components/app-shell"
 import * as api from "@/lib/api"
 import type { Project } from "@canette/types"
 
@@ -98,23 +96,11 @@ export default function ProjectSettingsPage() {
   const projectName = project?.name ?? slug ?? "…"
   const projectSlug = project?.slug ?? slug ?? ""
 
-  if (loading) {
-    return (
-      <Shell projectName={projectName} projectSlug={slug}>
-        <p className="text-muted-foreground text-sm">Loading…</p>
-      </Shell>
-    )
-  }
-  if (error || !project) {
-    return (
-      <Shell projectName={projectName} projectSlug={slug}>
-        <p className="text-destructive text-sm">{error || "Project not found"}</p>
-      </Shell>
-    )
-  }
+  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
+  if (error || !project) return <p className="text-destructive text-sm">{error || "Project not found"}</p>
 
   return (
-    <Shell projectName={projectName} projectSlug={projectSlug}>
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-6">
 
         {/* Settings */}
@@ -223,27 +209,6 @@ export default function ProjectSettingsPage() {
         </Card>
 
       </div>
-    </Shell>
-  )
-}
-
-function Shell({ projectName, projectSlug, children }: {
-  projectName: string
-  projectSlug: string
-  children: React.ReactNode
-}) {
-  return (
-    <AppShell breadcrumb={[
-      { label: projectName, href: `/dashboard/projects/${projectSlug}` },
-      { label: "Settings" },
-    ]}>
-      <div className="flex items-center gap-3 mb-6">
-        <a href={`/dashboard/projects/${projectSlug}`} className="text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft size={18} />
-        </a>
-        <h1 className="text-xl font-semibold">Settings</h1>
-      </div>
-      {children}
-    </AppShell>
+    </div>
   )
 }
