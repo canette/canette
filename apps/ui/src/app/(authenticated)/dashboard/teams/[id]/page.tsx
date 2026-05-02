@@ -10,5 +10,5 @@ export default async function TeamPage({
   const { id } = await params
   const sp = await searchParams
   const query = new URLSearchParams(sp).toString()
-  redirect(`/dashboard/teams/${id}/credentials${query ? `?${query}` : ""}`)
+  redirect(`/dashboard/teams/${id}/members${query ? `?${query}` : ""}`)
 }

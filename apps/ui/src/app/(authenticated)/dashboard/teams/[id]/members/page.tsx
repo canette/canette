@@ -36,8 +36,6 @@ export default function MembersPage({ params }: { params: Promise<{ id: string }
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">Members</h1>
-
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">

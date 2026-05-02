@@ -9,6 +9,7 @@ import {
   Plus,
   ArrowLeft,
   Box,
+  Hotel,
   Key,
   Users,
   LayoutDashboard,
@@ -61,6 +62,7 @@ function NavItem({
       title={collapsed ? label : undefined}
       className={cn(
         "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors min-w-0",
+        collapsed && "justify-center",
         indent && !collapsed && "pl-5",
         active
           ? "bg-muted font-medium text-foreground"
@@ -77,9 +79,9 @@ function Divider() {
   return <div className="border-t border-border my-1.5" />
 }
 
-// ── team header (h-14 area) ───────────────────────────────────────────────────
+// ── team selector (nav area) ──────────────────────────────────────────────────
 
-function TeamHeader({
+function TeamSelector({
   teams,
   activeTeam,
   onSelect,
@@ -91,37 +93,40 @@ function TeamHeader({
   collapsed: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const pathname = usePathname()
+  const isTeamsPage = pathname.startsWith("/dashboard/teams")
   const hasMultiple = teams.length > 1
   const name = activeTeam ? (activeTeam.isPersonal ? "Personal" : activeTeam.name) : "…"
 
   if (collapsed) {
     return (
-      <div className="flex items-center justify-center w-full">
-        <Link href="/dashboard" className="shrink-0 hover:opacity-80 transition-opacity">
-          <CanetteLogo className="size-5" />
-        </Link>
-      </div>
+      <Link
+        href="/dashboard/teams"
+        title="Teams"
+        className={cn(
+          "flex items-center justify-center px-3 py-1.5 rounded-md transition-colors",
+          isTeamsPage
+            ? "bg-muted text-foreground"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+        )}
+      >
+        <Hotel size={15} />
+      </Link>
     )
   }
 
   return (
-    <div className="flex items-center gap-2 flex-1 min-w-0">
-      <Link href="/dashboard" className="shrink-0 hover:opacity-80 transition-opacity">
-        <CanetteLogo className="size-5" />
-      </Link>
-      <div className="relative flex-1 min-w-0">
-      <p className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground mb-0.5 px-1">
-        Team
-      </p>
+    <div className="relative">
       <button
         type="button"
         onClick={() => hasMultiple && setOpen((o) => !o)}
         className={cn(
-          "w-full flex items-center gap-1.5 px-1 py-0.5 rounded-md text-sm font-semibold transition-colors",
-          hasMultiple && "hover:bg-muted/50 cursor-pointer",
-          !hasMultiple && "cursor-default"
+          "w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-semibold text-foreground transition-colors",
+          isTeamsPage && "bg-muted",
+          hasMultiple ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"
         )}
       >
+        <Hotel size={15} className="shrink-0" />
         <span className="flex-1 text-left truncate">{name}</span>
         {hasMultiple && (
           <ChevronDown size={13} className={cn("shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
@@ -150,7 +155,6 @@ function TeamHeader({
           </div>
         </>
       )}
-      </div>
     </div>
   )
 }
@@ -251,20 +255,13 @@ export function Sidebar({
 
   // ── header area (h-14, always rendered) ──────────────────────────────────
 
-  const header = isAdmin ? (
+  const header = (
     <div className={cn("flex items-center gap-2", collapsed && "justify-center")}>
       <Link href="/dashboard" className="shrink-0 hover:opacity-80 transition-opacity">
         <CanetteLogo className="size-5" />
       </Link>
-      {!collapsed && <span className="text-sm font-semibold">Admin</span>}
+      {isAdmin && !collapsed && <span className="text-sm font-semibold">Admin</span>}
     </div>
-  ) : (
-    <TeamHeader
-      teams={teams}
-      activeTeam={activeTeam}
-      onSelect={handleSelectTeam}
-      collapsed={collapsed}
-    />
   )
 
   // ── nav items ─────────────────────────────────────────────────────────────
@@ -320,8 +317,8 @@ export function Sidebar({
         {teamId && (
           <>
             <Divider />
-            <NavItem href={`/dashboard/teams/${teamId}/credentials`} label="Git Credentials" icon={Key} collapsed={collapsed} />
-            {!activeTeam?.isPersonal && <NavItem href={`/dashboard/teams/${teamId}/members`} label="Team Members" icon={Users} collapsed={collapsed} />}
+            {!activeTeam?.isPersonal && <NavItem href={`/dashboard/teams/${teamId}/members`} label="Team Members" icon={Users} collapsed={collapsed} />}            
+            <NavItem href={`/dashboard/teams/${teamId}/credentials`} label="Git Credentials" icon={Key} collapsed={collapsed} />            
           </>
         )}
       </>
@@ -331,7 +328,9 @@ export function Sidebar({
     const teamId = activeTeam?.id
     nav = (
       <>
-        <NavItem href="/dashboard" label="Projects" icon={LayoutDashboard} active={true} collapsed={collapsed} />
+        <NavItem href="/dashboard" label="Projects" icon={LayoutDashboard}
+          active={pathname === "/dashboard" || pathname.startsWith("/dashboard/projects")}
+          collapsed={collapsed} />
         {!collapsed && teamProjects.map((p) => (
           <NavItem
             key={p.id}
@@ -349,13 +348,24 @@ export function Sidebar({
             <span>New project</span>
           </Link>
         )}
-        {teamId && (
+        {teamId && !(collapsed && pathname.startsWith("/dashboard/teams")) && (
           <>
             <Divider />
-            <NavItem href={`/dashboard/teams/${teamId}/credentials`} label="Git Credentials" icon={Key} collapsed={collapsed} />
             {!activeTeam?.isPersonal && <NavItem href={`/dashboard/teams/${teamId}/members`} label="Team Members" icon={Users} collapsed={collapsed} />}
+            <NavItem href={`/dashboard/teams/${teamId}/credentials`} label="Git Credentials" icon={Key} collapsed={collapsed} />            
           </>
         )}
+      </>
+    )
+  }
+
+  // Prepend the team selector to every non-admin nav
+  if (!isAdmin) {
+    nav = (
+      <>
+        <TeamSelector teams={teams} activeTeam={activeTeam} onSelect={handleSelectTeam} collapsed={collapsed} />
+        <Divider />
+        {nav}
       </>
     )
   }

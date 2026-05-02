@@ -180,8 +180,6 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">Git Credentials</h1>
-
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Git Credentials</CardTitle>
