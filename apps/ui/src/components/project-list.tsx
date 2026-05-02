@@ -104,7 +104,7 @@ export function ProjectList() {
               {groupProjects.map((p) => {
                 const projApps = appsByProject[p.id] ?? []
                 return (
-                  <a key={p.id} href={`/dashboard/projects/${p.slug}`} className="block group">
+                  <Link key={p.id} href={`/dashboard/projects/${p.slug}`} className="block group">
                     <Card className="h-full transition-colors group-hover:border-foreground/20">
                       <CardHeader>
                         <CardTitle className="text-base">{p.name}</CardTitle>
@@ -128,7 +128,7 @@ export function ProjectList() {
                         )}
                       </CardHeader>
                     </Card>
-                  </a>
+                  </Link>
                 )
               })}
             </div>

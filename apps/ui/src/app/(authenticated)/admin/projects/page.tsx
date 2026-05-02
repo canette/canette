@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel, SelectSeparator } from "@/components/ui/select"
@@ -126,9 +127,9 @@ export default function AdminProjectsPage() {
                       {j > 0 && <Separator />}
                       <div className="flex items-center justify-between pl-10 pr-6 py-2.5">
                         <div className="flex items-center gap-3 min-w-0">
-                          <a href={`/dashboard/projects/${project.slug}/apps/${app.slug}`} className="text-sm hover:underline truncate">
+                          <Link href={`/dashboard/projects/${project.slug}/apps/${app.slug}`} className="text-sm hover:underline truncate">
                             {app.name}
-                          </a>
+                          </Link>
                           <span className="text-xs text-muted-foreground shrink-0">{app.sourceType}</span>
                           {app.liveUrl && app.latestDeploymentStatus === "live" && (
                             <a

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, use } from "react"
+import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
@@ -71,7 +72,7 @@ export default function MembersPage({ params }: { params: Promise<{ id: string }
           )}
           {!team.isPersonal && isAdmin && (
             <p className="text-xs text-muted-foreground px-6 py-3 border-t border-border/50">
-              Manage members in <a href="/admin/teams" className="underline hover:text-foreground">Admin → Teams</a>.
+              Manage members in <Link href="/admin/teams" className="underline hover:text-foreground">Admin → Teams</Link>.
             </p>
           )}
         </CardContent>

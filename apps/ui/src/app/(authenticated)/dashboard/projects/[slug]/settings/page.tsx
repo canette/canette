@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
 import type { Project } from "@canette/types"
 
@@ -135,10 +138,17 @@ export default function ProjectSettingsPage() {
         </Card>
 
         {/* Danger Zone */}
+        <Collapsible>
         <Card className="border-destructive/50">
-          <CardHeader>
-            <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
-          </CardHeader>
+          <CollapsibleTrigger asChild>
+            <CardHeader className="cursor-pointer select-none hover:bg-muted/30 transition-colors rounded-lg [&[data-state=open]]:rounded-b-none">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
+                <ChevronDown size={15} className={cn("text-destructive/70 transition-transform [[data-state=open]_&]:rotate-180")} />
+              </div>
+            </CardHeader>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
           <CardContent className="flex flex-col gap-4">
             <div>
               <p className="text-sm font-medium mb-1">Update project slug</p>
@@ -204,7 +214,9 @@ export default function ProjectSettingsPage() {
               </div>
             </div>
           </CardContent>
+          </CollapsibleContent>
         </Card>
+        </Collapsible>
 
       </div>
     </div>

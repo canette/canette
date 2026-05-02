@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -53,17 +54,17 @@ export default function ProjectPage() {
           <p className="text-sm text-muted-foreground max-w-sm">
             An app is a deployable service — built from a Git repository or Docker image and served at its own URL.
           </p>
-          <a
+          <Link
             href={`/dashboard/projects/${slug}/apps/new`}
             className="text-sm font-medium underline underline-offset-2 hover:no-underline"
           >
             Add the first app
-          </a>
+          </Link>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {apps.map((app) => (
-            <a key={app.id} href={`/dashboard/projects/${slug}/apps/${app.slug}`} className="block group">
+            <Link key={app.id} href={`/dashboard/projects/${slug}/apps/${app.slug}`} className="block group">
               <Card className="h-full transition-colors group-hover:border-foreground/20">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-2">
@@ -87,7 +88,7 @@ export default function ProjectPage() {
                   )}
                 </CardHeader>
               </Card>
-            </a>
+            </Link>
           ))}
         </div>
       )}

@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Eye, EyeOff, RefreshCw, TriangleAlert } from "lucide-react"
+import { ChevronDown, Eye, EyeOff, RefreshCw, TriangleAlert } from "lucide-react"
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { CredentialSelect } from "@/components/credential-select"
 import { useAppContext } from "@/lib/app-context"
 import { cn } from "@/lib/utils"
@@ -563,28 +564,39 @@ export default function SettingsPage() {
       </Section>
 
       {/* Danger zone */}
-      <Card className="border-destructive/30">
-        <CardHeader><CardTitle className="text-base text-destructive">Danger Zone</CardTitle></CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Delete this app</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Remove all app data and Kubernetes resources. This cannot be undone.</p>
-            </div>
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <Checkbox checked={deleteConfirmed} onCheckedChange={(v) => setDeleteConfirmed(!!v)} />
-            <span className="text-sm">Yes, delete <strong>{app.name}</strong> and all its data</span>
-          </label>
-          {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
-          <div className="flex justify-end">
-            <Button variant="destructive" size="sm" disabled={!deleteConfirmed || deleting} onClick={handleDelete}>
-              {deleting ? "Deleting…" : "Delete app"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <Collapsible>
+        <Card className="border-destructive/30">
+          <CollapsibleTrigger asChild>
+            <CardHeader className="cursor-pointer select-none hover:bg-muted/30 transition-colors rounded-lg [&[data-state=open]]:rounded-b-none">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
+                <ChevronDown size={15} className={cn("text-destructive/70 transition-transform [[data-state=open]_&]:rotate-180")} />
+              </div>
+            </CardHeader>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <CardContent className="flex flex-col gap-4">
+              <Separator />
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Delete this app</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Remove all app data and Kubernetes resources. This cannot be undone.</p>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox checked={deleteConfirmed} onCheckedChange={(v) => setDeleteConfirmed(!!v)} />
+                <span className="text-sm">Yes, delete <strong>{app.name}</strong> and all its data</span>
+              </label>
+              {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
+              <div className="flex justify-end">
+                <Button variant="destructive" size="sm" disabled={!deleteConfirmed || deleting} onClick={handleDelete}>
+                  {deleting ? "Deleting…" : "Delete app"}
+                </Button>
+              </div>
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
     </div>
   )
 }
