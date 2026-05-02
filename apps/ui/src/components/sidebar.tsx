@@ -7,7 +7,6 @@ import {
   ChevronDown,
   Settings,
   Plus,
-  ArrowLeft,
   Box,
   Hotel,
   Key,
@@ -244,7 +243,7 @@ export function Sidebar({
       })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [pathname, isAdmin, selectedTeamId])
+  }, [pathname, isAdmin, selectedTeamId, projectSlug])
 
   const activeTeam = teams.find((t) => t.id === selectedTeamId) ?? teams[0]
 

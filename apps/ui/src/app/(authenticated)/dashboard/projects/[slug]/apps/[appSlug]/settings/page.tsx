@@ -366,7 +366,7 @@ function WebhookSection({ appId, sourceType, gitBranch, onWebhookChange }: {
 // ── settings page ─────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const { slug: projectSlug, appSlug } = useParams<{ slug: string; appSlug: string }>()
+  const { slug: projectSlug } = useParams<{ slug: string; appSlug: string }>()
   const router = useRouter()
   const { app, project, refresh } = useAppContext()
 

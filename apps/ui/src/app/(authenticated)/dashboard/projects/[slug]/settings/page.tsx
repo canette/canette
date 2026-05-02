@@ -93,8 +93,6 @@ export default function ProjectSettingsPage() {
     }
   }
 
-  const projectName = project?.name ?? slug ?? "…"
-  const projectSlug = project?.slug ?? slug ?? ""
 
   if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
   if (error || !project) return <p className="text-destructive text-sm">{error || "Project not found"}</p>
