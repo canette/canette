@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 import { Download, ExternalLink, Loader2, X } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
 import type { BuildLog, Deployment, ScanSummary } from "@canette/types"
@@ -202,7 +203,7 @@ function ManifestDialog({ deploymentId, onClose }: { deploymentId: string; onClo
         </DialogClose>
       </DialogHeader>
       <div className="flex-1 overflow-y-auto p-6 pt-0">
-        {loading ? <p className="text-muted-foreground text-sm">Loading…</p>
+        {loading ? <Skeleton className="h-4 w-32" />
           : manifest === null ? <p className="text-muted-foreground text-sm">Manifest not available.</p>
             : <pre className="text-xs font-mono text-foreground/80 whitespace-pre-wrap leading-5">{manifest}</pre>}
       </div>

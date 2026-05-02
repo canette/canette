@@ -8,6 +8,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGr
 import { ChevronDown } from "lucide-react"
 import * as api from "@/lib/api"
 import type { AdminProjectOverview, AdminTeamOverview } from "@canette/types"
+import { SkeletonText } from "@/components/ui/skeleton"
 
 type StatusVariant = "live" | "building" | "deploying" | "failed" | "pending" | "secondary"
 
@@ -52,7 +53,7 @@ export default function AdminProjectsPage() {
     })
   }
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
+  if (loading) return <SkeletonText />
   if (error) return <p className="text-destructive text-sm">{error}</p>
 
   const regularTeams = adminTeams.filter((t) => !t.isPersonal && overview.some((p) => p.teamName === t.name))

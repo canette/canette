@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { SkeletonText } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -89,7 +90,7 @@ export default function ProfilePage() {
         <h1 className="text-xl font-semibold">Profile</h1>
       </div>
 
-      {loading && <p className="text-muted-foreground text-sm">Loading…</p>}
+      {loading && <SkeletonText />}
       {error && <p className="text-destructive text-sm">{error}</p>}
 
       {user && (

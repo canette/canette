@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { signIn } from "@/lib/auth-client"
 import { Button } from "@/components/ui/button"
 import { Loader2 } from "lucide-react"
@@ -52,7 +53,7 @@ export function LoginForm({ githubEnabled, googleEnabled }: { githubEnabled: boo
       )}
 
       <Button asChild variant="outline" className="w-full">
-        <a href="/login/email">Sign in with email</a>
+        <Link href="/login/email">Sign in with email</Link>
       </Button>
     </div>
   )

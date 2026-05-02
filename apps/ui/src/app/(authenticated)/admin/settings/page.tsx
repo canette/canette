@@ -6,6 +6,7 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import * as api from "@/lib/api"
 import type { ResourceDefaults, ScanPolicy, WebhookSettings } from "@canette/types"
+import { SkeletonText } from "@/components/ui/skeleton"
 
 export default function AdminSettingsPage() {
   const [scanPolicy, setScanPolicy] = useState<ScanPolicy | null>(null)
@@ -40,7 +41,7 @@ export default function AdminSettingsPage() {
     }
   }
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
+  if (loading) return <SkeletonText />
   if (error) return <p className="text-destructive text-sm">{error}</p>
 
   return (

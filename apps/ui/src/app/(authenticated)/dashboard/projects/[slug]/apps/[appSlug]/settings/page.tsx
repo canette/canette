@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { ChevronDown, Eye, EyeOff, RefreshCw, TriangleAlert } from "lucide-react"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
+import { Skeleton } from "@/components/ui/skeleton"
 import { CredentialSelect } from "@/components/credential-select"
 import { useAppContext } from "@/lib/app-context"
 import { cn } from "@/lib/utils"
@@ -140,7 +141,7 @@ function EnvSection({ appId }: { appId: string }) {
     <div className="flex flex-col gap-0">
       <p className="text-sm text-muted-foreground mb-4">Variables are stored in plaintext. Secrets are encrypted at rest and never returned by the API.</p>
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <Skeleton className="h-4 w-32" />
       ) : (
         <>
           {hasItems && (
@@ -247,7 +248,7 @@ function WebhookSection({ appId, sourceType, gitBranch, onWebhookChange }: {
     return <p className="text-sm text-muted-foreground">Webhooks are only available for git-source apps.</p>
   }
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>
+  if (loading) return <Skeleton className="h-4 w-32" />
 
   return (
     <div className="flex flex-col gap-4">

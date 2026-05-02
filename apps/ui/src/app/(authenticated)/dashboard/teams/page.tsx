@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useSession } from "@/lib/auth-client"
+import { SkeletonText } from "@/components/ui/skeleton"
 import * as api from "@/lib/api"
 import type { Team } from "@canette/types"
 
@@ -30,7 +31,7 @@ export default function TeamsPage() {
         )}
       </div>
       {loading ? (
-        <p className="text-muted-foreground text-sm">Loading…</p>
+        <SkeletonText />
       ) : teams.length === 0 ? (
         <p className="text-muted-foreground text-sm">No teams.</p>
       ) : (

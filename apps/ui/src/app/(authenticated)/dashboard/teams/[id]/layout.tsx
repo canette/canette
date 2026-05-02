@@ -1,41 +1,14 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import Link from "next/link"
 import { useParams, usePathname } from "next/navigation"
-import { cn } from "@/lib/utils"
+import { TabNavigation } from "@/components/tab-navigation"
 import * as api from "@/lib/api"
 import type { Team } from "@canette/types"
 
-function TeamTabs({ id }: { id: string }) {
-  const pathname = usePathname()
-  const base = `/dashboard/teams/${id}`
-  const tabs = [
-    { label: "Members", href: `${base}/members`, active: pathname.startsWith(`${base}/members`) },
-    { label: "Credentials", href: `${base}/credentials`, active: pathname.startsWith(`${base}/credentials`) },
-  ]
-  return (
-    <nav className="flex border-b border-border">
-      {tabs.map((tab) => (
-        <Link
-          key={tab.href}
-          href={tab.href}
-          className={cn(
-            "px-3 py-2 text-sm border-b-2 -mb-px transition-colors",
-            tab.active
-              ? "border-foreground text-foreground font-medium"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          {tab.label}
-        </Link>
-      ))}
-    </nav>
-  )
-}
-
 export default function TeamLayout({ children }: { children: React.ReactNode }) {
   const { id } = useParams<{ id: string }>()
+  const pathname = usePathname()
   const [team, setTeam] = useState<Team | null>(null)
 
   const load = useCallback(async () => {
@@ -47,6 +20,8 @@ export default function TeamLayout({ children }: { children: React.ReactNode }) 
 
   useEffect(() => { load() }, [load])
 
+  const base = `/dashboard/teams/${id}`
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -55,7 +30,10 @@ export default function TeamLayout({ children }: { children: React.ReactNode }) 
             {team.isPersonal ? "Personal" : team.name}
           </h1>
         )}
-        <TeamTabs id={id} />
+        <TabNavigation tabs={[
+          { label: "Members", href: `${base}/members`, active: pathname.startsWith(`${base}/members`) },
+          { label: "Credentials", href: `${base}/credentials`, active: pathname.startsWith(`${base}/credentials`) },
+        ]} />
       </div>
       {children}
     </div>

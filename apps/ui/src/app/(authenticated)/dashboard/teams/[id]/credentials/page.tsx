@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, use } from "react"
 import { useSearchParams } from "next/navigation"
+import { SkeletonText } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
@@ -171,7 +172,7 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
     finally { setLinkingInstallationId(null) }
   }
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
+  if (loading) return <SkeletonText />
   if (!team) return <p className="text-muted-foreground text-sm">Team not found.</p>
 
   const systemGithubApp = credentials.find((c) => c.teamId === null && c.type === "github_app")

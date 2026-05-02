@@ -97,8 +97,7 @@ export default function ProjectSettingsPage() {
   }
 
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
-  if (error || !project) return <p className="text-destructive text-sm">{error || "Project not found"}</p>
+  if (error || (!loading && !project)) return <p className="text-destructive text-sm">{error || "Project not found"}</p>
 
   return (
     <div className="flex flex-col gap-6">
@@ -113,7 +112,7 @@ export default function ProjectSettingsPage() {
             <form onSubmit={handleSave} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="proj-name">Name</Label>
-                <Input id="proj-name" value={name} onChange={(e) => setName(e.target.value)} />
+                <Input id="proj-name" value={name} onChange={(e) => setName(e.target.value)} disabled={loading} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="proj-desc">
@@ -125,11 +124,12 @@ export default function ProjectSettingsPage() {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="What does this project do?"
+                  disabled={loading}
                 />
               </div>
               {saveError && <p className="text-sm text-destructive">{saveError}</p>}
               <div className="flex justify-end">
-                <Button type="submit" size="sm" disabled={!isDirty || saving}>
+                <Button type="submit" size="sm" disabled={loading || !isDirty || saving}>
                   {saving ? "Saving…" : "Save changes"}
                 </Button>
               </div>
@@ -163,6 +163,7 @@ export default function ProjectSettingsPage() {
                 value={newSlug}
                 onChange={(e) => { setNewSlug(e.target.value); setDangerConfirmed(false) }}
                 className="font-mono"
+                disabled={loading}
               />
             </div>
             <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
@@ -179,7 +180,7 @@ export default function ProjectSettingsPage() {
                 variant="destructive"
                 size="sm"
                 onClick={handleRename}
-                disabled={!newSlug || newSlug === project.slug || !dangerConfirmed || renaming}
+                disabled={loading || !newSlug || newSlug === project?.slug || !dangerConfirmed || renaming}
               >
                 {renaming ? "Renaming…" : "Rename project"}
               </Button>

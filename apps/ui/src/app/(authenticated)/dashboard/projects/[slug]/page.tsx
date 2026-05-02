@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
+import { SkeletonText } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import type { App, Project } from "@canette/types"
@@ -40,16 +41,17 @@ export default function ProjectPage() {
       .finally(() => setLoading(false))
   }, [slug])
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
-  if (error || !project) return <p className="text-destructive text-sm">{error || "Project not found"}</p>
+  if (error) return <p className="text-destructive text-sm">{error}</p>
 
   return (
     <div>
-      {project.description && (
+      {project?.description && (
         <p className="text-sm text-muted-foreground mb-6">{project.description}</p>
       )}
 
-      {apps.length === 0 ? (
+      {loading ? (
+        <SkeletonText />
+      ) : apps.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-center rounded-lg border border-dashed border-border">
           <p className="text-sm text-muted-foreground max-w-sm">
             An app is a deployable service — built from a Git repository or Docker image and served at its own URL.

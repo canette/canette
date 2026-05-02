@@ -11,6 +11,7 @@ import { useSession } from "@/lib/auth-client"
 import { FormError } from "@/components/ui/form-error"
 import * as api from "@/lib/api"
 import type { User, UserDeletionImpact } from "@canette/types"
+import { SkeletonText } from "@/components/ui/skeleton"
 
 export default function AdminUsersPage() {
   const { data: session } = useSession()
@@ -104,7 +105,7 @@ export default function AdminUsersPage() {
 
   const currentUserId = typeof session?.user?.id === "string" ? session.user.id : undefined
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
+  if (loading) return <SkeletonText />
   if (error) return <p className="text-destructive text-sm">{error}</p>
 
   return (

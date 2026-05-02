@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ChevronDown } from "lucide-react"
+import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
 import * as api from "@/lib/api"
 import type { AdminTeamOverview, TeamMember } from "@canette/types"
 
@@ -150,7 +151,7 @@ export default function AdminTeamsPage() {
         </button>
         {expanded && (
           <div className="border-t border-border/50 bg-muted/20">
-            {membersLoading && <p className="text-xs text-muted-foreground px-10 py-3">Loading…</p>}
+            {membersLoading && <div className="px-10 py-3"><Skeleton className="h-3.5 w-32" /></div>}
             {!membersLoading && members && members.length > 0 && members.map((member, j) => (
               <div key={member.userId}>
                 {j > 0 && <Separator />}
@@ -232,7 +233,7 @@ export default function AdminTeamsPage() {
     )
   }
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
+  if (loading) return <SkeletonText />
   if (error) return <p className="text-destructive text-sm">{error}</p>
 
   const regularTeams = adminTeams.filter((t) => !t.isPersonal)
