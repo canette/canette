@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { signIn, signUp } from "@/lib/auth-client"
 import { Button } from "@/components/ui/button"
@@ -114,7 +115,7 @@ export function EmailForm({ signupEnabled }: { signupEnabled: boolean }) {
       )}
 
       <p className="text-center text-sm text-muted-foreground">
-        <a href="/login" className="underline hover:text-foreground">← Other sign in options</a>
+        <Link href="/login" className="underline hover:text-foreground">← Other sign in options</Link>
       </p>
     </>
   )

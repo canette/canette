@@ -2,13 +2,8 @@
 
 import { useSession } from "@/lib/auth-client"
 import { SessionProvider } from "@/lib/session-context"
+import { AppLayout } from "@/components/app-layout"
 
-// The middleware already redirects unauthenticated requests to /login before
-// they reach this layout. The session check here is a client-side UX guard:
-// it hides content while the session is being resolved and handles the edge
-// case where a session cookie exists but is expired (the API will return 401,
-// the useSession hook will clear the session, and window.location.replace in
-// api.ts will finish the redirect).
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   const { isPending, data: session, error } = useSession()
 
@@ -32,13 +27,21 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
     )
   }
 
-  if (isPending || !session?.user) {
+  // Only block render during the very first load (no cached session yet).
+  // If isPending but we have existing session data, keep rendering — avoids
+  // unmounting the sidebar when better-auth re-validates in the background.
+  if (isPending && !session) {
+    return null
+  }
+  if (!session?.user) {
     return null
   }
 
   return (
     <SessionProvider value={session.user}>
-      {children}
+      <AppLayout>
+        {children}
+      </AppLayout>
     </SessionProvider>
   )
 }

@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft } from "lucide-react"
-import { AppShell } from "@/components/app-shell"
+import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
 import type { Project } from "@canette/types"
 
@@ -95,26 +96,11 @@ export default function ProjectSettingsPage() {
     }
   }
 
-  const projectName = project?.name ?? slug ?? "…"
-  const projectSlug = project?.slug ?? slug ?? ""
 
-  if (loading) {
-    return (
-      <Shell projectName={projectName} projectSlug={slug}>
-        <p className="text-muted-foreground text-sm">Loading…</p>
-      </Shell>
-    )
-  }
-  if (error || !project) {
-    return (
-      <Shell projectName={projectName} projectSlug={slug}>
-        <p className="text-destructive text-sm">{error || "Project not found"}</p>
-      </Shell>
-    )
-  }
+  if (error || (!loading && !project)) return <p className="text-destructive text-sm">{error || "Project not found"}</p>
 
   return (
-    <Shell projectName={projectName} projectSlug={projectSlug}>
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-6">
 
         {/* Settings */}
@@ -126,7 +112,7 @@ export default function ProjectSettingsPage() {
             <form onSubmit={handleSave} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="proj-name">Name</Label>
-                <Input id="proj-name" value={name} onChange={(e) => setName(e.target.value)} />
+                <Input id="proj-name" value={name} onChange={(e) => setName(e.target.value)} disabled={loading} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="proj-desc">
@@ -138,11 +124,12 @@ export default function ProjectSettingsPage() {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="What does this project do?"
+                  disabled={loading}
                 />
               </div>
               {saveError && <p className="text-sm text-destructive">{saveError}</p>}
               <div className="flex justify-end">
-                <Button type="submit" size="sm" disabled={!isDirty || saving}>
+                <Button type="submit" size="sm" disabled={loading || !isDirty || saving}>
                   {saving ? "Saving…" : "Save changes"}
                 </Button>
               </div>
@@ -151,10 +138,17 @@ export default function ProjectSettingsPage() {
         </Card>
 
         {/* Danger Zone */}
+        <Collapsible>
         <Card className="border-destructive/50">
-          <CardHeader>
-            <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
-          </CardHeader>
+          <CollapsibleTrigger asChild>
+            <CardHeader className="cursor-pointer select-none hover:bg-muted/30 transition-colors rounded-lg [&[data-state=open]]:rounded-b-none">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
+                <ChevronDown size={15} className={cn("text-destructive/70 transition-transform [[data-state=open]_&]:rotate-180")} />
+              </div>
+            </CardHeader>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
           <CardContent className="flex flex-col gap-4">
             <div>
               <p className="text-sm font-medium mb-1">Update project slug</p>
@@ -169,6 +163,7 @@ export default function ProjectSettingsPage() {
                 value={newSlug}
                 onChange={(e) => { setNewSlug(e.target.value); setDangerConfirmed(false) }}
                 className="font-mono"
+                disabled={loading}
               />
             </div>
             <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
@@ -185,7 +180,7 @@ export default function ProjectSettingsPage() {
                 variant="destructive"
                 size="sm"
                 onClick={handleRename}
-                disabled={!newSlug || newSlug === project.slug || !dangerConfirmed || renaming}
+                disabled={loading || !newSlug || newSlug === project?.slug || !dangerConfirmed || renaming}
               >
                 {renaming ? "Renaming…" : "Rename project"}
               </Button>
@@ -220,30 +215,11 @@ export default function ProjectSettingsPage() {
               </div>
             </div>
           </CardContent>
+          </CollapsibleContent>
         </Card>
+        </Collapsible>
 
       </div>
-    </Shell>
-  )
-}
-
-function Shell({ projectName, projectSlug, children }: {
-  projectName: string
-  projectSlug: string
-  children: React.ReactNode
-}) {
-  return (
-    <AppShell breadcrumb={[
-      { label: projectName, href: `/dashboard/projects/${projectSlug}` },
-      { label: "Settings" },
-    ]}>
-      <div className="flex items-center gap-3 mb-6">
-        <a href={`/dashboard/projects/${projectSlug}`} className="text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft size={18} />
-        </a>
-        <h1 className="text-xl font-semibold">Settings</h1>
-      </div>
-      {children}
-    </AppShell>
+    </div>
   )
 }

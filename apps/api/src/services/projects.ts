@@ -28,8 +28,10 @@ function mapProject(row: ProjectRow): Project {
 
 // ── Slug validation ───────────────────────────────────────────────────────────
 
+const RESERVED_PROJECT_SLUGS = new Set(["new", "settings"])
+
 function isValidProjectSlug(slug: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{0,49}$/.test(slug) && !slug.endsWith("-")
+  return /^[a-z0-9][a-z0-9-]{0,49}$/.test(slug) && !slug.endsWith("-") && !RESERVED_PROJECT_SLUGS.has(slug)
 }
 
 // ── Service functions ─────────────────────────────────────────────────────────
@@ -68,6 +70,7 @@ export async function getProjectByRef(
 }
 
 export async function isProjectSlugAvailable(db: DB, slug: string): Promise<boolean> {
+  if (RESERVED_PROJECT_SLUGS.has(slug)) return false
   const row = await db
     .selectFrom("projects")
     .select("id")

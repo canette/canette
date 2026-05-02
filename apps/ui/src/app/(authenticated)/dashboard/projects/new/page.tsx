@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
@@ -86,6 +86,7 @@ export default function NewProjectPage() {
         slug,
         description: description.trim() || undefined,
       })
+      router.refresh()
       router.push(`/dashboard/projects/${data.slug}`)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong")
@@ -105,103 +106,63 @@ export default function NewProjectPage() {
   const canSubmit = !!name.trim() && slugState === "available" && !!teamId && !submitting
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b border-border sticky top-0 z-10 bg-background/80 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center gap-3">
-          <a href="/dashboard" className="text-sm font-semibold tracking-tight text-muted-foreground hover:text-foreground transition-colors">
-            canette
-          </a>
-          <span className="text-muted-foreground/40">/</span>
-          <span className="text-sm font-medium">New project</span>
-        </div>
-      </header>
-
-      <main className="flex-1 flex items-start justify-center px-6 py-12">
-        <Card className="w-full max-w-lg">
-          <CardHeader>
-            <CardTitle>New project</CardTitle>
-            <CardDescription>A project groups your apps and shared configuration.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-              {/* Team selector — only shown when user has multiple teams */}
-              {teams.length > 1 && (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="team">Team</Label>
-                  <Select value={teamId} onValueChange={setTeamId}>
-                    <SelectTrigger id="team">
-                      <SelectValue placeholder="Select a team" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {teams.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          <span className="flex items-center gap-2">
-                            {t.name}
-                            {t.isPersonal && <Badge variant="muted">personal</Badge>}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
+    <div>
+      <h1 className="text-xl font-semibold mb-6">New project</h1>
+      <Card>
+        <CardHeader>
+          <CardDescription>A project groups your apps and shared configuration.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+            {teams.length > 1 && (
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  placeholder="My Project"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  autoFocus
-                />
+                <Label htmlFor="team">Team</Label>
+                <Select value={teamId} onValueChange={setTeamId}>
+                  <SelectTrigger id="team"><SelectValue placeholder="Select a team" /></SelectTrigger>
+                  <SelectContent>
+                    {teams.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        <span className="flex items-center gap-2">
+                          {t.name}
+                          {t.isPersonal && <Badge variant="muted">personal</Badge>}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+            )}
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="slug">
-                  Slug
-                  <span className="ml-2 text-xs text-muted-foreground font-normal">(used in your app URLs)</span>
-                </Label>
-                <Input
-                  id="slug"
-                  placeholder="my-project"
-                  value={slug}
-                  onChange={(e) => { setSlug(e.target.value); setSlugEdited(true) }}
-                  className={cn(
-                    slugState === "taken" || slugState === "invalid" ? "border-destructive" : "",
-                    slugState === "available" ? "border-green-500" : "",
-                  )}
-                />
-                <p className="text-xs min-h-[1rem]">{slugHint}</p>
-              </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="name">Name</Label>
+              <Input id="name" placeholder="My Project" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+            </div>
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="description">
-                  Description
-                  <span className="ml-2 text-xs text-muted-foreground font-normal">optional</span>
-                </Label>
-                <Input
-                  id="description"
-                  placeholder="What is this project for?"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="slug">Slug <span className="ml-2 text-xs text-muted-foreground font-normal">(used in your app URLs)</span></Label>
+              <Input id="slug" placeholder="my-project" value={slug}
+                onChange={(e) => { setSlug(e.target.value); setSlugEdited(true) }}
+                className={cn(
+                  slugState === "taken" || slugState === "invalid" ? "border-destructive" : "",
+                  slugState === "available" ? "border-green-500" : "",
+                )} />
+              <p className="text-xs min-h-[1rem]">{slugHint}</p>
+            </div>
 
-              {error && <p className="text-sm text-destructive">{error}</p>}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="description">Description <span className="ml-2 text-xs text-muted-foreground font-normal">optional</span></Label>
+              <Input id="description" placeholder="What is this project for?" value={description} onChange={(e) => setDescription(e.target.value)} />
+            </div>
 
-              <div className="flex justify-end gap-3 pt-1">
-                <Button type="button" variant="ghost" onClick={() => router.push("/dashboard")}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={!canSubmit}>
-                  {submitting ? "Creating…" : "Create project"}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      </main>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+
+            <div className="flex justify-end gap-3 pt-1">
+              <Button type="button" variant="ghost" onClick={() => router.push("/dashboard")}>Cancel</Button>
+              <Button type="submit" disabled={!canSubmit}>{submitting ? "Creating…" : "Create project"}</Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }

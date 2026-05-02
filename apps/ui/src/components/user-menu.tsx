@@ -56,16 +56,13 @@ export function UserMenu() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <a href="/dashboard/settings/profile">Profile</a>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/dashboard/teams">Teams</Link>
+          <Link href="/account/profile">Profile</Link>
         </DropdownMenuItem>
         {isAdmin && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <a href="/admin/users">Admin</a>
+              <Link href="/admin/users">Admin</Link>
             </DropdownMenuItem>
           </>
         )}

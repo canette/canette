@@ -1,12 +1,14 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel, SelectSeparator } from "@/components/ui/select"
 import { ChevronDown } from "lucide-react"
 import * as api from "@/lib/api"
 import type { AdminProjectOverview, AdminTeamOverview } from "@canette/types"
+import { SkeletonText } from "@/components/ui/skeleton"
 
 type StatusVariant = "live" | "building" | "deploying" | "failed" | "pending" | "secondary"
 
@@ -51,7 +53,7 @@ export default function AdminProjectsPage() {
     })
   }
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading…</p>
+  if (loading) return <SkeletonText />
   if (error) return <p className="text-destructive text-sm">{error}</p>
 
   const regularTeams = adminTeams.filter((t) => !t.isPersonal && overview.some((p) => p.teamName === t.name))
@@ -126,9 +128,9 @@ export default function AdminProjectsPage() {
                       {j > 0 && <Separator />}
                       <div className="flex items-center justify-between pl-10 pr-6 py-2.5">
                         <div className="flex items-center gap-3 min-w-0">
-                          <a href={`/dashboard/projects/${project.slug}/apps/${app.slug}`} className="text-sm hover:underline truncate">
+                          <Link href={`/dashboard/projects/${project.slug}/apps/${app.slug}`} className="text-sm hover:underline truncate">
                             {app.name}
-                          </a>
+                          </Link>
                           <span className="text-xs text-muted-foreground shrink-0">{app.sourceType}</span>
                           {app.liveUrl && app.latestDeploymentStatus === "live" && (
                             <a
