@@ -7,6 +7,7 @@ import { Menu, Plus } from "lucide-react"
 import { Footer } from "@/components/footer"
 import { Sidebar } from "@/components/sidebar"
 import { UserMenu } from "@/components/user-menu"
+import { Breadcrumb } from "@/components/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { TeamProvider } from "@/lib/team-context"
 
@@ -49,12 +50,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={toggle}
-              className="text-muted-foreground hover:text-foreground transition-colors"
+              className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
               aria-label="Open sidebar"
             >
               <Menu size={18} />
             </button>
           )}
+          <Breadcrumb />
           <div className="ml-auto flex items-center gap-3">
             {action && (
               <Button variant="outline" size="sm" asChild
@@ -71,7 +73,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <main className="flex-1 overflow-y-auto">
           <div className="min-h-full flex flex-col px-6 py-8">
             <div className="flex-1">{children}</div>
-            <Footer />
+            {pathname.startsWith("/admin") && <Footer />}
           </div>
         </main>
       </div>

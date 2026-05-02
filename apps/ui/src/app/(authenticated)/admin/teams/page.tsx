@@ -5,6 +5,8 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ChevronDown } from "lucide-react"
 import * as api from "@/lib/api"
@@ -36,6 +38,11 @@ export default function AdminTeamsPage() {
   const [deleteTeamConfirm, setDeleteTeamConfirm] = useState<AdminTeamOverview | null>(null)
   const [deletingTeam, setDeletingTeam] = useState(false)
   const [deleteTeamError, setDeleteTeamError] = useState("")
+
+  const [renameTeamTarget, setRenameTeamTarget] = useState<AdminTeamOverview | null>(null)
+  const [renameTeamName, setRenameTeamName] = useState("")
+  const [renamingTeam, setRenamingTeam] = useState(false)
+  const [renameTeamError, setRenameTeamError] = useState("")
 
   useEffect(() => {
     api.admin.getTeams()
@@ -106,6 +113,22 @@ export default function AdminTeamsPage() {
       setDeleteTeamError(e instanceof Error ? e.message : "Failed to delete team")
     } finally {
       setDeletingTeam(false)
+    }
+  }
+
+  async function handleRenameTeam(e: React.FormEvent) {
+    e.preventDefault()
+    if (!renameTeamTarget || !renameTeamName.trim()) return
+    setRenameTeamError("")
+    setRenamingTeam(true)
+    try {
+      await api.teams.rename(renameTeamTarget.id, renameTeamName.trim())
+      setAdminTeams((prev) => prev.map((t) => t.id === renameTeamTarget.id ? { ...t, name: renameTeamName.trim() } : t))
+      setRenameTeamTarget(null)
+    } catch (e: unknown) {
+      setRenameTeamError(e instanceof Error ? e.message : "Failed to rename team")
+    } finally {
+      setRenamingTeam(false)
     }
   }
 
@@ -185,13 +208,22 @@ export default function AdminTeamsPage() {
                     </button>
                   )}
                 </div>
-                <Button
-                  size="sm" variant="ghost"
-                  className="h-7 text-xs text-muted-foreground hover:text-destructive shrink-0"
-                  onClick={() => { setDeleteTeamError(""); setDeleteTeamConfirm(team) }}
-                >
-                  Delete team
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm" variant="ghost"
+                    className="h-7 text-xs text-muted-foreground hover:text-foreground shrink-0"
+                    onClick={() => { setRenameTeamError(""); setRenameTeamName(team.name); setRenameTeamTarget(team) }}
+                  >
+                    Rename
+                  </Button>
+                  <Button
+                    size="sm" variant="ghost"
+                    className="h-7 text-xs text-muted-foreground hover:text-destructive shrink-0"
+                    onClick={() => { setDeleteTeamError(""); setDeleteTeamConfirm(team) }}
+                  >
+                    Delete team
+                  </Button>
+                </div>
               </div>
             )}
           </div>
@@ -230,7 +262,7 @@ export default function AdminTeamsPage() {
             {regularTeams.length === 0 ? (
               <div className="px-6 py-4 flex flex-col gap-1">
                 <p className="text-muted-foreground text-sm">No teams yet.</p>
-                <Link href="/dashboard/teams/new" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                <Link href="/admin/teams/new" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
                   + Create team
                 </Link>
               </div>
@@ -243,7 +275,7 @@ export default function AdminTeamsPage() {
                   </div>
                 ))}
                 <div className="px-6 py-3 border-t border-border/50">
-                  <Link href="/dashboard/teams/new" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                  <Link href="/admin/teams/new" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
                     + Create team
                   </Link>
                 </div>
@@ -265,6 +297,33 @@ export default function AdminTeamsPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <Dialog open={renameTeamTarget !== null} onOpenChange={(open) => { if (!open) setRenameTeamTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename team</DialogTitle>
+            <DialogDescription>Update the display name for this team.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleRenameTeam} className="flex flex-col gap-4 px-6 pb-6">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="rename-team-name">Team name</Label>
+              <Input
+                id="rename-team-name"
+                value={renameTeamName}
+                onChange={(e) => setRenameTeamName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            {renameTeamError && <p className="text-sm text-destructive">{renameTeamError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setRenameTeamTarget(null)} disabled={renamingTeam}>Cancel</Button>
+              <Button type="submit" disabled={!renameTeamName.trim() || renameTeamName === renameTeamTarget?.name || renamingTeam}>
+                {renamingTeam ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={deleteTeamConfirm !== null} onOpenChange={(open) => { if (!open) setDeleteTeamConfirm(null) }}>
         <DialogContent>

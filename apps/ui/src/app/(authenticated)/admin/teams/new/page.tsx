@@ -20,8 +20,8 @@ export default function NewTeamPage() {
     setError("")
     setSubmitting(true)
     try {
-      const team = await api.teams.create({ name: name.trim() })
-      router.push(`/dashboard/teams/${team.id}`)
+      await api.teams.create({ name: name.trim() })
+      router.push("/admin/teams")
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong")
     } finally {
@@ -44,7 +44,7 @@ export default function NewTeamPage() {
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <div className="flex justify-end gap-3 pt-1">
-              <Button type="button" variant="ghost" onClick={() => router.push("/dashboard/teams")}>Cancel</Button>
+              <Button type="button" variant="ghost" onClick={() => router.push("/admin/teams")}>Cancel</Button>
               <Button type="submit" disabled={!name.trim() || submitting}>{submitting ? "Creating…" : "Create team"}</Button>
             </div>
           </form>

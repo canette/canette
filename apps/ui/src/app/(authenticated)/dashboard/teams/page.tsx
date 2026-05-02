@@ -26,7 +26,7 @@ export default function TeamsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Teams</h1>
         {isAdmin && (
-          <Button size="sm" onClick={() => router.push("/dashboard/teams/new")}>New team</Button>
+          <Button size="sm" onClick={() => router.push("/admin/teams/new")}>New team</Button>
         )}
       </div>
       {loading ? (

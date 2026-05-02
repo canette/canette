@@ -1,7 +1,6 @@
 "use client"
 
 import * as Avatar from "@radix-ui/react-avatar"
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { signOut } from "@/lib/auth-client"
 import { useCurrentUser } from "@/lib/session-context"
@@ -56,10 +55,7 @@ export function UserMenu() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <a href="/dashboard/settings/profile">Profile</a>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/dashboard/teams">Teams</Link>
+          <a href="/account/profile">Profile</a>
         </DropdownMenuItem>
         {isAdmin && (
           <>
