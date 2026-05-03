@@ -101,7 +101,7 @@ function TeamSelector({
       <Link
         href="/dashboard/teams"
         title="Teams"
-        className={cn(          
+        className={cn(
           "flex items-center justify-center px-3 py-1.5 rounded-md transition-colors",
           isTeamsPage
             ? "bg-muted text-foreground"
