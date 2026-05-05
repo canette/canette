@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto"
+import { randomInt } from "crypto"
 import { Hono } from "hono"
 import { db } from "../db/db"
 import { auth } from "../auth/auth"
@@ -23,23 +23,19 @@ import {
 import { listTeamsOverview } from "../services/teams"
 import type { ScanPolicy, UserRole } from "@canette/types"
 
-function randomIndex(max: number): number {
-  return randomBytes(4).readUInt32BE(0) % max
-}
-
 function generatePassword(): string {
   const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
   const lower = "abcdefghijklmnopqrstuvwxyz"
   const digits = "0123456789"
   const all = upper + lower + digits
   const chars = [
-    upper[randomIndex(upper.length)],
-    lower[randomIndex(lower.length)],
-    digits[randomIndex(digits.length)],
-    ...Array.from({ length: 13 }, () => all[randomIndex(all.length)]),
+    upper[randomInt(upper.length)],
+    lower[randomInt(lower.length)],
+    digits[randomInt(digits.length)],
+    ...Array.from({ length: 13 }, () => all[randomInt(all.length)]),
   ]
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = randomIndex(i + 1)
+    const j = randomInt(i + 1)
     ;[chars[i], chars[j]] = [chars[j], chars[i]]
   }
   return chars.join("")
