@@ -23,20 +23,23 @@ import {
 import { listTeamsOverview } from "../services/teams"
 import type { ScanPolicy, UserRole } from "@canette/types"
 
+function randomIndex(max: number): number {
+  return randomBytes(4).readUInt32BE(0) % max
+}
+
 function generatePassword(): string {
   const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
   const lower = "abcdefghijklmnopqrstuvwxyz"
   const digits = "0123456789"
   const all = upper + lower + digits
-  const b = randomBytes(32)
   const chars = [
-    upper[b[0] % upper.length],
-    lower[b[1] % lower.length],
-    digits[b[2] % digits.length],
-    ...Array.from({ length: 13 }, (_, i) => all[b[3 + i] % all.length]),
+    upper[randomIndex(upper.length)],
+    lower[randomIndex(lower.length)],
+    digits[randomIndex(digits.length)],
+    ...Array.from({ length: 13 }, () => all[randomIndex(all.length)]),
   ]
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = b[16 + i] % (i + 1)
+    const j = randomIndex(i + 1)
     ;[chars[i], chars[j]] = [chars[j], chars[i]]
   }
   return chars.join("")
