@@ -134,6 +134,16 @@ spec:
               value: {{ .Values.api.webhookBaseUrl | quote }}
             - name: DISABLE_EMAIL_SIGNUP
               value: {{ if .Values.api.disableEmailSignup }}"true"{{ else }}"false"{{ end }}
+            - name: MCP_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if ((.Values.api.mcpJwtSecretRef).name) }}
+                  name: {{ .Values.api.mcpJwtSecretRef.name }}
+                  key: {{ .Values.api.mcpJwtSecretRef.key }}
+                  {{- else }}
+                  name: canette-api-secrets
+                  key: mcp-jwt-secret
+                  {{- end }}
             {{- if .Values.migrations.enabled }}
             - name: RUN_MIGRATIONS
               value: "false"

@@ -122,14 +122,15 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
 // Caller must already have verified the user has access to this app.
 export async function listDeployments(
   db: DB,
-  appId: string
+  appId: string,
+  limit = 50
 ): Promise<PaginatedResponse<Deployment>> {
   const rows = await db
     .selectFrom("deployments")
     .selectAll()
     .where("app_id", "=", appId)
     .orderBy("created_at", "desc")
-    .limit(50)
+    .limit(limit)
     .execute()
   const items = rows.map(mapDeployment)
   return { items, total: items.length, page: 1, pageSize: items.length }
@@ -346,6 +347,25 @@ export async function redeployDeployment(
     .selectAll()
     .where("id", "=", id)
     .executeTakeFirstOrThrow()
+  return mapDeployment(row)
+}
+
+// Verifies access via deployment → app → project → team membership.
+export async function getDeploymentById(
+  db: DB,
+  deploymentId: string,
+  userId: string
+): Promise<Deployment | null> {
+  const row = await db
+    .selectFrom("deployments as d")
+    .innerJoin("apps as a", "a.id", "d.app_id")
+    .innerJoin("projects as p", "p.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
+    .selectAll("d")
+    .where("d.id", "=", deploymentId)
+    .where("tm.user_id", "=", userId)
+    .executeTakeFirst()
+  if (!row) return null
   return mapDeployment(row)
 }
 

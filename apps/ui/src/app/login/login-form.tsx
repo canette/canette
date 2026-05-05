@@ -8,10 +8,23 @@ import { Loader2 } from "lucide-react"
 import { GitHubIcon } from "@/components/icons/github-icon"
 import { GoogleIcon } from "@/components/icons/google-icon"
 
-export function LoginForm({ githubEnabled, googleEnabled }: { githubEnabled: boolean; googleEnabled: boolean }) {
+export function LoginForm({
+  githubEnabled,
+  googleEnabled,
+  callbackURL,
+}: {
+  githubEnabled: boolean
+  googleEnabled: boolean
+  callbackURL?: string
+}) {
   const [githubLoading, setGithubLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const hasSocialProviders = githubEnabled || googleEnabled
+  // Reject non-relative callbackURLs to prevent open redirect attacks.
+  const dest = callbackURL?.startsWith("/") ? callbackURL : "/dashboard"
+  const emailHref = callbackURL
+    ? `/login/email?callbackURL=${encodeURIComponent(callbackURL)}`
+    : "/login/email"
 
   return (
     <div className="flex flex-col gap-3">
@@ -21,7 +34,7 @@ export function LoginForm({ githubEnabled, googleEnabled }: { githubEnabled: boo
           disabled={githubLoading}
           onClick={() => {
             setGithubLoading(true)
-            signIn.social({ provider: "github", callbackURL: `${window.location.origin}/dashboard` })
+            signIn.social({ provider: "github", callbackURL: dest })
           }}
         >
           {githubLoading ? <Loader2 className="size-4 animate-spin" /> : <GitHubIcon size={18} />}
@@ -36,7 +49,7 @@ export function LoginForm({ githubEnabled, googleEnabled }: { githubEnabled: boo
           disabled={googleLoading}
           onClick={() => {
             setGoogleLoading(true)
-            signIn.social({ provider: "google", callbackURL: `${window.location.origin}/dashboard` })
+            signIn.social({ provider: "google", callbackURL: dest })
           }}
         >
           {googleLoading ? <Loader2 className="size-4 animate-spin" /> : <GoogleIcon size={18} />}
@@ -53,7 +66,7 @@ export function LoginForm({ githubEnabled, googleEnabled }: { githubEnabled: boo
       )}
 
       <Button asChild variant="outline" className="w-full">
-        <Link href="/login/email">Sign in with email</Link>
+        <Link href={emailHref}>Sign in with email</Link>
       </Button>
     </div>
   )

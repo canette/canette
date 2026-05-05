@@ -115,7 +115,7 @@ export const apps = {
 
 // Deployments
 export const deployments = {
-  list: (appId: string) => request<PaginatedResponse<Deployment>>(`/apps/${appId}/deployments`),
+  list: (appId: string, limit = 5) => request<PaginatedResponse<Deployment>>(`/apps/${appId}/deployments?limit=${limit}`),
   trigger: (appId: string) =>
     request<Deployment>(`/apps/${appId}/deployments`, { method: "POST" }),
   logs: (deploymentId: string) => request<{ items: BuildLog[] }>(`/deployments/${deploymentId}/logs`),

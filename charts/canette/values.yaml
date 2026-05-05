@@ -226,6 +226,14 @@ api:
   # BETTER_AUTH_SECRET is auto-generated on first install (same pattern as encryptionKey).
   # Set explicitly for disaster recovery or cluster migration.
   authSecret: ""
+  # Secret used to sign MCP OAuth access tokens (HS256 JWT). Auto-generated on first
+  # install. Set explicitly for disaster recovery or when rotating the signing key.
+  mcpJwtSecret: ""
+  # Optional: read the MCP JWT secret from a pre-existing Kubernetes Secret instead.
+  # The secret must exist in the system namespace before helm install/upgrade.
+  mcpJwtSecretRef:
+    name: ""
+    key: "mcp-jwt-secret"
   # Default Kubernetes resource allocations applied to every app deployment.
   # Uses standard Kubernetes quantity notation (100m, 256Mi, 1, etc.).
   defaultResources:

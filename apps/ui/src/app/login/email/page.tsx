@@ -4,8 +4,13 @@ import { EmailForm } from "./email-form"
 
 export const dynamic = "force-dynamic"
 
-export default function EmailLoginPage() {
+export default async function EmailLoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string>>
+}) {
   const signupEnabled = process.env.EMAIL_SIGNUP_ENABLED !== "false"
+  const { callbackURL } = await searchParams
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
@@ -18,7 +23,7 @@ export default function EmailLoginPage() {
           <CardDescription>Sign in with your email</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <EmailForm signupEnabled={signupEnabled} />
+          <EmailForm signupEnabled={signupEnabled} callbackURL={callbackURL} />
         </CardContent>
       </Card>
     </main>

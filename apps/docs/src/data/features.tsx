@@ -40,7 +40,7 @@ export const features: Feature[] = [
         <polyline points="12 6 12 12 16 14" />
       </svg>
     ),
-    title: "Live in a few minutes",
+    title: "Live in minutes",
     body: "From a git push to a live URL — with real-time build logs the whole way. No waiting, no guessing, no platform ticket.",
   },
   {
@@ -54,13 +54,16 @@ export const features: Feature[] = [
         strokeLinejoin="round"
         className="h-full w-full"
       >
-        <path d="M12 2L2 7l10 5 10-5-10-5z" />
-        <path d="M2 17l10 5 10-5" />
-        <path d="M2 12l10 5 10-5" />
+        <path d="M12 8V4H8" />
+        <rect x="4" y="8" width="16" height="12" rx="2" />
+        <path d="M2 14h2" />
+        <path d="M20 14h2" />
+        <path d="M15 13v2" />
+        <path d="M9 13v2" />
       </svg>
     ),
-    title: "Ideal for demos and internal tools",
-    body: "Every deploy gets its own URL instantly. Spin up a demo, a Storybook, or a test build — and tear it down when you're done.",
+    title: "AI agent ready",
+    body: "canette exposes an MCP server so AI agents, like Claude Code and Cursor, can deploy repos, check status, and diagnose failures through natural language.",
   },
   {
     icon: (
