@@ -4,9 +4,14 @@ import { LoginForm } from "./login-form"
 
 export const dynamic = "force-dynamic"
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string>>
+}) {
   const githubEnabled = !!process.env.GITHUB_LOGIN_ENABLED && process.env.GITHUB_LOGIN_ENABLED !== "false"
   const googleEnabled = !!process.env.GOOGLE_LOGIN_ENABLED && process.env.GOOGLE_LOGIN_ENABLED !== "false"
+  const { callbackURL } = await searchParams
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
@@ -19,7 +24,7 @@ export default function LoginPage() {
           <CardDescription>Kubernetes Push-to-deploy Platform</CardDescription>
         </CardHeader>
         <CardContent>
-          <LoginForm githubEnabled={githubEnabled} googleEnabled={googleEnabled} />
+          <LoginForm githubEnabled={githubEnabled} googleEnabled={googleEnabled} callbackURL={callbackURL} />
         </CardContent>
       </Card>
     </main>

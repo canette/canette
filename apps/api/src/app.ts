@@ -13,11 +13,27 @@ import { webhookReceiverRouter } from "./routes/webhook-receiver"
 import { adminRouter } from "./routes/admin"
 import { usersRouter } from "./routes/users"
 import { githubAppRouter } from "./routes/github-app"
+import { wellKnownRouter, oauthRouter } from "./routes/oauth"
+import { mcpRouter } from "./routes/mcp"
 
 export function createApp() {
     const app = new Hono()
 
     app.use("*", logger())
+
+    // OAuth and MCP endpoints are public (bearer token auth, no cookies).
+    // Must be registered before the session-cookie CORS below so that OPTIONS
+    // preflights short-circuit here and don't get the restrictive UI origin.
+    const mcpCors = cors({
+        origin: "*",
+        allowHeaders: ["Content-Type", "Authorization", "MCP-Protocol-Version"],
+        allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+    })
+    app.use("/mcp", mcpCors)
+    app.use("/mcp/*", mcpCors)
+    app.use("/.well-known/*", mcpCors)
+    app.use("/oauth/*", mcpCors)
+
     app.use(
     "*",
     cors({
@@ -54,6 +70,11 @@ export function createApp() {
     api.route("/admin", adminRouter)
     api.route("/users", usersRouter)
     api.route("/github-app", githubAppRouter)
+
+    // OAuth 2.1 AS and MCP (unauthenticated at router level — bearer auth applied in mcpRouter)
+    app.route("/.well-known", wellKnownRouter)
+    app.route("/oauth", oauthRouter)
+    app.route("/mcp", mcpRouter)
 
     app.get("/healthz", (c) => c.json({ ok: true }))
 

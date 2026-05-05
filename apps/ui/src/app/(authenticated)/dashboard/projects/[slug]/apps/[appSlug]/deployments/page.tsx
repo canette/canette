@@ -159,7 +159,7 @@ export default function DeploymentsPage() {
   const [manifestDeployment, setManifestDeployment] = useState<Deployment | null>(null)
 
   useEffect(() => {
-    api.deployments.list(app.id)
+    api.deployments.list(app.id, 50)
       .then((r) => setDeploymentList(r.items))
       .catch(() => {})
       .finally(() => setLoading(false))

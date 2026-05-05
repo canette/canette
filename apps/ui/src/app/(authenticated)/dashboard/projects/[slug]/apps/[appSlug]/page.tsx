@@ -319,7 +319,7 @@ export default function AppOverviewPage() {
     } finally { setStopping(false) }
   }
 
-  const recentDeployments = deploymentList.slice(0, 5)
+  const recentDeployments = deploymentList
   const appBase = `/dashboard/projects/${projectSlug}/apps/${appSlug}`
 
   return (

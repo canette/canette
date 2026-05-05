@@ -16,6 +16,27 @@ spec:
     - matches:
         - path:
             type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: canette-api
+          port: 3001
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /.well-known
+      backendRefs:
+        - name: canette-api
+          port: 3001
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /oauth
+      backendRefs:
+        - name: canette-api
+          port: 3001
+    - matches:
+        - path:
+            type: PathPrefix
             value: /
       backendRefs:
         - name: canette-ui

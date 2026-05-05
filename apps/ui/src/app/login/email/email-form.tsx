@@ -11,7 +11,7 @@ import { PasswordRequirements } from "@/components/ui/password-requirements"
 import { FormError } from "@/components/ui/form-error"
 import { validatePassword } from "@/lib/password"
 
-export function EmailForm({ signupEnabled }: { signupEnabled: boolean }) {
+export function EmailForm({ signupEnabled, callbackURL }: { signupEnabled: boolean; callbackURL?: string }) {
   const router = useRouter()
   const [mode, setMode] = useState<"signin" | "signup">("signin")
   const [name, setName] = useState("")
@@ -19,6 +19,8 @@ export function EmailForm({ signupEnabled }: { signupEnabled: boolean }) {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  // Reject non-relative callbackURLs to prevent open redirect attacks.
+  const dest = callbackURL?.startsWith("/") ? callbackURL : "/dashboard"
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -26,13 +28,13 @@ export function EmailForm({ signupEnabled }: { signupEnabled: boolean }) {
     setLoading(true)
     try {
       if (mode === "signup") {
-        const result = await signUp.email({ name, email, password, callbackURL: "/dashboard" })
+        const result = await signUp.email({ name, email, password, callbackURL: dest })
         if (result.error) { setError(result.error.message ?? "Sign up failed"); return }
       } else {
-        const result = await signIn.email({ email, password, callbackURL: "/dashboard" })
+        const result = await signIn.email({ email, password, callbackURL: dest })
         if (result.error) { setError(result.error.message ?? "Sign in failed"); return }
       }
-      router.push("/dashboard")
+      router.push(dest)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong")
     } finally {

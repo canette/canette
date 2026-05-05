@@ -143,7 +143,9 @@ appsRouter.get("/apps/:id/deployments", async (c) => {
   const session = c.get("session")
   const app = await getAppById(db, c.req.param("id"), session.user.id)
   if (!app) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
-  const result = await listDeployments(db, app.id)
+  const limitParam = Number(c.req.query("limit") ?? 50)
+  const limit = Number.isInteger(limitParam) && limitParam > 0 && limitParam <= 100 ? limitParam : 50
+  const result = await listDeployments(db, app.id, limit)
   return c.json(result)
 })
 

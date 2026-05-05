@@ -1,0 +1,118 @@
+---
+title: MCP Server
+description: Connect AI agents (Claude Code, Cursor, Codex) to your canette instance using the Model Context Protocol.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+<Callout type="warn">
+  The MCP server is an MVP. The available tools cover the core deploy and troubleshoot workflows. More tools and resources will be added in future releases.
+</Callout>
+
+canette exposes a [Model Context Protocol](https://modelcontextprotocol.io) server at `/mcp` on your instance. AI agents can use it to deploy repositories, check deployment status, and diagnose failures — all through natural language instructions.
+
+## Connecting an AI client
+
+The MCP server uses the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports) and authenticates via OAuth 2.1 with PKCE. When you connect for the first time, your client will open a browser window where you log in with your existing canette credentials — the same GitHub, Google, or email login you use in the UI.
+
+### Claude Code
+
+Run this command to register canette as an MCP server in Claude Code:
+
+```sh
+claude mcp add --transport http canette https://your-canette.company.com/mcp
+```
+
+Or add it manually to `~/.claude/claude_code_config.json` (or the project-level `.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "canette": {
+      "type": "http",
+      "url": "https://your-canette.company.com/mcp"
+    }
+  }
+}
+```
+
+Replace `your-canette.company.com` with your instance's hostname. Claude Code will prompt you to authenticate in the browser the first time it connects.
+
+### Cursor
+
+In Cursor, open **Settings → MCP** and add a new server:
+
+- **Name:** canette
+- **Type:** HTTP
+- **URL:** `https://your-canette.company.com/mcp`
+
+### Other clients
+
+Any MCP client that supports the Streamable HTTP transport and OAuth 2.1 can connect. Point it at `https://your-canette.company.com/mcp`. The OAuth discovery document is at `https://your-canette.company.com/.well-known/oauth-authorization-server`.
+
+## Authentication
+
+The MCP server uses standard OAuth 2.1 with PKCE. You do not need to create or manage API tokens manually.
+
+1. The client discovers the OAuth endpoints from `/.well-known/oauth-authorization-server`
+2. The client opens a browser to `https://your-canette.company.com/oauth/authorize`
+3. If you are not already logged in, you are redirected to the canette login page
+4. After login, the client receives an access token automatically
+5. The token is valid for 1 hour; the client will re-authenticate when it expires
+
+## Available tools
+
+| Tool | Description |
+|------|-------------|
+| `list_projects` | List all projects you have access to |
+| `list_apps` | List apps within a project |
+| `create_project` | Create a new project (uses your personal team by default) |
+| `create_app` | Create an app in a project, configured to build from a Git repository |
+| `trigger_deployment` | Trigger a new deployment for an existing app |
+| `list_deployments` | List recent deployments for an app — use this to find a `deployment_id` when troubleshooting a deployment not triggered in this session |
+| `get_deployment` | Get the status and details of a deployment — provide `app_id` for the latest, or `deployment_id` for a specific one |
+| `get_build_logs` | Fetch full build logs for a deployment — useful for diagnosing build failures |
+
+### Example prompts
+
+**Deploying a repository:**
+> "Add my repo `https://github.com/myorg/my-app` to canette and deploy it"
+
+The agent will create a project, create an app pointing at the repository, and trigger the first deployment.
+
+**Troubleshooting a failure:**
+> "My canette app `my-app` is failing to deploy — what's wrong?"
+
+The agent will fetch the latest deployment status and build logs, then explain the error.
+
+## Prerequisites
+
+The MCP server requires `MCP_JWT_SECRET` to be set. If you installed canette via Helm, this secret is auto-generated on first install and stored in the `canette-api-secrets` Kubernetes Secret. No manual configuration is needed for a standard install.
+
+See [Helm configuration](#helm-configuration) below if you need to rotate the key or use an external secret.
+
+## Helm configuration
+
+The `MCP_JWT_SECRET` is stored in the `canette-api-secrets` Kubernetes Secret and auto-generated on first install. You can override this behaviour:
+
+**Provide your own value** in `values.yaml`:
+
+```yaml
+api:
+  mcpJwtSecret: "your-secret-here"  # min 32 characters
+```
+
+**Use a pre-existing Kubernetes Secret** (useful when secrets are managed externally):
+
+```yaml
+api:
+  mcpJwtSecretRef:
+    name: my-external-secret
+    key: mcp-jwt-secret
+```
+
+The secret must exist in the canette namespace before running `helm install` or `helm upgrade`.
+
+<Callout type="info">
+  Rotating `MCP_JWT_SECRET` invalidates all existing access tokens. Connected clients will re-authenticate automatically on their next request.
+</Callout>
