@@ -236,7 +236,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
 
 export function buildMcpServer(userId: string): Server {
   const server = new Server(
-    { name: "canette", version: "1.0.0" },
+    { name: "canette", version: process.env.APP_VERSION ?? "development" },
     { capabilities: { tools: {} } },
   )
 
