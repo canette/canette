@@ -29,8 +29,17 @@ spec:
           port: 3001
     - matches:
         - path:
+            type: Exact
+            value: /oauth/token
+        - path:
+            type: Exact
+            value: /oauth/register
+        - path:
+            type: Exact
+            value: /oauth/confirm
+        - path:
             type: PathPrefix
-            value: /oauth
+            value: /oauth/clients
       backendRefs:
         - name: canette-api
           port: 3001
