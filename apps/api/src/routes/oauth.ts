@@ -89,7 +89,7 @@ oauthRouter.post("/register", async (c) => {
 
 oauthRouter.get("/authorize", async (c) => {
   const q = c.req.query()
-  const { client_id, response_type, code_challenge, code_challenge_method, redirect_uri, state } = q
+  const { client_id, response_type, code_challenge, code_challenge_method, redirect_uri } = q
 
   if (response_type !== "code") {
     return c.json({ error: "unsupported_response_type" }, 400)
