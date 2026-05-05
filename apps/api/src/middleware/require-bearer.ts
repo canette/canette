@@ -1,16 +1,11 @@
 import { createMiddleware } from "hono/factory"
 import { jwtVerify } from "jose"
+import { jwtSecret } from "../services/oauth"
 
 export type McpEnv = {
   Variables: {
     mcpUserId: string
   }
-}
-
-function jwtSecret() {
-  const secret = process.env.MCP_JWT_SECRET
-  if (!secret) throw new Error("MCP_JWT_SECRET is not set")
-  return new TextEncoder().encode(secret)
 }
 
 export const requireBearer = createMiddleware<McpEnv>(async (c, next) => {

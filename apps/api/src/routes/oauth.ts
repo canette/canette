@@ -1,29 +1,15 @@
 import { Hono } from "hono"
-import { createHash } from "crypto"
-import { SignJWT } from "jose"
 import { auth } from "../auth/auth"
+import {
+  registerClient,
+  getClient,
+  issueAuthCode,
+  exchangeAuthCode,
+  issueAccessToken,
+} from "../services/oauth"
 
-type StoredCode = {
-  userId: string
-  codeChallenge: string
-  redirectUri: string
-  expiresAt: number
-}
-
-type RegisteredClient = {
-  clientId: string
-  redirectUris: string[]
-  clientName?: string
-}
-
-const authCodes = new Map<string, StoredCode>()
-const registeredClients = new Map<string, RegisteredClient>()
-
-function jwtSecret() {
-  const secret = process.env.MCP_JWT_SECRET
-  if (!secret) throw new Error("MCP_JWT_SECRET is not set")
-  return new TextEncoder().encode(secret)
-}
+export const wellKnownRouter = new Hono()
+export const oauthRouter = new Hono()
 
 function publicBase(c: { req: { header: (name: string) => string | undefined; url: string } }): string {
   const proto = c.req.header("x-forwarded-proto") ?? new URL(c.req.url).protocol.replace(":", "")
@@ -31,12 +17,9 @@ function publicBase(c: { req: { header: (name: string) => string | undefined; ur
   return `${proto}://${host}`
 }
 
-export const wellKnownRouter = new Hono()
-export const oauthRouter = new Hono()
-
 // Public endpoint so the UI consent page can display the registered client name.
 oauthRouter.get("/clients/:clientId", (c) => {
-  const client = registeredClients.get(c.req.param("clientId"))
+  const client = getClient(c.req.param("clientId"))
   return c.json({ clientName: client?.clientName ?? null })
 })
 
@@ -69,18 +52,14 @@ oauthRouter.post("/register", async (c) => {
     return c.json({ error: "invalid_client_metadata", error_description: "redirect_uris is required" }, 400)
   }
 
-  const clientId = crypto.randomUUID()
-  registeredClients.set(clientId, {
-    clientId,
-    redirectUris,
-    clientName: typeof body.client_name === "string" ? body.client_name : undefined,
-  })
+  const clientName = typeof body.client_name === "string" ? body.client_name : undefined
+  const client = registerClient(redirectUris, clientName)
 
   return c.json({
-    client_id: clientId,
+    client_id: client.clientId,
     client_id_issued_at: Math.floor(Date.now() / 1000),
-    redirect_uris: redirectUris,
-    client_name: body.client_name,
+    redirect_uris: client.redirectUris,
+    client_name: client.clientName,
     token_endpoint_auth_method: "none",
     grant_types: ["authorization_code"],
     response_types: ["code"],
@@ -118,7 +97,7 @@ oauthRouter.get("/authorize", async (c) => {
   // on restart — a missing registration is silently accepted (PKCE is the
   // security mechanism, not client identity).
   if (client_id) {
-    const client = registeredClients.get(client_id)
+    const client = getClient(client_id)
     if (client && !client.redirectUris.includes(redirect_uri)) {
       return c.json({ error: "invalid_request", error_description: "redirect_uri not registered for this client" }, 400)
     }
@@ -149,21 +128,14 @@ oauthRouter.post("/confirm", async (c) => {
   }
 
   if (client_id) {
-    const client = registeredClients.get(client_id)
+    const client = getClient(client_id)
     if (client && !client.redirectUris.includes(redirect_uri)) return c.json({ error: "invalid_request" }, 400)
   }
 
   const session = await auth.api.getSession({ headers: c.req.raw.headers })
   if (!session) return c.json({ error: "unauthorized" }, 401)
 
-  const code = crypto.randomUUID()
-  authCodes.set(code, {
-    userId: session.user.id,
-    codeChallenge: code_challenge,
-    redirectUri: redirect_uri,
-    expiresAt: Date.now() + 5 * 60 * 1000,
-  })
-  setTimeout(() => authCodes.delete(code), 5 * 60 * 1000)
+  const code = issueAuthCode(session.user.id, code_challenge, redirect_uri)
 
   const redirectUrl = new URL(redirect_uri)
   redirectUrl.searchParams.set("code", code)
@@ -188,35 +160,13 @@ oauthRouter.post("/token", async (c) => {
   if (grant_type !== "authorization_code") {
     return c.json({ error: "unsupported_grant_type" }, 400)
   }
-  if (!code || !code_verifier) {
-    return c.json({ error: "invalid_request", error_description: "code and code_verifier are required" }, 400)
+  if (!code || !code_verifier || !redirect_uri) {
+    return c.json({ error: "invalid_request", error_description: "code, code_verifier, and redirect_uri are required" }, 400)
   }
 
-  const stored = authCodes.get(code)
-  if (!stored || Date.now() > stored.expiresAt) {
-    authCodes.delete(code)
-    return c.json({ error: "invalid_grant" }, 400)
-  }
-  if (stored.redirectUri !== redirect_uri) {
-    return c.json({ error: "invalid_grant" }, 400)
-  }
+  const userId = exchangeAuthCode(code, code_verifier, redirect_uri)
+  if (!userId) return c.json({ error: "invalid_grant" }, 400)
 
-  const verifierHash = createHash("sha256").update(code_verifier).digest("base64url")
-  if (verifierHash !== stored.codeChallenge) {
-    return c.json({ error: "invalid_grant" }, 400)
-  }
-
-  authCodes.delete(code)
-
-  const token = await new SignJWT({ sub: stored.userId })
-    .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime("1h")
-    .setIssuedAt()
-    .sign(jwtSecret())
-
-  return c.json({
-    access_token: token,
-    token_type: "Bearer",
-    expires_in: 3600,
-  })
+  const token = await issueAccessToken(userId)
+  return c.json({ access_token: token, token_type: "Bearer", expires_in: 3600 })
 })
