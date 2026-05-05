@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto"
+import { randomInt } from "crypto"
 import { Hono } from "hono"
 import { db } from "../db/db"
 import { auth } from "../auth/auth"
@@ -28,15 +28,14 @@ function generatePassword(): string {
   const lower = "abcdefghijklmnopqrstuvwxyz"
   const digits = "0123456789"
   const all = upper + lower + digits
-  const b = randomBytes(32)
   const chars = [
-    upper[b[0] % upper.length],
-    lower[b[1] % lower.length],
-    digits[b[2] % digits.length],
-    ...Array.from({ length: 13 }, (_, i) => all[b[3 + i] % all.length]),
+    upper[randomInt(upper.length)],
+    lower[randomInt(lower.length)],
+    digits[randomInt(digits.length)],
+    ...Array.from({ length: 13 }, () => all[randomInt(all.length)]),
   ]
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = b[16 + i] % (i + 1)
+    const j = randomInt(i + 1)
     ;[chars[i], chars[j]] = [chars[j], chars[i]]
   }
   return chars.join("")
