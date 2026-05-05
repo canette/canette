@@ -8,7 +8,6 @@ import {
   Settings,
   Plus,
   Box,
-  Hotel,
   Key,
   Users,
   LayoutDashboard,
@@ -109,7 +108,7 @@ function TeamSelector({
             : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
         )}
       >
-        <Hotel size={15} />
+        <Layers size={15} className="shrink-0" />
       </Link>
     )
   }
@@ -125,7 +124,7 @@ function TeamSelector({
           hasMultiple ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"
         )}
       >
-        <Hotel size={15} className="shrink-0" />
+        <Layers size={15} className="shrink-0" />
         <span className="flex-1 text-left truncate">{name}</span>
         {hasMultiple && (
           <ChevronDown size={13} className={cn("shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
