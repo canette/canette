@@ -29,7 +29,31 @@ Create a wildcard record in Route 53 pointing `*.apps.example.com` at the ALB's 
 
 ## Node groups and build jobs
 
-Rootless BuildKit requires user namespace support. On EKS, AL2023 nodes support this out of the box. For AL2 nodes, you may need to configure `user.max_user_namespaces` via a launch template userdata script.
+### AL2023 and AL2
+
+Rootless BuildKit requires user namespace support. AL2023 nodes support this out of the box. For AL2 nodes, configure `user.max_user_namespaces` via a launch template userdata script:
+
+```bash
+echo "user.max_user_namespaces=28633" >> /etc/sysctl.d/99-user-ns.conf
+sysctl -p /etc/sysctl.d/99-user-ns.conf
+```
+
+### Bottlerocket
+
+Bottlerocket uses SELinux in enforcing mode. The default SELinux policy blocks the mount namespace operations that rootlesskit requires, even though user namespaces are available at the kernel level. The rootless buildkitd pod will fail to start on Bottlerocket nodes.
+
+Use rooted mode instead by setting `buildkit.rootless: false`:
+
+```yaml
+buildkit:
+  rootless: false
+```
+
+This runs buildkitd as root with `privileged: true`. Privileged containers receive the `spc_t` SELinux label on Bottlerocket, which bypasses the SELinux policy. No other node-level configuration is needed.
+
+<Callout type="warn">
+  Rooted mode requires the `{system}-build` namespace to permit `privileged: true` pods. If your cluster enforces the `Restricted` Pod Security Standard cluster-wide, add a namespace-level exemption for the build namespace before installing canette.
+</Callout>
 
 ## Values
 

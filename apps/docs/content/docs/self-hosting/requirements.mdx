@@ -17,13 +17,36 @@ import { Callout } from "fumadocs-ui/components/callout"
 
 ## Node requirements for builds
 
-Build jobs run rootless BuildKit. Each node that runs builds needs:
+canette builds images using BuildKit. By default it runs in **rootless mode**, which requires user namespace support on each build node. If your nodes cannot meet these requirements, see [rooted mode](#rooted-mode-fallback) below.
+
+### Rootless mode (default)
 
 | Distribution | Requirement |
 |---|---|
 | Ubuntu 24.04+ | `kernel.apparmor_restrict_unprivileged_userns=0` |
 | RHEL / CentOS | `user.max_user_namespaces=28633` |
 | All | Kernel ≥ 4.18 (5.11+ recommended for native overlayfs) |
+
+### Rooted mode fallback
+
+Some node configurations cannot support rootless BuildKit:
+
+- **EKS Bottlerocket** — uses SELinux enforcing mode; the SELinux policy blocks the mount namespace operations that rootlesskit requires, even when user namespaces are available at the kernel level.
+- Clusters running with the `Restricted` Pod Security Standard in the build namespace.
+- Nodes with kernel < 4.18 or `user.max_user_namespaces=0` that cannot be reconfigured.
+
+In these cases, set `buildkit.rootless: false` in your Helm values. This runs buildkitd as root with `privileged: true`, which bypasses the user namespace requirement entirely:
+
+```yaml
+buildkit:
+  rootless: false
+```
+
+No node-level configuration is needed in rooted mode. The `privileged: true` container gets the `spc_t` SELinux label on SELinux nodes, which bypasses policy restrictions.
+
+<Callout type="warn">
+  Rooted mode is less secure than rootless — the buildkitd pod runs with full host privileges. Ensure the `{system}-build` namespace has appropriate RBAC and network policies, and that the buildkitd pod is not reachable from outside the cluster.
+</Callout>
 
 ## Container registry
 

@@ -121,3 +121,16 @@ registry.{{ required "domain is required" .Values.domain }}/
 tcp://buildkitd.{{ include "canette.buildNamespace" . }}.svc.cluster.local:1234
 {{- end -}}
 {{- end }}
+
+{{/* Resolve the buildkitd image.
+     Uses buildkit.image when set; otherwise defaults to the rootless or standard
+     moby/buildkit image based on buildkit.rootless. */}}
+{{- define "canette.buildkitImage" -}}
+{{- if .Values.buildkit.image -}}
+{{ .Values.buildkit.image }}
+{{- else if .Values.buildkit.rootless -}}
+moby/buildkit:v0.21.0-rootless
+{{- else -}}
+moby/buildkit:v0.21.0
+{{- end -}}
+{{- end }}

@@ -117,7 +117,15 @@ registry:
 # BuildKit daemon (always deployed — required by the builder)
 # ---------------------------------------------------------------------------
 buildkit:
-  image: moby/buildkit:v0.21.0-rootless
+  # Run buildkitd in rootless mode (default). Requires user namespace support on the
+  # node — see docs/self-hosting/requirements for per-distro instructions.
+  # Set to false on nodes that do not support user namespaces (e.g. EKS Bottlerocket,
+  # clusters with a restricted kernel). Rooted mode runs buildkitd with privileged: true
+  # instead, which is less secure but works on any node.
+  rootless: true
+  # Override the buildkitd image. When empty, auto-derives to moby/buildkit:v0.21.0-rootless
+  # when rootless=true, or moby/buildkit:v0.21.0 when rootless=false.
+  image: ""
   resources:
     requests:
       cpu: 500m
