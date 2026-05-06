@@ -17,11 +17,12 @@ function buildSslConfig(): object | undefined {
 
   if (!rejectUnauthorized) {
     console.warn("DATABASE_SSL_REJECT_UNAUTHORIZED=false: TLS certificate verification is disabled")
+    return { rejectUnauthorized: false }
   }
 
   return {
-    ca: caFile ? readFileSync(caFile, "utf8") : undefined,
-    rejectUnauthorized,
+    ca: readFileSync(caFile!, "utf8"),
+    rejectUnauthorized: true,
   }
 }
 
