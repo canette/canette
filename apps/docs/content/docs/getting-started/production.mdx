@@ -128,9 +128,11 @@ Each cloud provider has its own quirks when running Kubernetes workloads. Detail
 ### AWS (EKS)
 
 - Use **RDS for PostgreSQL** as the external database. Enable automated backups and multi-AZ for production.
-- Use **ECR** (Elastic Container Registry) as the external registry. ECR tokens expire every 12 hours — use a token refresh mechanism or a registry proxy that handles re-authentication.
-- Build jobs require user namespace syscalls (`seccompProfile: Unconfined`). Verify your node AMI and kernel version support this (AL2023 and Bottlerocket do).
+- Use **ECR** (Elastic Container Registry) as the external registry with **IRSA** (IAM Roles for Service Accounts) for credential-free authentication. ECR repositories are automatically created on first build. See the [AWS (EKS) guide](/docs/self-hosting/aws#ecr-integration) for IAM role setup.
+- Build jobs require user namespace syscalls. AL2023 and Bottlerocket nodes support this out of the box.
 - Gateway API support: Traefik and Cilium both work well on EKS. AWS Load Balancer Controller can also serve as the gateway implementation.
+
+See the full [AWS (EKS) deployment guide](/docs/self-hosting/aws) for detailed configuration.
 
 ### DigitalOcean (DOKS)
 

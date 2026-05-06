@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"canette.dev/builder/internal/crypto"
 	"canette.dev/builder/internal/githubapp"
 	k8sjobs "canette.dev/builder/internal/k8s"
+	"canette.dev/builder/internal/registry"
 	"canette.dev/builder/internal/store"
 )
 
@@ -33,13 +35,14 @@ func base64Decode(s string) ([]byte, error) {
 
 // Builder polls the database for pending deployments and runs them as K8s Jobs.
 type Builder struct {
-	store         *store.Store
-	k8s           kubernetes.Interface
-	cfg           k8sjobs.BuildConfig
-	cryptoKey     []byte
-	log           *zap.Logger
-	pollInterval  time.Duration
-	maxConcurrent int
+	store          *store.Store
+	k8s            kubernetes.Interface
+	cfg            k8sjobs.BuildConfig
+	cryptoKey      []byte
+	log            *zap.Logger
+	pollInterval   time.Duration
+	maxConcurrent  int
+	registryConfig registry.Config
 }
 
 // New creates a Builder.
@@ -52,6 +55,18 @@ func New(
 	pollInterval time.Duration,
 	maxConcurrent int,
 ) *Builder {
+	// Read registry auth type from env, defaulting based on detected provider
+	registryAuthType := os.Getenv("REGISTRY_AUTH_TYPE")
+	if registryAuthType == "" {
+		// Auto-default based on provider detection
+		provider := registry.DetectProvider(cfg.ImageRepo)
+		if provider == "ecr" {
+			registryAuthType = "irsa"
+		} else {
+			registryAuthType = "static"
+		}
+	}
+
 	return &Builder{
 		store:         s,
 		k8s:           k,
@@ -60,6 +75,10 @@ func New(
 		log:           log,
 		pollInterval:  pollInterval,
 		maxConcurrent: maxConcurrent,
+		registryConfig: registry.Config{
+			ImageRepo: cfg.ImageRepo,
+			AuthType:  registryAuthType,
+		},
 	}
 }
 
@@ -196,7 +215,20 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		}
 	}
 
-	// 3. Create the build Job.
+	// 3. Ensure registry repository exists (auto-creation for ECR).
+	repoName := dep.ProjectSlug + "/" + dep.AppSlug
+	provider, err := registry.NewProvider(b.registryConfig)
+	if err != nil {
+		lastErr = fmt.Errorf("create registry provider: %w", err)
+		return
+	}
+	if err := provider.EnsureRepository(ctx, repoName); err != nil {
+		lastErr = fmt.Errorf("ensure registry repository: %w", err)
+		return
+	}
+	log.Info("registry repository ready", zap.String("repo", repoName))
+
+	// 4. Create the build Job.
 	job := k8sjobs.BuildJob(
 		dep.ID, dep.ProjectSlug, dep.AppSlug, dep.CommitSha,
 		dep.GitURL, dep.GitBranch, dep.AppPath,
@@ -211,7 +243,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	}
 	log.Info("job created", zap.String("job", jobName))
 
-	// 4. Wait for the pod to appear, then stream its logs.
+	// 5. Wait for the pod to appear, then stream its logs.
 	podName, err := b.waitForPod(ctx, log, jobName)
 	if err != nil {
 		lastErr = fmt.Errorf("wait for pod: %w", err)
@@ -232,7 +264,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		})
 	}()
 
-	// 5. Watch the Job until it succeeds or fails.
+	// 6. Watch the Job until it succeeds or fails.
 	succeeded, err := b.watchJob(ctx, log, jobName)
 	<-logDone // wait for log goroutine to finish before transitioning status
 	if err != nil {
@@ -244,7 +276,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		return
 	}
 
-	// 6. Store the repo's canette.yaml content if it was found during build.
+	// 7. Store the repo's canette.yaml content if it was found during build.
 	// This lets the controller use it at deploy time (repo config wins over UI config).
 	if capturedCanetteConfigB64 != "" {
 		decoded, decErr := base64Decode(capturedCanetteConfigB64)
@@ -255,7 +287,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		}
 	}
 
-	// 7. Update the deployment with the real commit SHA resolved by git-clone.
+	// 8. Update the deployment with the real commit SHA resolved by git-clone.
 	if capturedCommitSha != "" {
 		if err := b.store.UpdateCommitSha(ctx, dep.ID, capturedCommitSha); err != nil {
 			log.Warn("failed to update commit sha", zap.Error(err))
@@ -264,7 +296,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		}
 	}
 
-	// 8. Get the exact image ref and digest emitted by the build job — both intercepted in memory.
+	// 9. Get the exact image ref and digest emitted by the build job — both intercepted in memory.
 	imageRef := capturedImageRef
 	if imageRef == "" {
 		lastErr = fmt.Errorf("build succeeded but CAN_IMAGE_REF not found in build logs")
@@ -277,7 +309,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	}
 	log.Info("image pushed", zap.String("digest", digest), zap.String("ref", imageRef))
 
-	// 9. Optionally run a Trivy security scan.
+	// 10. Optionally run a Trivy security scan.
 	policy := dep.ScanPolicy
 
 	if policy.Enabled {
@@ -305,7 +337,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		log.Info("scan complete", zap.String("status", scanStatus), zap.String("summary", summary))
 	}
 
-	// 9. Transition to deploying.
+	// 11. Transition to deploying.
 	if err := b.store.MarkDeploying(ctx, dep.ID, digest); err != nil {
 		lastErr = fmt.Errorf("mark deploying: %w", err)
 		return

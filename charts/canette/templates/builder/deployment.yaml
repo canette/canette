@@ -68,6 +68,10 @@ spec:
             - name: REGISTRY_AUTH_SECRET
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.builder.registryAuthType }}
+            - name: REGISTRY_AUTH_TYPE
+              value: {{ .Values.builder.registryAuthType | quote }}
+            {{- end }}
             {{- if .Values.api.githubApp.appId }}
             - name: GITHUB_APP_ID
               valueFrom:

@@ -159,7 +159,15 @@ builder:
   # Registry URL the builder pushes images to (used inside the cluster).
   # Auto-derived as registry.canette-system.svc.cluster.local:5000/ when
   # registry.enabled=true. Override when using an external registry.
+  # For ECR: set to "123456.dkr.ecr.us-east-1.amazonaws.com/canette/"
   imageRepo: ""
+  # Registry authentication type: "irsa" (IRSA/workload identity) or "static" (username/password).
+  # Auto-detects if empty: "irsa" for ECR URLs, "static" for others.
+  registryAuthType: ""
+  # ServiceAccount annotations for IRSA (EKS) or workload identity (GKE).
+  # Example for EKS: eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/canette-builder
+  serviceAccount:
+    annotations: {}
   # BuildKit daemon address. Auto-derived from the buildkit service when left empty.
   buildkitdAddr: ""
   # Trivy image used for vulnerability scanning jobs. Override to pin a specific version.
