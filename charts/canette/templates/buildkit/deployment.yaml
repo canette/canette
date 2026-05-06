@@ -16,32 +16,44 @@ spec:
       labels:
         app.kubernetes.io/name: buildkitd
     spec:
+      {{- if .Values.buildkit.rootless }}
       securityContext:
         seccompProfile:
           type: Unconfined
         appArmorProfile:
           type: Unconfined
         fsGroup: 1000
+      {{- else }}
+      securityContext:
+        fsGroup: 1000
+      {{- end }}
       containers:
         - name: buildkitd
-          image: {{ .Values.buildkit.image }}
-          imagePullPolicy: {{ include "canette.imagePullPolicy" .Values.buildkit.image }}
+          image: {{ include "canette.buildkitImage" . }}
+          imagePullPolicy: {{ include "canette.imagePullPolicy" (include "canette.buildkitImage" .) }}
           args:
             - --addr
             - tcp://0.0.0.0:1234
+            {{- if .Values.buildkit.rootless }}
             - --oci-worker-no-process-sandbox
+            {{- end }}
             - --config
             - /etc/buildkit/buildkitd.toml
           ports:
             - containerPort: 1234
+          {{- if .Values.buildkit.rootless }}
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
             seccompProfile:
               type: Unconfined
+          {{- else }}
+          securityContext:
+            privileged: true
+          {{- end }}
           volumeMounts:
             - name: buildkit-state
-              mountPath: /home/user/.local/share/buildkit
+              mountPath: {{ if .Values.buildkit.rootless }}/home/user/.local/share/buildkit{{ else }}/var/lib/buildkit{{ end }}
             - name: buildkitd-config
               mountPath: /etc/buildkit
               readOnly: true

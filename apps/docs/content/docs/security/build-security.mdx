@@ -93,7 +93,11 @@ canette builds and deploys whatever the build produces. It does not scan images 
 
 ### Shared `buildkitd`
 
-All builds share a single `buildkitd` daemon. Build cache is shared between builds. A build that intentionally or accidentally corrupts the BuildKit cache could affect subsequent builds. The `buildkitd` pod itself runs with elevated privileges (required for rootless mode) — it is a high-value target and should not be exposed outside the cluster.
+All builds share a single `buildkitd` daemon. Build cache is shared between builds. A build that intentionally or accidentally corrupts the BuildKit cache could affect subsequent builds. The `buildkitd` pod is a high-value target and should not be exposed outside the cluster.
+
+**Rootless mode (default):** buildkitd runs as UID 1000 with `seccompProfile: Unconfined` and `appArmorProfile: Unconfined` — these are required for rootlesskit to set up user and mount namespaces. The pod does not have host privileges.
+
+**Rooted mode (`buildkit.rootless: false`):** buildkitd runs as root with `privileged: true`. This is required on nodes that cannot support user namespaces (e.g. EKS Bottlerocket with SELinux enforcing). It is less secure than rootless — a container escape from buildkitd would have full host access. Only use rooted mode when rootless is not supported by the cluster.
 
 ---
 

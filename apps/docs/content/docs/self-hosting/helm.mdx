@@ -143,6 +143,15 @@ These values are snapshotted into each deployment at trigger time. Changing them
 | `controller.gateway.name` | `can-gateway` | Gateway resource name |
 | `controller.gateway.namespace` | `kube-system` | Gateway resource namespace |
 
+### BuildKit
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `buildkit.rootless` | `true` | Run buildkitd in rootless mode. Requires user namespace support on build nodes. Set to `false` on nodes that cannot support user namespaces (e.g. EKS Bottlerocket). |
+| `buildkit.image` | derived | Override the buildkitd image. When empty, defaults to `moby/buildkit:v0.21.0-rootless` when `rootless=true`, or `moby/buildkit:v0.21.0` when `rootless=false`. |
+| `buildkit.registries` | `{}` | Additional registry trust entries for buildkitd. The in-cluster registry is added automatically. Format: `"host:port": { http: true, insecure: true }` |
+| `buildkit.restrictEgress` | `true` | Block RFC-1918 egress from the build namespace. Prevents a compromised build from reaching cluster-internal services while allowing internet access for package fetches. |
+
 ## Registry authentication
 
 ### In-cluster registry
