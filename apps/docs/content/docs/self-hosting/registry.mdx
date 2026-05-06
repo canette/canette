@@ -105,6 +105,27 @@ controller:
   pullRepo: "ghcr.io/myorg/"
 ```
 
+### Amazon ECR with IRSA
+
+For ECR on EKS, you can use IRSA (IAM Roles for Service Accounts) instead of static credentials. ECR repositories are automatically created on first build:
+
+```yaml
+registry:
+  enabled: false
+
+builder:
+  imageRepo: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/canette/"
+  registryAuthType: "irsa"
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/canette-builder
+
+controller:
+  pullRepo: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/canette/"
+```
+
+See the [AWS (EKS)](/docs/self-hosting/aws#ecr-integration) page for complete IAM policy setup.
+
 See the [Helm reference](/docs/self-hosting/helm#infrastructure-optional) for the full set of external registry values.
 
 ## Troubleshooting

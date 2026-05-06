@@ -55,6 +55,131 @@ This runs buildkitd as root with `privileged: true`. Privileged containers recei
   Rooted mode requires the `{system}-build` namespace to permit `privileged: true` pods. If your cluster enforces the `Restricted` Pod Security Standard cluster-wide, add a namespace-level exemption for the build namespace before installing canette.
 </Callout>
 
+## ECR integration
+
+canette can push build images to Amazon ECR using IRSA (IAM Roles for Service Accounts) for secure, credential-free authentication. ECR repositories are automatically created on first build.
+
+### IAM role and policy
+
+Create an IAM role for the canette builder with the following trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/oidc.eks.REGION.amazonaws.com/id/CLUSTER_ID"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.REGION.amazonaws.com/id/CLUSTER_ID:sub": "system:serviceaccount:canette-system:canette-builder"
+        }
+      }
+    }
+  ]
+}
+```
+
+Replace `ACCOUNT_ID`, `REGION`, and `CLUSTER_ID` with your values.
+
+Attach this permissions policy to the role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECRRepositoryManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeRepositories",
+        "ecr:CreateRepository"
+      ],
+      "Resource": "arn:aws:ecr:REGION:ACCOUNT_ID:repository/canette/*"
+    },
+    {
+      "Sid": "ECRAuth",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ECRPush",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload"
+      ],
+      "Resource": "arn:aws:ecr:REGION:ACCOUNT_ID:repository/canette/*"
+    }
+  ]
+}
+```
+
+### Configure Helm values
+
+```yaml
+domain: apps.example.com
+
+# Disable in-cluster registry
+registry:
+  enabled: false
+
+# Configure builder to use ECR
+builder:
+  imageRepo: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/canette/"
+  registryAuthType: "irsa"  # or omit to auto-detect from URL
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/canette-builder
+
+# Configure controller to pull from ECR
+controller:
+  pullRepo: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/canette/"
+```
+
+Replace `ACCOUNT_ID` and `REGION` with your AWS account ID and ECR region.
+
+### Node IAM permissions for image pulls
+
+EKS nodes need ECR read permissions to pull app images. Add this policy to your node IAM role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+This allows nodes to pull images from ECR without requiring `imagePullSecrets`.
+
+### How it works
+
+1. The builder auto-detects ECR from the `imageRepo` URL (contains `.ecr.` and `.amazonaws.com`)
+2. Before each build, the builder checks if the ECR repository exists (e.g., `canette/my-project/my-app`)
+3. If missing, it creates the repository using the IRSA credentials
+4. BuildKit inherits the same IRSA credentials to push the built image
+5. EKS nodes use their IAM role to pull images from ECR
+
+ECR repositories follow the pattern: `canette/{project-slug}/{app-slug}`
+
 ## Values
 
 ```yaml

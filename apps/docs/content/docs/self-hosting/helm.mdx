@@ -190,6 +190,32 @@ controller:
 
 The host for the docker config is derived automatically from `builder.imageRepo`.
 
+### Amazon ECR with IRSA
+
+For ECR on EKS, use IRSA (IAM Roles for Service Accounts) instead of static credentials. ECR repositories are automatically created on first build:
+
+```yaml
+registry:
+  enabled: false
+
+builder:
+  imageRepo: "123456.dkr.ecr.us-east-1.amazonaws.com/canette/"
+  registryAuthType: "irsa"  # or omit to auto-detect from URL
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456:role/canette-builder
+
+controller:
+  pullRepo: "123456.dkr.ecr.us-east-1.amazonaws.com/canette/"
+```
+
+The `registryAuthType` value controls authentication:
+- `irsa` — Use ServiceAccount IAM role (EKS IRSA / GKE Workload Identity)
+- `static` — Use username/password from `externalRegistry` values
+- Empty — Auto-detect: `irsa` for ECR URLs, `static` otherwise
+
+See [AWS (EKS)](/docs/self-hosting/aws#ecr-integration) for IAM role setup.
+
 ## Secret references
 
 Several sensitive values can be sourced from existing Kubernetes Secrets rather than plain Helm values. Create the secret in the system namespace before running `helm install` or `helm upgrade`.
