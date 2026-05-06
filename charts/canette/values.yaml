@@ -60,6 +60,17 @@ externalDatabase:
   passwordSecretRef:
     name: ""
     key: "password"
+  # SSL settings for external databases (e.g. AWS RDS, Cloud SQL).
+  # Provide caCert (inline PEM) or caCertSecretRef (existing K8s Secret) to
+  # verify the server's TLS certificate.
+  ssl:
+    caCert: ""
+    caCertSecretRef:
+      name: ""
+      key: "ca.crt"
+    # Set to false to skip certificate verification.
+    # WARNING: disables MITM protection — only for dev/testing.
+    rejectUnauthorized: true
 
 # ---------------------------------------------------------------------------
 # External registry credentials (used when registry.enabled=false)

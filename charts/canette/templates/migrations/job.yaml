@@ -62,4 +62,35 @@ spec:
               {{- else }}
               value: {{ include "canette.databaseURL" . | quote }}
               {{- end }}
+            {{- if and (not .Values.postgres.enabled) (or .Values.externalDatabase.ssl.caCert .Values.externalDatabase.ssl.caCertSecretRef.name) }}
+            - name: DATABASE_CA_CERT_FILE
+              value: /run/secrets/database-ca-cert
+            {{- end }}
+            {{- if and (not .Values.postgres.enabled) (not .Values.externalDatabase.ssl.rejectUnauthorized) }}
+            - name: DATABASE_SSL_REJECT_UNAUTHORIZED
+              value: "false"
+            {{- end }}
+          volumeMounts:
+            {{- if and (not .Values.postgres.enabled) (or .Values.externalDatabase.ssl.caCert .Values.externalDatabase.ssl.caCertSecretRef.name) }}
+            - name: database-ca-cert
+              mountPath: /run/secrets/database-ca-cert
+              subPath: ca.crt
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if and (not .Values.postgres.enabled) (or .Values.externalDatabase.ssl.caCert .Values.externalDatabase.ssl.caCertSecretRef.name) }}
+        - name: database-ca-cert
+          secret:
+            {{- if .Values.externalDatabase.ssl.caCertSecretRef.name }}
+            secretName: {{ .Values.externalDatabase.ssl.caCertSecretRef.name }}
+            items:
+              - key: {{ .Values.externalDatabase.ssl.caCertSecretRef.key }}
+                path: ca.crt
+            {{- else }}
+            secretName: canette-api-secrets
+            items:
+              - key: database-ca-cert
+                path: ca.crt
+            {{- end }}
+        {{- end }}
 {{- end }}
