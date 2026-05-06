@@ -128,6 +128,7 @@ These values are snapshotted into each deployment at trigger time. Changing them
 | `postgres.enabled` | `true` | Deploy in-cluster PostgreSQL |
 | `postgres.password` | `""` | Override auto-generated postgres password (leave empty to auto-generate) |
 | `externalDatabase.url` | `""` | External DB connection string when `postgres.enabled=false` |
+| `externalDatabase.ssl.rejectUnauthorized` | `true` | Verify the database server's TLS certificate. Set to `false` only for dev/testing — disables MITM protection. |
 | `registry.enabled` | `true` | Deploy in-cluster image registry, exposed via HTTPRoute at `registry.<domain>` |
 | `registry.username` | `""` | Override auto-generated registry username (both fields required to override) |
 | `registry.password` | `""` | Override auto-generated registry password |
@@ -197,6 +198,50 @@ externalDatabase:
 ```
 
 Kubernetes substitutes `$(DB_PASSWORD)` at pod startup.
+
+### External database SSL
+
+Managed databases (AWS RDS, Cloud SQL, Azure Database) use a certificate authority that is not in the default system trust store. Provide the CA certificate so canette can verify the server's TLS certificate.
+
+**Option 1 — reference an existing Secret (recommended):**
+
+Create a Secret containing the PEM-encoded CA bundle, then point `caCertSecretRef` at it:
+
+```bash
+kubectl create secret generic my-db-ca \
+  --namespace canette-system \
+  --from-file=ca.crt=rds-ca-bundle.pem
+```
+
+```yaml
+externalDatabase:
+  url: "postgresql://myuser:$(DB_PASSWORD)@mydb.abc123.us-east-1.rds.amazonaws.com:5432/mydb?sslmode=verify-full"
+  ssl:
+    caCertSecretRef:
+      name: my-db-ca
+      key: ca.crt
+```
+
+**Option 2 — inline PEM in values:**
+
+```yaml
+externalDatabase:
+  ssl:
+    caCert: |
+      -----BEGIN CERTIFICATE-----
+      ...
+      -----END CERTIFICATE-----
+```
+
+<Callout type="warn">
+  **Do not use `rejectUnauthorized: false` in production.** This disables certificate verification entirely, leaving the connection vulnerable to man-in-the-middle attacks. It exists only as an escape hatch for local dev or testing against managed cloud databases where you control the network.
+
+  ```yaml
+  externalDatabase:
+    ssl:
+      rejectUnauthorized: false
+  ```
+</Callout>
 
 ### External registry password
 

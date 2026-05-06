@@ -1,0 +1,96 @@
+---
+title: Build Issues
+description: Troubleshoot build failures and buildkitd startup problems.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+## buildkitd fails to start — "no space left on device"
+
+### Symptoms
+
+The `buildkitd` pod in the `canette-system-build` namespace fails to start. The pod logs contain:
+
+```
+[rootlesskit:parent] /proc/sys/user/max_user_namespaces needs to be set to non-zero.
+[rootlesskit:parent] error: failed to start the child: fork/exec /proc/self/exe: no space left on device
+```
+
+Despite the message, this is not a disk space problem.
+
+### Cause
+
+Rootless BuildKit uses Linux user namespaces to run builds without root privileges. Some Linux distributions — including Amazon Linux 2 (the default for older EKS managed node groups) — ship with user namespace creation disabled by setting the kernel parameter `user.max_user_namespaces=0`.
+
+When this limit is zero, any attempt to create a user namespace returns `ENOSPC` ("no space left on device"), which is the misleading error you see above.
+
+### Fix
+
+The parameter needs to be set to a non-zero value on every node that will run buildkitd. A value of `15000` is typical.
+
+**Option 1 — EKS launch template (recommended, persistent)**
+
+Add a userdata script to your EKS managed node group launch template so the setting survives node replacements:
+
+```bash
+#!/bin/bash
+echo 'user.max_user_namespaces=15000' > /etc/sysctl.d/99-user-namespaces.conf
+sysctl -p /etc/sysctl.d/99-user-namespaces.conf
+```
+
+After saving the launch template, trigger a node group rolling update so new nodes pick up the change.
+
+**Option 2 — privileged DaemonSet (no node group changes required)**
+
+If you cannot modify the launch template (e.g. you are using an unmanaged node group or a shared cluster), you can apply the sysctl live with a privileged DaemonSet:
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: user-namespaces-sysctl
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: user-namespaces-sysctl
+  template:
+    metadata:
+      labels:
+        app: user-namespaces-sysctl
+    spec:
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: sysctl
+          image: busybox:1.36
+          command: ["sysctl", "-w", "user.max_user_namespaces=15000"]
+          securityContext:
+            privileged: true
+      containers:
+        - name: pause
+          image: busybox:1.36
+          command: ["sleep", "infinity"]
+          resources:
+            requests:
+              cpu: 1m
+              memory: 4Mi
+```
+
+<Callout type="info">
+  The DaemonSet sets the sysctl on every node restart via the init container, so it remains effective after node replacements. It is safe to leave running alongside the launch template fix.
+</Callout>
+
+After applying either fix, restart the buildkitd pod:
+
+```bash
+kubectl rollout restart deployment/buildkitd -n canette-system-build
+```
+
+### Not affected
+
+This issue does not affect:
+
+- **EKS with AL2023 nodes** — AL2023 enables user namespaces by default
+- **GKE, AKS, and most managed Kubernetes services** — user namespaces are enabled on their default node images
+- **kind and k3s** — both enable user namespaces by default
