@@ -197,7 +197,15 @@ externalDatabase:
     key: password
 ```
 
-Kubernetes substitutes `$(DB_PASSWORD)` at pod startup.
+Kubernetes substitutes `$(DB_PASSWORD)` at pod startup. Create the secret before running `helm install` or `helm upgrade`:
+
+```bash
+kubectl create secret generic my-db-secret \
+  --namespace canette-system \
+  --from-literal=password=<your-db-password>
+```
+
+See [Production setup](/docs/getting-started/production) for a full walkthrough of using an external database.
 
 ### External database SSL
 
@@ -241,6 +249,17 @@ externalDatabase:
     ssl:
       rejectUnauthorized: false
   ```
+</Callout>
+
+<Callout type="warn">
+  **Last resort — disable SSL entirely.** If the database server does not require SSL at all, you can turn it off via the connection string. This sends credentials and data in plaintext and must never be used in production.
+
+  ```yaml
+  externalDatabase:
+    url: "postgresql://myuser:mypassword@myhost:5432/mydb?sslmode=disable"
+  ```
+
+  No `ssl` values are needed when SSL is disabled in the connection string — `sslmode=disable` is handled entirely by the `pg` driver.
 </Callout>
 
 ### External registry password
