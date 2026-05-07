@@ -72,6 +72,7 @@ When `storage.type: s3`, the PVC is not created and the registry stores all imag
 |----------|-------------------|
 | Development/staging | Filesystem (PVC) — simpler setup, lower latency |
 | Single-cluster production with good block storage | Filesystem (PVC) |
+| Clusters without persistent volumes (EKS, GKE Autopilot, etc.) | S3 — no block storage required |
 | Production with disaster recovery needs | S3 — survives cluster recreation |
 | Multi-cluster deployments | S3 — share registry across clusters |
 | Cost optimization (>100GB of images) | S3 — typically 5-10x cheaper than block storage |
