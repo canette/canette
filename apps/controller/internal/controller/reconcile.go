@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -84,8 +83,7 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 				// Non-fatal: continue without imagePullSecret (might still work if nodes have access)
 			} else {
 				imagePullSecretName = "canette-registry-creds"
-				// Base64-encode the JSON for the K8s Secret data field
-				imagePullSecretData = []byte(base64.StdEncoding.EncodeToString(dockerConfigJSON))
+				imagePullSecretData = dockerConfigJSON
 				log.Debug("imagePullSecret enabled", zap.String("secret_name", imagePullSecretName))
 			}
 		}

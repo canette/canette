@@ -39,7 +39,7 @@ type DeployConfig struct {
 	GatewayNamespace    string
 	ClusterDomain       string
 	ImagePullSecretName string // Name of the imagePullSecret to reference in pod spec
-	ImagePullSecretData []byte // .dockerconfigjson content (base64-encoded) for creating the Secret
+	ImagePullSecretData []byte // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
 }
 
 // AppNamespace returns the K8s namespace for a project: can-{id[:8]}-{slug[:50]}.
@@ -118,7 +118,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 			},
 			"type": "kubernetes.io/dockerconfigjson",
 			"data": map[string]interface{}{
-				".dockerconfigjson": cfg.ImagePullSecretData, // Already base64-encoded
+				".dockerconfigjson": cfg.ImagePullSecretData,
 			},
 		}
 	}

@@ -19,6 +19,17 @@ App secrets are encrypted before they are written to the database and decrypted 
 - **Never returned**: the API does not return secret values after they have been stored — not in list responses, not in detail responses, not in logs
 - **Never logged**: secret values are excluded from structured logging at every log level
 
+### Registry pull credentials
+
+When `controller.imagePullSecrets.enabled=true`, the controller creates a `canette-registry-creds` Secret in every app namespace so the kubelet can pull images. This Secret is in the same namespace as the app workload.
+
+**Trade-offs to be aware of:**
+
+- Any pod that gains Kubernetes API access and secret-read RBAC in its namespace can read the pull credential. canette does not grant this by default, but a misconfigured role in the app namespace would expose it.
+- For the in-cluster registry, pull and push credentials are the same — a leaked pull secret therefore grants write access to the registry. For external registries, configure `externalRegistry.pullUsername`/`pullPassword` with a read-only account to scope the credential to pulls only.
+
+The safest configuration is to provision registry access at the node level (containerd credential provider or `/etc/containerd/certs.d/`) and set `controller.imagePullSecrets.enabled=false`. This removes the Secret from app namespaces entirely. See [Image pull credentials](/docs/self-hosting/registry#image-pull-credentials) for setup details.
+
 ### Git credentials (PAT tokens and SSH keys)
 
 Git credentials (PAT tokens and SSH private keys) use the same AES-256-GCM encryption as app secrets. The master key is the same shared key. Credentials are scoped to a project; apps within the project inherit them.

@@ -76,13 +76,22 @@ externalDatabase:
 # External registry credentials (used when registry.enabled=false)
 # ---------------------------------------------------------------------------
 externalRegistry:
-  # Credentials for pushing to an external registry.
-  # The builder is given a docker config Secret with these credentials.
+  # Push credentials — used by the builder to push images after a build.
   username: ""
   password: ""
-  # Optional: read the password from a Kubernetes Secret instead of a plain value.
+  # Optional: read the push password from a Kubernetes Secret instead of a plain value.
   # The secret must exist in the system namespace before helm install/upgrade.
   passwordSecretRef:
+    name: ""
+    key: "password"
+  # Pull credentials — used by the kubelet to pull images onto app nodes.
+  # Configure a separate read-only registry account here to limit blast radius if the
+  # imagePullSecret is ever read from an app namespace (see imagePullSecrets below).
+  # When not set, falls back to the push credentials above.
+  pullUsername: ""
+  pullPassword: ""
+  # Optional: read the pull password from a Kubernetes Secret instead of a plain value.
+  pullPasswordSecretRef:
     name: ""
     key: "password"
 
@@ -199,10 +208,21 @@ controller:
   logTailInterval: 10s
   maxConcurrent: 3
   # Enable automatic creation of imagePullSecrets in app namespaces.
-  # When enabled, the controller copies registry credentials to each app namespace
-  # and adds imagePullSecrets to Deployment pod specs. Required for nodes that do
-  # not have registry access configured via containerd/CRI.
-  # Default: true (always create imagePullSecrets for seamless node pulls)
+  # When enabled, the controller creates a canette-registry-creds Secret in each app
+  # namespace and adds imagePullSecrets to Deployment pod specs.
+  #
+  # Security notes:
+  # - The Secret lives in the same namespace as the app. Any pod with Kubernetes API
+  #   access and secret-read RBAC could read it. canette does not grant this by default,
+  #   but misconfigured user workloads may.
+  # - For the in-cluster registry, pull and push credentials are identical — a leaked
+  #   secret therefore grants write access to the registry.
+  # - For external registries, configure externalRegistry.pullUsername/pullPassword with
+  #   a read-only registry account to limit the blast radius.
+  #
+  # Alternative: configure registry credentials directly in containerd on each node
+  # (via /etc/containerd/certs.d/ or a node-level credential provider). When nodes
+  # already have access, set enabled: false to skip Secret creation entirely.
   imagePullSecrets:
     enabled: true
   resources:
