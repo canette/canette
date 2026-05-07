@@ -5,10 +5,16 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSepa
 import type { GitCredential, GitProvider } from "@canette/types"
 
 function detectProvider(gitUrl: string): GitProvider | null {
-  if (gitUrl.includes("github.com")) return "github"
-  if (gitUrl.includes("gitlab.")) return "gitlab"
-  if (gitUrl.includes("gitea.")) return "gitea"
-  return null
+  try {
+    const normalized = gitUrl.includes("://") ? gitUrl : `https://${gitUrl}`
+    const host = new URL(normalized).hostname.toLowerCase()
+    if (host === "github.com" || host.endsWith(".github.com")) return "github"
+    if (host === "gitlab.com" || host.endsWith(".gitlab.com") || host.includes("gitlab")) return "gitlab"
+    if (host.includes("gitea")) return "gitea"
+    return null
+  } catch {
+    return null
+  }
 }
 
 interface Props {
