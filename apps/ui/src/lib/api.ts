@@ -33,15 +33,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const teams = {
   list: () => request<Team[]>("/teams"),
   get: (id: string) => request<Team & { members: TeamMember[] }>(`/teams/${id}`),
-  create: (body: { name: string }) =>
-    request<Team>("/teams", { method: "POST", body: JSON.stringify(body) }),
-  rename: (id: string, name: string) =>
-    request<Team>(`/teams/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
-  delete: (id: string) => request<void>(`/teams/${id}`, { method: "DELETE" }),
-  addMember: (teamId: string, body: { userId?: string; email?: string }) =>
-    request<void>(`/teams/${teamId}/members`, { method: "POST", body: JSON.stringify(body) }),
-  removeMember: (teamId: string, userId: string) =>
-    request<void>(`/teams/${teamId}/members/${userId}`, { method: "DELETE" }),
   listCredentials: (teamId: string) =>
     request<GitCredential[]>(`/teams/${teamId}/credentials`),
   createCredential: (teamId: string, body: { name: string; provider: GitProvider; type: GitCredentialType; value?: string; sshKnownHosts?: string }) =>
@@ -162,6 +153,15 @@ export const admin = {
     request<void>(`/admin/users/${id}`, { method: "DELETE", body: JSON.stringify({ force }) }),
   getOverview: () => request<AdminProjectOverview[]>("/admin/overview"),
   getTeams: () => request<AdminTeamOverview[]>("/admin/teams"),
+  createTeam: (body: { name: string }) =>
+    request<Team>("/admin/teams", { method: "POST", body: JSON.stringify(body) }),
+  renameTeam: (id: string, name: string) =>
+    request<Team>(`/admin/teams/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteTeam: (id: string) => request<void>(`/admin/teams/${id}`, { method: "DELETE" }),
+  addTeamMember: (teamId: string, body: { userId?: string; email?: string }) =>
+    request<void>(`/admin/teams/${teamId}/members`, { method: "POST", body: JSON.stringify(body) }),
+  removeTeamMember: (teamId: string, userId: string) =>
+    request<void>(`/admin/teams/${teamId}/members/${userId}`, { method: "DELETE" }),
   sync: () => request<SyncResult>("/admin/sync", { method: "POST" }),
   resetStuck: () => request<SyncResult>("/admin/reset-stuck", { method: "POST" }),
   getScanPolicy: () => request<ScanPolicy>("/admin/settings/security"),

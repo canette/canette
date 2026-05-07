@@ -20,7 +20,7 @@ import {
   updateScanPolicy,
   updateUserRole,
 } from "../services/admin"
-import { listTeamsOverview } from "../services/teams"
+import { listTeamsOverview, renameTeam, createTeam, deleteTeam, addMember, removeMember, findUserByEmail } from "../services/teams"
 import type { ScanPolicy, UserRole } from "@canette/types"
 
 function generatePassword(): string {
@@ -125,6 +125,77 @@ adminRouter.get("/overview", async (c) => {
 adminRouter.get("/teams", async (c) => {
   const teams = await listTeamsOverview(db)
   return c.json(teams)
+})
+
+// Create a shared team
+// POST /api/v1/admin/teams
+adminRouter.post("/teams", async (c) => {
+  const session = c.get("session")
+  const body = await c.req.json<{ name: string }>()
+  try {
+    const team = await createTeam(db, session.user.id, body)
+    return c.json(team, 201)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// Delete a team
+// DELETE /api/v1/admin/teams/:id
+adminRouter.delete("/teams/:id", async (c) => {
+  try {
+    await deleteTeam(db, c.req.param("id"))
+    return c.body(null, 204)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// Add a member to a team
+// POST /api/v1/admin/teams/:id/members
+adminRouter.post("/teams/:id/members", async (c) => {
+  const body = await c.req.json<{ userId?: string; email?: string }>()
+  try {
+    let targetUserId = body.userId
+    if (!targetUserId && body.email) {
+      const found = await findUserByEmail(db, body.email)
+      if (!found) return c.json({ error: "No user found with that email", code: "NOT_FOUND" }, 404)
+      targetUserId = found.id
+    }
+    if (!targetUserId) return c.json({ error: "userId or email is required", code: "VALIDATION_ERROR" }, 400)
+    await addMember(db, c.req.param("id"), targetUserId)
+    return c.body(null, 204)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// Remove a member from a team
+// DELETE /api/v1/admin/teams/:id/members/:userId
+adminRouter.delete("/teams/:id/members/:userId", async (c) => {
+  try {
+    await removeMember(db, c.req.param("id"), c.req.param("userId"))
+    return c.body(null, 204)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// Rename any team, including personal teams
+// PATCH /api/v1/admin/teams/:id
+adminRouter.patch("/teams/:id", async (c) => {
+  const body = await c.req.json<{ name: string }>()
+  try {
+    const team = await renameTeam(db, c.req.param("id"), body.name)
+    return c.json(team)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
 })
 
 // Get members of any team (admin, no membership required)

@@ -108,15 +108,7 @@ export async function getTeamMembers(
   return rows.map(mapTeamMember)
 }
 
-export async function createTeam(
-  db: DB,
-  requesterId: string,
-  requesterRole: string,
-  input: { name: string }
-): Promise<Team> {
-  if (requesterRole !== "admin") {
-    throw new ServiceError("Only admins can create teams", "FORBIDDEN", 403)
-  }
+export async function createTeam(db: DB, ownerId: string, input: { name: string }): Promise<Team> {
   if (!input.name?.trim()) {
     throw new ServiceError("name is required", "VALIDATION_ERROR", 400)
   }
@@ -131,7 +123,7 @@ export async function createTeam(
         id: teamId,
         name: input.name.trim(),
         is_personal: false,
-        owner_id: requesterId,
+        owner_id: ownerId,
         created_at: now,
         updated_at: now,
       })
@@ -141,7 +133,7 @@ export async function createTeam(
       .values({
         id: crypto.randomUUID(),
         team_id: teamId,
-        user_id: requesterId,
+        user_id: ownerId,
         created_at: now,
       })
       .execute()
@@ -155,16 +147,7 @@ export async function createTeam(
   return mapTeam({ ...row, member_count: 1 })
 }
 
-export async function renameTeam(
-  db: DB,
-  teamId: string,
-  name: string,
-  requesterId: string,
-  requesterRole: string
-): Promise<Team> {
-  if (requesterRole !== "admin") {
-    throw new ServiceError("Only admins can rename teams", "FORBIDDEN", 403)
-  }
+export async function renameTeam(db: DB, teamId: string, name: string): Promise<Team> {
   if (!name?.trim()) {
     throw new ServiceError("name is required", "VALIDATION_ERROR", 400)
   }
@@ -175,29 +158,30 @@ export async function renameTeam(
     .where("id", "=", teamId)
     .executeTakeFirst()
   if (!team) throw new ServiceError("Not found", "NOT_FOUND", 404)
-  if (team.is_personal) {
-    throw new ServiceError("Personal teams cannot be renamed", "FORBIDDEN", 403)
-  }
 
+  const now = new Date().toISOString()
   await db
     .updateTable("teams")
-    .set({ name: name.trim(), updated_at: new Date().toISOString() })
+    .set({ name: name.trim(), updated_at: now })
     .where("id", "=", teamId)
     .execute()
 
-  return (await getTeam(db, teamId, requesterId))!
+  const updated = await db
+    .selectFrom("teams as t")
+    .selectAll("t")
+    .select((eb) =>
+      eb
+        .selectFrom("team_members")
+        .select(eb.fn.countAll<number>().as("c"))
+        .whereRef("team_id", "=", "t.id")
+        .as("member_count")
+    )
+    .where("t.id", "=", teamId)
+    .executeTakeFirstOrThrow()
+  return mapTeam(updated)
 }
 
-export async function deleteTeam(
-  db: DB,
-  teamId: string,
-  requesterId: string,
-  requesterRole: string
-): Promise<void> {
-  if (requesterRole !== "admin") {
-    throw new ServiceError("Only admins can delete teams", "FORBIDDEN", 403)
-  }
-
+export async function deleteTeam(db: DB, teamId: string): Promise<void> {
   const team = await db
     .selectFrom("teams")
     .selectAll()
@@ -226,17 +210,7 @@ export async function deleteTeam(
   await db.deleteFrom("teams").where("id", "=", teamId).execute()
 }
 
-export async function addMember(
-  db: DB,
-  teamId: string,
-  targetUserId: string,
-  requesterId: string,
-  requesterRole: string
-): Promise<void> {
-  if (requesterRole !== "admin") {
-    throw new ServiceError("Only admins can add team members", "FORBIDDEN", 403)
-  }
-
+export async function addMember(db: DB, teamId: string, targetUserId: string): Promise<void> {
   const team = await db
     .selectFrom("teams")
     .select("id")
@@ -270,26 +244,39 @@ export async function addMember(
   }
 }
 
-export async function removeMember(
-  db: DB,
-  teamId: string,
-  targetUserId: string,
-  requesterId: string,
-  requesterRole: string
-): Promise<void> {
-  if (requesterRole !== "admin") {
-    throw new ServiceError("Only admins can remove team members", "FORBIDDEN", 403)
-  }
-
+export async function removeMember(db: DB, teamId: string, targetUserId: string): Promise<void> {
   const team = await db
     .selectFrom("teams")
-    .select(["id", "owner_id", "is_personal"])
+    .select(["id", "owner_id"])
     .where("id", "=", teamId)
     .executeTakeFirst()
   if (!team) throw new ServiceError("Team not found", "NOT_FOUND", 404)
 
   if (team.owner_id === targetUserId) {
-    throw new ServiceError("Cannot remove the team owner", "CONFLICT", 409)
+    const next = await db
+      .selectFrom("team_members")
+      .select("user_id")
+      .where("team_id", "=", teamId)
+      .where("user_id", "!=", targetUserId)
+      .orderBy("created_at", "asc")
+      .limit(1)
+      .executeTakeFirst()
+    if (!next) {
+      throw new ServiceError("Cannot remove the only member — delete the team instead", "CONFLICT", 409)
+    }
+    await db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("teams")
+        .set({ owner_id: next.user_id, updated_at: new Date().toISOString() })
+        .where("id", "=", teamId)
+        .execute()
+      await trx
+        .deleteFrom("team_members")
+        .where("team_id", "=", teamId)
+        .where("user_id", "=", targetUserId)
+        .execute()
+    })
+    return
   }
 
   await db
