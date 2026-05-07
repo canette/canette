@@ -20,7 +20,7 @@ export default function NewTeamPage() {
     setError("")
     setSubmitting(true)
     try {
-      await api.teams.create({ name: name.trim() })
+      await api.admin.createTeam({ name: name.trim() })
       router.push("/admin/teams")
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong")

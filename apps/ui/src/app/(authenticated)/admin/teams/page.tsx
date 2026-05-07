@@ -40,6 +40,9 @@ export default function AdminTeamsPage() {
   const [deletingTeam, setDeletingTeam] = useState(false)
   const [deleteTeamError, setDeleteTeamError] = useState("")
 
+  const [removeMemberErrorTeamId, setRemoveMemberErrorTeamId] = useState<string | null>(null)
+  const [removeMemberError, setRemoveMemberError] = useState("")
+
   const [renameTeamTarget, setRenameTeamTarget] = useState<AdminTeamOverview | null>(null)
   const [renameTeamName, setRenameTeamName] = useState("")
   const [renamingTeam, setRenamingTeam] = useState(false)
@@ -76,7 +79,7 @@ export default function AdminTeamsPage() {
     setAddMemberError("")
     setAddingMember(true)
     try {
-      await api.teams.addMember(teamId, { email: addMemberEmail.trim() })
+      await api.admin.addTeamMember(teamId, { email: addMemberEmail.trim() })
       setAddMemberEmail("")
       setAddMemberTeamId(null)
       const members = await api.admin.getTeamMembers(teamId)
@@ -90,15 +93,18 @@ export default function AdminTeamsPage() {
   }
 
   async function handleAdminRemoveMember(teamId: string, userId: string) {
+    setRemoveMemberErrorTeamId(null)
+    setRemoveMemberError("")
     try {
-      await api.teams.removeMember(teamId, userId)
+      await api.admin.removeTeamMember(teamId, userId)
       setTeamMembers((prev) => {
         const updated = (prev.get(teamId) ?? []).filter((m) => m.userId !== userId)
         return new Map(prev).set(teamId, updated)
       })
       setAdminTeams((prev) => prev.map((t) => t.id === teamId ? { ...t, memberCount: t.memberCount - 1 } : t))
-    } catch {
-      // ignore
+    } catch (e: unknown) {
+      setRemoveMemberError(e instanceof Error ? e.message : "Failed to remove member")
+      setRemoveMemberErrorTeamId(teamId)
     }
   }
 
@@ -107,7 +113,7 @@ export default function AdminTeamsPage() {
     setDeleteTeamError("")
     setDeletingTeam(true)
     try {
-      await api.teams.delete(deleteTeamConfirm.id)
+      await api.admin.deleteTeam(deleteTeamConfirm.id)
       setAdminTeams((prev) => prev.filter((t) => t.id !== deleteTeamConfirm.id))
       setDeleteTeamConfirm(null)
     } catch (e: unknown) {
@@ -123,7 +129,7 @@ export default function AdminTeamsPage() {
     setRenameTeamError("")
     setRenamingTeam(true)
     try {
-      await api.teams.rename(renameTeamTarget.id, renameTeamName.trim())
+      await api.admin.renameTeam(renameTeamTarget.id, renameTeamName.trim())
       setAdminTeams((prev) => prev.map((t) => t.id === renameTeamTarget.id ? { ...t, name: renameTeamName.trim() } : t))
       setRenameTeamTarget(null)
     } catch (e: unknown) {
@@ -176,10 +182,13 @@ export default function AdminTeamsPage() {
             {!membersLoading && members && members.length === 0 && (
               <p className="text-xs text-muted-foreground pl-10 pr-6 py-2.5">No members.</p>
             )}
-            {!team.isPersonal && (
-              <div className="pl-10 pr-6 py-2 border-t border-border/50 flex items-center justify-between">
-                <div className="flex-1">
-                  {addMemberTeamId === team.id ? (
+            {removeMemberErrorTeamId === team.id && removeMemberError && (
+              <p className="text-xs text-destructive pl-10 pr-6 py-2">{removeMemberError}</p>
+            )}
+            <div className="pl-10 pr-6 py-2 border-t border-border/50 flex items-center justify-between">
+              <div className="flex-1">
+                {!team.isPersonal && (
+                  addMemberTeamId === team.id ? (
                     <form onSubmit={(e) => handleAdminAddMember(e, team.id)} className="flex flex-col gap-2">
                       <div className="flex gap-2 items-center">
                         <input
@@ -207,16 +216,18 @@ export default function AdminTeamsPage() {
                     >
                       + Add member
                     </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    size="sm" variant="ghost"
-                    className="h-7 text-xs text-muted-foreground hover:text-foreground shrink-0"
-                    onClick={() => { setRenameTeamError(""); setRenameTeamName(team.name); setRenameTeamTarget(team) }}
-                  >
-                    Rename
-                  </Button>
+                  )
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm" variant="ghost"
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground shrink-0"
+                  onClick={() => { setRenameTeamError(""); setRenameTeamName(team.name); setRenameTeamTarget(team) }}
+                >
+                  Rename
+                </Button>
+                {!team.isPersonal && (
                   <Button
                     size="sm" variant="ghost"
                     className="h-7 text-xs text-muted-foreground hover:text-destructive shrink-0"
@@ -224,9 +235,9 @@ export default function AdminTeamsPage() {
                   >
                     Delete team
                   </Button>
-                </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>
