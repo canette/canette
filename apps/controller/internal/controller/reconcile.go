@@ -65,14 +65,11 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		// Determine if we need registry credentials based on image source
 		needsRegistryCreds := false
 
-		if appCfg.SourceType == "git" {
-			// Git-sourced apps always use the configured registry (internal or external)
+		switch appCfg.SourceType {
+		case "git":
 			needsRegistryCreds = true
-		} else if appCfg.SourceType == "image" {
-			// Image-sourced apps: check if image URL matches our registry host
-			if strings.HasPrefix(appCfg.ImageDigest, c.cfg.RegistryHost) {
-				needsRegistryCreds = true
-			}
+		case "image":
+			needsRegistryCreds = strings.HasPrefix(appCfg.ImageDigest, c.cfg.RegistryHost)
 		}
 
 		if needsRegistryCreds {
