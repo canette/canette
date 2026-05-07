@@ -134,3 +134,17 @@ moby/buildkit:v0.21.0-rootless
 moby/buildkit:v0.21.0
 {{- end -}}
 {{- end }}
+
+{{/* Whether to enable imagePullSecrets in app Deployments.
+     Defaults to true if not explicitly set. */}}
+{{- define "canette.imagePullSecretsEnabled" -}}
+{{- if hasKey .Values.controller "imagePullSecrets" -}}
+{{- if hasKey .Values.controller.imagePullSecrets "enabled" -}}
+{{ .Values.controller.imagePullSecrets.enabled }}
+{{- else -}}
+true
+{{- end -}}
+{{- else -}}
+true
+{{- end -}}
+{{- end }}

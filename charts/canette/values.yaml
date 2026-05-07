@@ -198,6 +198,13 @@ controller:
   pollInterval: 5s
   logTailInterval: 10s
   maxConcurrent: 3
+  # Enable automatic creation of imagePullSecrets in app namespaces.
+  # When enabled, the controller copies registry credentials to each app namespace
+  # and adds imagePullSecrets to Deployment pod specs. Required for nodes that do
+  # not have registry access configured via containerd/CRI.
+  # Default: true (always create imagePullSecrets for seamless node pulls)
+  imagePullSecrets:
+    enabled: true
   resources:
     requests:
       cpu: 100m

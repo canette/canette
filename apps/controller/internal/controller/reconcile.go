@@ -2,7 +2,10 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -55,11 +58,44 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		secretData[sec.Key] = []byte(decrypted)
 	}
 
-	// 3. Build K8s resources.
-	deployCfg := c.buildDeployConfig(appCfg, secretData)
+	// 3. Fetch imagePullSecret data if enabled.
+	var imagePullSecretName string
+	var imagePullSecretData []byte
+
+	if c.cfg.ImagePullSecretsEnabled && c.cfg.RegistryAuthConfigFile != "" {
+		// Determine if we need registry credentials based on image source
+		needsRegistryCreds := false
+
+		if appCfg.SourceType == "git" {
+			// Git-sourced apps always use the configured registry (internal or external)
+			needsRegistryCreds = true
+		} else if appCfg.SourceType == "image" {
+			// Image-sourced apps: check if image URL matches our registry host
+			if strings.HasPrefix(appCfg.ImageDigest, c.cfg.RegistryHost) {
+				needsRegistryCreds = true
+			}
+		}
+
+		if needsRegistryCreds {
+			// Read the registry auth config from mounted file
+			dockerConfigJSON, err := os.ReadFile(c.cfg.RegistryAuthConfigFile)
+			if err != nil {
+				log.Warn("failed to read registry auth config file", zap.Error(err))
+				// Non-fatal: continue without imagePullSecret (might still work if nodes have access)
+			} else {
+				imagePullSecretName = "canette-registry-creds"
+				// Base64-encode the JSON for the K8s Secret data field
+				imagePullSecretData = []byte(base64.StdEncoding.EncodeToString(dockerConfigJSON))
+				log.Debug("imagePullSecret enabled", zap.String("secret_name", imagePullSecretName))
+			}
+		}
+	}
+
+	// 4. Build K8s resources.
+	deployCfg := c.buildDeployConfig(appCfg, secretData, imagePullSecretName, imagePullSecretData)
 	res := k8sres.BuildResources(deployCfg)
 
-	// 4. Render and store manifest (before applying — preserves intent even if apply fails).
+	// 5. Render and store manifest (before applying — preserves intent even if apply fails).
 	manifest, err := k8sres.RenderManifest(res)
 	if err != nil {
 		log.Warn("failed to render manifest", zap.Error(err))
@@ -69,7 +105,7 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		}
 	}
 
-	// 5. Apply all resources via server-side apply.
+	// 6. Apply all resources via server-side apply.
 	// Before applying, clear any pods stuck in ImagePullBackOff/ErrImagePull/CrashLoopBackOff
 	// so K8s recreates them without exponential backoff on the new spec.
 	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
@@ -87,7 +123,7 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	}
 	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
 
-	// 6. Watch rollout (poll every 3s, timeout 12min).
+	// 7. Watch rollout (poll every 3s, timeout 12min).
 	// K8s progressDeadlineSeconds defaults to 600s (10min); our timeout must exceed that
 	// so we see the real ProgressDeadlineExceeded condition rather than timing out first.
 	deadline := time.Now().Add(12 * time.Minute)
@@ -120,7 +156,7 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		return
 	}
 
-	// 7. Mark live and set URL.
+	// 8. Mark live and set URL.
 	if err := c.store.MarkLive(ctx, dep.ID); err != nil {
 		lastErr = fmt.Errorf("mark live: %w", err)
 		return
