@@ -506,7 +506,7 @@ export default function SettingsPage() {
                   <Input id="appPath" placeholder="/" value={appPath} onChange={(e) => setAppPath(e.target.value)} />
                 </div>
               </div>
-              <CredentialSelect credentials={credentials} value={gitCredentialId} onChange={setGitCredentialId} teamId={project.teamId} />
+              <CredentialSelect credentials={credentials} value={gitCredentialId} onChange={setGitCredentialId} teamId={project.teamId} gitUrl={gitUrl} />
             </>
           ) : (
             <div className="grid grid-cols-2 gap-4">

@@ -251,6 +251,7 @@ export default function NewAppPage() {
                     value={gitCredentialId}
                     onChange={setGitCredentialId}
                     teamId={project?.teamId}
+                    gitUrl={gitUrl}
                   />
 
                   <div className="grid grid-cols-2 gap-4">
