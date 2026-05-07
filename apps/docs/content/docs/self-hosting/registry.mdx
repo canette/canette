@@ -31,6 +31,51 @@ Registry credentials are auto-generated on first install and reused on every upg
 
 To rotate credentials or set your own, see the [Helm reference](/docs/self-hosting/helm#registry-authentication).
 
+## Image pull credentials
+
+When `controller.imagePullSecrets.enabled=true` (the default), the controller creates a `canette-registry-creds` Secret in each app namespace and references it in the pod spec so the kubelet can pull images.
+
+### In-cluster registry
+
+The internal registry is accessed at two different addresses depending on who is talking to it:
+
+| Caller | Address used |
+|--------|-------------|
+| BuildKit (push) | `registry.canette-system.svc.cluster.local:5000` — HTTP, cluster-internal |
+| Kubelet (pull) | `registry.{domain}` — HTTPS, through the Gateway |
+
+The pull credential placed in app namespaces uses the external pull address as its auth key, so containerd can match it to the image reference.
+
+### External registry — separate pull credentials
+
+For external registries it is good practice to configure a read-only registry account for pulls, separate from the read-write account used by the builder. This limits the blast radius if a pull secret is ever read from an app namespace.
+
+```yaml
+externalRegistry:
+  username: "builder-rw"        # push — used by build jobs
+  password: "..."
+  pullUsername: "puller-ro"     # pull — distributed to app namespaces
+  pullPassword: "..."
+```
+
+`pullUsername`/`pullPassword` fall back to the push credentials when not set. A `pullPasswordSecretRef` is also supported if you prefer to keep the password out of `values.yaml`.
+
+### Disabling imagePullSecrets
+
+If your nodes already have registry access configured at the containerd level (via `/etc/containerd/certs.d/` or a node credential provider), you can disable Secret-based pull credentials entirely:
+
+```yaml
+controller:
+  imagePullSecrets:
+    enabled: false
+```
+
+No `canette-registry-creds` Secret is created and no `imagePullSecrets` field is added to pod specs. This is the recommended approach for production clusters where node-level credentials are managed by the platform team.
+
+<Callout type="warn">
+  **Security note:** When imagePullSecrets are enabled, the pull credential Secret lives in the same namespace as the app. Any pod with Kubernetes API access and secret-read RBAC could read it. canette does not grant this permission to app workloads by default, but a misconfigured role in the app namespace could expose it. For the in-cluster registry, push and pull credentials are identical — a leaked secret therefore grants write access to the registry. See [Platform security](/docs/security/platform-security#registry-pull-credentials) for the full trade-off.
+</Callout>
+
 ## TLS for local development (mkcert)
 
 On a local cluster (k3s, kind, etc.) without a public IP, [Let's Encrypt](/docs/getting-started/installation#1-gateway-api-with-tls-termination) won't work. [mkcert](https://github.com/FiloSottile/mkcert) generates locally-trusted certificates backed by a CA you install yourself.

@@ -16,13 +16,16 @@ import (
 
 // Config holds operator-level configuration.
 type Config struct {
-	PullRepo         string // NodePort-accessible registry for kubelet image pulls, e.g. "registry.192-168-64-2.traefik.me:32500/"
-	GatewayName      string
-	GatewayNamespace string
-	ClusterDomain    string
-	Namespace        string // canette-build (build job namespace, not app namespace)
-	PollInterval     time.Duration
-	MaxConcurrent    int
+	PullRepo                string // NodePort-accessible registry for kubelet image pulls, e.g. "registry.192-168-64-2.traefik.me:32500/"
+	GatewayName             string
+	GatewayNamespace        string
+	ClusterDomain           string
+	Namespace               string        // canette-build (build job namespace, not app namespace)
+	PollInterval            time.Duration
+	MaxConcurrent           int
+	ImagePullSecretsEnabled bool   // Enable automatic imagePullSecret creation in app namespaces
+	RegistryAuthConfigFile  string // Path to mounted .dockerconfigjson file
+	RegistryHost            string // Registry host extracted from PullRepo (e.g., "registry.example.com")
 }
 
 // Controller polls for deploying deployments and reconciles them.
@@ -133,7 +136,7 @@ func (c *Controller) processPending(ctx context.Context) error {
 }
 
 // buildDeployConfig translates store+config into k8s.DeployConfig.
-func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[string][]byte) k8sres.DeployConfig {
+func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[string][]byte, imagePullSecretName string, imagePullSecretData []byte) k8sres.DeployConfig {
 	var imageRef string
 	if cfg.SourceType == "image" {
 		// image_digest holds the full external image reference (e.g. "nginx:latest")
@@ -148,23 +151,25 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 	}
 
 	return k8sres.DeployConfig{
-		ProjectID:        cfg.ProjectID,
-		ProjectSlug:      cfg.ProjectSlug,
-		ProjectOwner:     cfg.ProjectOwner,
-		AppSlug:          cfg.AppSlug,
-		ImageRef:         imageRef,
-		Port:             cfg.Port,
-		Replicas:         cfg.Replicas,
+		ProjectID:           cfg.ProjectID,
+		ProjectSlug:         cfg.ProjectSlug,
+		ProjectOwner:        cfg.ProjectOwner,
+		AppSlug:             cfg.AppSlug,
+		ImageRef:            imageRef,
+		Port:                cfg.Port,
+		Replicas:            cfg.Replicas,
 		Resources: k8sres.Resources{
 			CPURequest:    cfg.Resources.CPURequest,
 			MemoryRequest: cfg.Resources.MemoryRequest,
 			CPULimit:      cfg.Resources.CPULimit,
 			MemoryLimit:   cfg.Resources.MemoryLimit,
 		},
-		EnvVars:          envMap,
-		SecretData:       secretData,
-		GatewayName:      c.cfg.GatewayName,
-		GatewayNamespace: c.cfg.GatewayNamespace,
-		ClusterDomain:    c.cfg.ClusterDomain,
+		EnvVars:             envMap,
+		SecretData:          secretData,
+		GatewayName:         c.cfg.GatewayName,
+		GatewayNamespace:    c.cfg.GatewayNamespace,
+		ClusterDomain:       c.cfg.ClusterDomain,
+		ImagePullSecretName: imagePullSecretName,
+		ImagePullSecretData: imagePullSecretData,
 	}
 }

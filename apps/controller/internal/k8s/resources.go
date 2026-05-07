@@ -7,11 +7,12 @@ import (
 
 // AppResources holds all K8s objects needed to deploy one app.
 type AppResources struct {
-	Namespace  map[string]interface{}
-	Secret     map[string]interface{} // nil when no secrets
-	Deployment map[string]interface{}
-	Service    map[string]interface{}
-	HTTPRoute  map[string]interface{}
+	Namespace       map[string]interface{}
+	Secret          map[string]interface{} // nil when no secrets
+	ImagePullSecret map[string]interface{} // nil when imagePullSecrets not enabled
+	Deployment      map[string]interface{}
+	Service         map[string]interface{}
+	HTTPRoute       map[string]interface{}
 }
 
 // Resources holds resolved Kubernetes resource requests and limits.
@@ -24,19 +25,21 @@ type Resources struct {
 
 // DeployConfig carries everything needed to build resources.
 type DeployConfig struct {
-	ProjectID        string
-	ProjectSlug      string
-	ProjectOwner     string // user ID who created the project (may be empty)
-	AppSlug          string
-	ImageRef         string // full image reference including digest, e.g. "registry/proj/app@sha256:..."
-	Port             int
-	Replicas         int
-	Resources        Resources
-	EnvVars          map[string]string // plain-text env vars
-	SecretData       map[string][]byte // decrypted secret values
-	GatewayName      string
-	GatewayNamespace string
-	ClusterDomain    string
+	ProjectID           string
+	ProjectSlug         string
+	ProjectOwner        string            // user ID who created the project (may be empty)
+	AppSlug             string
+	ImageRef            string            // full image reference including digest, e.g. "registry/proj/app@sha256:..."
+	Port                int
+	Replicas            int
+	Resources           Resources
+	EnvVars             map[string]string // plain-text env vars
+	SecretData          map[string][]byte // decrypted secret values
+	GatewayName         string
+	GatewayNamespace    string
+	ClusterDomain       string
+	ImagePullSecretName string // Name of the imagePullSecret to reference in pod spec
+	ImagePullSecretData []byte // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
 }
 
 // AppNamespace returns the K8s namespace for a project: can-{id[:8]}-{slug[:50]}.
@@ -102,6 +105,24 @@ func BuildResources(cfg DeployConfig) AppResources {
 		}
 	}
 
+	// Create imagePullSecret if enabled and credentials exist
+	var imagePullSecret map[string]interface{}
+	if cfg.ImagePullSecretName != "" && len(cfg.ImagePullSecretData) > 0 {
+		imagePullSecret = map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Secret",
+			"metadata": map[string]interface{}{
+				"name":      cfg.ImagePullSecretName,
+				"namespace": ns,
+				"labels":    labels,
+			},
+			"type": "kubernetes.io/dockerconfigjson",
+			"data": map[string]interface{}{
+				".dockerconfigjson": cfg.ImagePullSecretData,
+			},
+		}
+	}
+
 	port := cfg.Port
 	if port == 0 {
 		port = 3000
@@ -151,6 +172,13 @@ func BuildResources(cfg DeployConfig) AppResources {
 					"name": secretName(cfg.AppSlug),
 				},
 			},
+		}
+	}
+
+	// Add imagePullSecrets if configured
+	if cfg.ImagePullSecretName != "" {
+		podSpec["imagePullSecrets"] = []interface{}{
+			map[string]interface{}{"name": cfg.ImagePullSecretName},
 		}
 	}
 
@@ -235,10 +263,11 @@ func BuildResources(cfg DeployConfig) AppResources {
 	}
 
 	return AppResources{
-		Namespace:  namespace,
-		Secret:     secretObj,
-		Deployment: deployment,
-		Service:    service,
-		HTTPRoute:  httpRoute,
+		Namespace:       namespace,
+		Secret:          secretObj,
+		ImagePullSecret: imagePullSecret,
+		Deployment:      deployment,
+		Service:         service,
+		HTTPRoute:       httpRoute,
 	}
 }

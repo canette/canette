@@ -76,7 +76,7 @@ https://{{ required "ui.hostname is required" .Values.ui.hostname }}
 {{- end }}
 
 {{/* Resolve the registry host:port (no trailing slash or path segment).
-     Used as the key in .dockerconfigjson. */}}
+     Used as the key in .dockerconfigjson for push credentials (build jobs). */}}
 {{- define "canette.registryHost" -}}
 {{- if .Values.registry.enabled -}}
 registry.{{ .Release.Namespace }}.svc.cluster.local:5000
@@ -85,11 +85,18 @@ registry.{{ .Release.Namespace }}.svc.cluster.local:5000
 {{- end -}}
 {{- end }}
 
+{{/* Resolve the registry host:port as seen by the kubelet (pull hostname).
+     For the in-cluster registry this is the external domain, not the internal service name.
+     Used as the key in .dockerconfigjson for pull credentials (app imagePullSecrets). */}}
+{{- define "canette.registryPullHost" -}}
+{{- include "canette.pullRepo" . | trimSuffix "/" | regexFind "^[^/]+" -}}
+{{- end }}
+
 {{/* Name of the docker config Secret given to build jobs, or empty if no credentials. */}}
 {{- define "canette.registryAuthSecretName" -}}
 {{- if .Values.registry.enabled -}}
 canette-registry-auth
-{{- else if and .Values.externalRegistry.username .Values.externalRegistry.password -}}
+{{- else if .Values.externalRegistry.username -}}
 canette-registry-auth
 {{- end -}}
 {{- end }}
@@ -132,5 +139,19 @@ tcp://buildkitd.{{ include "canette.buildNamespace" . }}.svc.cluster.local:1234
 moby/buildkit:v0.21.0-rootless
 {{- else -}}
 moby/buildkit:v0.21.0
+{{- end -}}
+{{- end }}
+
+{{/* Whether to enable imagePullSecrets in app Deployments.
+     Defaults to true if not explicitly set. */}}
+{{- define "canette.imagePullSecretsEnabled" -}}
+{{- if hasKey .Values.controller "imagePullSecrets" -}}
+{{- if hasKey .Values.controller.imagePullSecrets "enabled" -}}
+{{ .Values.controller.imagePullSecrets.enabled }}
+{{- else -}}
+true
+{{- end -}}
+{{- else -}}
+true
 {{- end -}}
 {{- end }}

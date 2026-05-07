@@ -64,6 +64,12 @@ spec:
               value: {{ .Values.controller.logTailInterval | quote }}
             - name: MAX_CONCURRENT
               value: {{ .Values.controller.maxConcurrent | quote }}
+            - name: IMAGE_PULL_SECRETS_ENABLED
+              value: {{ include "canette.imagePullSecretsEnabled" . | quote }}
+            {{- if and (eq (include "canette.imagePullSecretsEnabled" .) "true") (include "canette.registryAuthSecretName" .) }}
+            - name: REGISTRY_AUTH_CONFIG_FILE
+              value: /run/secrets/registry-auth/config.json
+            {{- end }}
           ports:
             - containerPort: 8082
               name: health
@@ -84,6 +90,11 @@ spec:
               mountPath: /run/secrets/encryption-key
               subPath: key
               readOnly: true
+            {{- if and (eq (include "canette.imagePullSecretsEnabled" .) "true") (include "canette.registryAuthSecretName" .) }}
+            - name: registry-auth
+              mountPath: /run/secrets/registry-auth
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
       volumes:
@@ -93,3 +104,11 @@ spec:
             items:
               - key: key
                 path: key
+        {{- if and (eq (include "canette.imagePullSecretsEnabled" .) "true") (include "canette.registryAuthSecretName" .) }}
+        - name: registry-auth
+          secret:
+            secretName: {{ include "canette.registryAuthSecretName" . }}
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+        {{- end }}

@@ -53,7 +53,7 @@ func ApplyResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupV
 	return nil
 }
 
-// ApplyAll applies Namespace first, then Secret, Deployment, Service, HTTPRoute.
+// ApplyAll applies Namespace first, then Secrets (env + imagePull), then Deployment, Service, HTTPRoute.
 func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) error {
 	ns, _ := objectName(res.Namespace)
 	nsNamespace := "" // cluster-scoped
@@ -64,6 +64,11 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 	if res.Secret != nil {
 		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.Secret); err != nil {
 			return fmt.Errorf("apply secret: %w", err)
+		}
+	}
+	if res.ImagePullSecret != nil {
+		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.ImagePullSecret); err != nil {
+			return fmt.Errorf("apply imagepullsecret: %w", err)
 		}
 	}
 	if err := ApplyResource(ctx, dyn, gvrDeployment, ns, res.Deployment); err != nil {

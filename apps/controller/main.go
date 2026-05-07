@@ -112,14 +112,27 @@ func run(log *zap.Logger) error {
 		return err
 	}
 
+	// Extract registry host from pullRepo for imagePullSecret matching
+	// e.g., "registry.example.com/" → "registry.example.com"
+	registryHost := strings.TrimSuffix(pullRepo, "/")
+	if idx := strings.Index(registryHost, "/"); idx != -1 {
+		registryHost = registryHost[:idx]
+	}
+
+	imagePullSecretsEnabled := envOr("IMAGE_PULL_SECRETS_ENABLED", "true") == "true"
+	registryAuthConfigFile := envOr("REGISTRY_AUTH_CONFIG_FILE", "")
+
 	cfg := controller.Config{
-		PullRepo:         pullRepo,
-		GatewayName:      envOr("GATEWAY_NAME", "can-gateway"),
-		GatewayNamespace: envOr("GATEWAY_NAMESPACE", "kube-system"),
-		ClusterDomain:    clusterDomain,
-		Namespace:        envOr("BUILDER_NAMESPACE", "canette-build"),
-		PollInterval:     pollInterval,
-		MaxConcurrent:    maxConcurrent,
+		PullRepo:                pullRepo,
+		GatewayName:             envOr("GATEWAY_NAME", "can-gateway"),
+		GatewayNamespace:        envOr("GATEWAY_NAMESPACE", "kube-system"),
+		ClusterDomain:           clusterDomain,
+		Namespace:               envOr("BUILDER_NAMESPACE", "canette-build"),
+		PollInterval:            pollInterval,
+		MaxConcurrent:           maxConcurrent,
+		ImagePullSecretsEnabled: imagePullSecretsEnabled,
+		RegistryAuthConfigFile:  registryAuthConfigFile,
+		RegistryHost:            registryHost,
 	}
 
 	// ── Run ───────────────────────────────────────────────────────────────────
