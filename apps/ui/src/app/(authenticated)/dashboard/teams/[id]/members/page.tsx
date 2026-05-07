@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
+import { UserAvatar } from "@/components/ui/user-avatar"
 import { useSession } from "@/lib/auth-client"
 import * as api from "@/lib/api"
 import type { Team, TeamMember } from "@canette/types"
@@ -45,7 +46,7 @@ export default function MembersPage({ params }: { params: Promise<{ id: string }
             <CardDescription>
               {team.isPersonal
                 ? "Your personal team — for your personal projects. You are the only member."
-                : "All members have full access to this team's projects and apps."}
+                : "All members have full access to the team's projects and apps."}
             </CardDescription>
           )}
         </CardHeader>
@@ -66,6 +67,7 @@ export default function MembersPage({ params }: { params: Promise<{ id: string }
                     <div key={member.userId}>
                       {i > 0 && <Separator />}
                       <div className="flex items-center gap-4 px-6 py-3">
+                        <UserAvatar name={member.name} image={member.image} />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{member.name}</p>
                           <p className="text-xs text-muted-foreground truncate">{member.email}</p>

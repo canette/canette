@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ChevronDown } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
+import { UserPickerDialog } from "@/components/user-picker-dialog"
+import { UserAvatar } from "@/components/ui/user-avatar"
 import * as api from "@/lib/api"
 import type { AdminTeamOverview, TeamMember } from "@canette/types"
 
@@ -32,15 +34,13 @@ export default function AdminTeamsPage() {
   const [teamMembersLoading, setTeamMembersLoading] = useState<Set<string>>(new Set())
 
   const [addMemberTeamId, setAddMemberTeamId] = useState<string | null>(null)
-  const [addMemberEmail, setAddMemberEmail] = useState("")
-  const [addingMember, setAddingMember] = useState(false)
-  const [addMemberError, setAddMemberError] = useState("")
 
   const [deleteTeamConfirm, setDeleteTeamConfirm] = useState<AdminTeamOverview | null>(null)
   const [deletingTeam, setDeletingTeam] = useState(false)
   const [deleteTeamError, setDeleteTeamError] = useState("")
 
-  const [removeMemberErrorTeamId, setRemoveMemberErrorTeamId] = useState<string | null>(null)
+  const [removeMemberConfirm, setRemoveMemberConfirm] = useState<{ teamId: string; member: TeamMember } | null>(null)
+  const [removingMember, setRemovingMember] = useState(false)
   const [removeMemberError, setRemoveMemberError] = useState("")
 
   const [renameTeamTarget, setRenameTeamTarget] = useState<AdminTeamOverview | null>(null)
@@ -73,38 +73,29 @@ export default function AdminTeamsPage() {
     }
   }
 
-  async function handleAdminAddMember(e: React.FormEvent, teamId: string) {
-    e.preventDefault()
-    if (!addMemberEmail.trim()) return
-    setAddMemberError("")
-    setAddingMember(true)
-    try {
-      await api.admin.addTeamMember(teamId, { email: addMemberEmail.trim() })
-      setAddMemberEmail("")
-      setAddMemberTeamId(null)
-      const members = await api.admin.getTeamMembers(teamId)
-      setTeamMembers((prev) => new Map(prev).set(teamId, members))
-      setAdminTeams((prev) => prev.map((t) => t.id === teamId ? { ...t, memberCount: members.length } : t))
-    } catch (e: unknown) {
-      setAddMemberError(e instanceof Error ? e.message : "Failed to add member")
-    } finally {
-      setAddingMember(false)
-    }
+  async function handleMemberAdded(teamId: string) {
+    const members = await api.admin.getTeamMembers(teamId)
+    setTeamMembers((prev) => new Map(prev).set(teamId, members))
+    setAdminTeams((prev) => prev.map((t) => t.id === teamId ? { ...t, memberCount: members.length } : t))
   }
 
-  async function handleAdminRemoveMember(teamId: string, userId: string) {
-    setRemoveMemberErrorTeamId(null)
+  async function handleAdminRemoveMember() {
+    if (!removeMemberConfirm) return
+    const { teamId, member } = removeMemberConfirm
     setRemoveMemberError("")
+    setRemovingMember(true)
     try {
-      await api.admin.removeTeamMember(teamId, userId)
+      await api.admin.removeTeamMember(teamId, member.userId)
       setTeamMembers((prev) => {
-        const updated = (prev.get(teamId) ?? []).filter((m) => m.userId !== userId)
+        const updated = (prev.get(teamId) ?? []).filter((m) => m.userId !== member.userId)
         return new Map(prev).set(teamId, updated)
       })
       setAdminTeams((prev) => prev.map((t) => t.id === teamId ? { ...t, memberCount: t.memberCount - 1 } : t))
+      setRemoveMemberConfirm(null)
     } catch (e: unknown) {
       setRemoveMemberError(e instanceof Error ? e.message : "Failed to remove member")
-      setRemoveMemberErrorTeamId(teamId)
+    } finally {
+      setRemovingMember(false)
     }
   }
 
@@ -162,6 +153,7 @@ export default function AdminTeamsPage() {
               <div key={member.userId}>
                 {j > 0 && <Separator />}
                 <div className="flex items-center gap-3 pl-10 pr-6 py-2.5 group">
+                  <UserAvatar name={member.name} image={member.image} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm truncate">{member.name}</p>
                     <p className="text-xs text-muted-foreground truncate">{member.email}</p>
@@ -170,7 +162,7 @@ export default function AdminTeamsPage() {
                     <Button
                       size="sm" variant="ghost"
                       className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 shrink-0"
-                      onClick={() => handleAdminRemoveMember(team.id, member.userId)}
+                      onClick={() => { setRemoveMemberError(""); setRemoveMemberConfirm({ teamId: team.id, member }) }}
                       title="Remove member"
                     >
                       ×
@@ -182,41 +174,16 @@ export default function AdminTeamsPage() {
             {!membersLoading && members && members.length === 0 && (
               <p className="text-xs text-muted-foreground pl-10 pr-6 py-2.5">No members.</p>
             )}
-            {removeMemberErrorTeamId === team.id && removeMemberError && (
-              <p className="text-xs text-destructive pl-10 pr-6 py-2">{removeMemberError}</p>
-            )}
             <div className="pl-10 pr-6 py-2 border-t border-border/50 flex items-center justify-between">
               <div className="flex-1">
                 {!team.isPersonal && (
-                  addMemberTeamId === team.id ? (
-                    <form onSubmit={(e) => handleAdminAddMember(e, team.id)} className="flex flex-col gap-2">
-                      <div className="flex gap-2 items-center">
-                        <input
-                          type="email"
-                          placeholder="user@example.com"
-                          value={addMemberEmail}
-                          onChange={(e) => setAddMemberEmail(e.target.value)}
-                          className="h-8 flex-1 rounded-md border border-input bg-background px-3 text-sm"
-                          autoFocus
-                        />
-                        <Button type="submit" size="sm" className="h-8" disabled={!addMemberEmail.trim() || addingMember}>
-                          {addingMember ? "Adding…" : "Add"}
-                        </Button>
-                        <Button type="button" size="sm" variant="ghost" className="h-8" onClick={() => { setAddMemberTeamId(null); setAddMemberEmail(""); setAddMemberError("") }}>
-                          Cancel
-                        </Button>
-                      </div>
-                      {addMemberError && <p className="text-xs text-destructive">{addMemberError}</p>}
-                    </form>
-                  ) : (
-                    <button
-                      type="button"
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      onClick={() => { setAddMemberTeamId(team.id); setAddMemberEmail(""); setAddMemberError("") }}
-                    >
-                      + Add member
-                    </button>
-                  )
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    onClick={() => setAddMemberTeamId(team.id)}
+                  >
+                    + Add member
+                  </button>
                 )}
               </div>
               <div className="flex items-center gap-1">
@@ -309,6 +276,36 @@ export default function AdminTeamsPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <UserPickerDialog
+        open={addMemberTeamId !== null}
+        onOpenChange={(open) => { if (!open) setAddMemberTeamId(null) }}
+        teamId={addMemberTeamId ?? ""}
+        existingMemberIds={new Set((addMemberTeamId ? (teamMembers.get(addMemberTeamId) ?? []) : []).map((m) => m.userId))}
+        onMemberAdded={() => { if (addMemberTeamId) handleMemberAdded(addMemberTeamId) }}
+      />
+
+      <Dialog open={removeMemberConfirm !== null} onOpenChange={(open) => { if (!open) setRemoveMemberConfirm(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove member</DialogTitle>
+            <DialogDescription>
+              Remove <strong>{removeMemberConfirm?.member.name}</strong> from this team?
+            </DialogDescription>
+          </DialogHeader>
+          {removeMemberError && (
+            <div className="flex items-center gap-2 rounded-md border border-input bg-muted px-3 py-2 mx-6 mb-2">
+              <p className="text-sm text-destructive">{removeMemberError}</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveMemberConfirm(null)} disabled={removingMember}>Cancel</Button>
+            <Button variant="destructive" onClick={handleAdminRemoveMember} disabled={removingMember}>
+              {removingMember ? "Removing…" : "Remove"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={renameTeamTarget !== null} onOpenChange={(open) => { if (!open) setRenameTeamTarget(null) }}>
         <DialogContent>
