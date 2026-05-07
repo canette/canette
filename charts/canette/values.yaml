@@ -114,7 +114,47 @@ registry:
     limits:
       cpu: 250m
       memory: 256Mi
+
+  # Storage backend configuration
+  storage:
+    # Storage type: "filesystem" (PVC) or "s3" (S3-compatible object storage)
+    type: filesystem
+
+    # S3 configuration (only used when type: s3)
+    s3:
+      # S3 bucket name (must exist before installation)
+      bucket: ""
+      # S3 region (e.g., "us-east-1")
+      region: ""
+      # S3 endpoint (optional, for S3-compatible services)
+      # Leave empty for AWS S3, set for MinIO/DigitalOcean Spaces/Backblaze B2
+      # Examples:
+      #   MinIO: "https://minio.example.com"
+      #   DigitalOcean Spaces: "https://nyc3.digitaloceanspaces.com"
+      #   Backblaze B2: "https://s3.us-west-001.backblazeb2.com"
+      #   Wasabi: "https://s3.us-east-1.wasabisys.com"
+      #   Cloudflare R2: "https://<account-id>.r2.cloudflarestorage.com"
+      endpoint: ""
+      # Enable path-style access (required for MinIO, optional for others)
+      pathStyle: false
+      # S3 credentials (static access key)
+      accessKey: ""
+      secretKey: ""
+      # Optional: read credentials from an existing Kubernetes Secret
+      # (takes precedence over accessKey/secretKey values above)
+      secretRef:
+        name: ""
+        accessKeyKey: "access-key"
+        secretKeyKey: "secret-key"
+      # Enable encryption at rest (AWS S3 only)
+      encrypt: false
+      # Enable secure transport (HTTPS)
+      secure: true
+      # Root directory within the bucket (optional, defaults to "/")
+      rootDirectory: "/"
+
   persistence:
+    # PVC configuration (only used when storage.type: filesystem)
     # Enable a PersistentVolumeClaim for registry image storage.
     # Set to false when using ephemeral clusters (e.g. quick EKS tests) where
     # provisioning a PV is not worth the effort — images will be lost on pod restart.

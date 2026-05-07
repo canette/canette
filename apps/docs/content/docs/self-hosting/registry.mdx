@@ -25,6 +25,297 @@ There are two distinct paths for registry traffic:
 
 BuildKit pushes over plain HTTP to the internal ClusterIP address. Kubelets pull over HTTPS through the Gateway, so **TLS termination on the Gateway is required** for image pulls to work.
 
+## Storage backend
+
+The in-cluster registry supports two storage backends: filesystem (default) and S3-compatible object storage.
+
+### Filesystem storage (default)
+
+By default, the registry stores images on a PersistentVolumeClaim backed by your cluster's default StorageClass:
+
+```yaml
+registry:
+  storage:
+    type: filesystem  # default
+  persistence:
+    enabled: true
+    size: 20Gi
+    # storageClass: ""  # uses cluster default
+```
+
+This works well for development, staging, and single-cluster production deployments. The PVC is tied to a single availability zone and requires manual resizing.
+
+### S3 storage
+
+For production deployments requiring durability, disaster recovery, or multi-cluster registry sharing, you can use S3-compatible object storage instead:
+
+```yaml
+registry:
+  storage:
+    type: s3
+    s3:
+      bucket: my-canette-registry
+      region: us-west-2
+      accessKey: AKIA...
+      secretKey: ...
+```
+
+When `storage.type: s3`, the PVC is not created and the registry stores all image layers in the S3 bucket.
+
+<Callout type="info">
+  **Prerequisites:** The S3 bucket must exist before installing canette. The registry will not create it automatically.
+</Callout>
+
+#### When to use S3 vs filesystem
+
+| Use Case | Recommended Storage |
+|----------|-------------------|
+| Development/staging | Filesystem (PVC) — simpler setup, lower latency |
+| Single-cluster production with good block storage | Filesystem (PVC) |
+| Production with disaster recovery needs | S3 — survives cluster recreation |
+| Multi-cluster deployments | S3 — share registry across clusters |
+| Cost optimization (>100GB of images) | S3 — typically 5-10x cheaper than block storage |
+
+#### Supported S3-compatible providers
+
+The registry's S3 driver works with any S3-compatible API:
+
+- **AWS S3** — leave `endpoint` empty to use AWS defaults
+- **MinIO** (self-hosted) — requires `pathStyle: true`
+- **DigitalOcean Spaces**
+- **Backblaze B2**
+- **Wasabi**
+- **Cloudflare R2**
+
+#### AWS S3 example
+
+```yaml
+registry:
+  storage:
+    type: s3
+    s3:
+      bucket: my-canette-registry
+      region: us-west-2
+      # Leave endpoint empty for AWS S3
+      endpoint: ""
+      pathStyle: false
+      # Credentials via Secret (recommended)
+      secretRef:
+        name: canette-s3-credentials
+        accessKeyKey: access-key
+        secretKeyKey: secret-key
+      # Enable server-side encryption
+      encrypt: true
+      secure: true
+```
+
+Create the credentials Secret before installing:
+
+```bash
+kubectl create secret generic canette-s3-credentials \
+  --namespace canette-system \
+  --from-literal=access-key=AKIA... \
+  --from-literal=secret-key=...
+```
+
+**IAM Policy** (attach to the IAM user):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::my-canette-registry"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::my-canette-registry/*"
+    }
+  ]
+}
+```
+
+#### MinIO example
+
+```yaml
+registry:
+  storage:
+    type: s3
+    s3:
+      bucket: canette-registry
+      region: us-east-1  # MinIO requires a region, any value works
+      endpoint: https://minio.example.com
+      pathStyle: true  # MinIO requires path-style access
+      accessKey: minioadmin
+      secretKey: minioadmin
+      encrypt: false  # MinIO handles encryption separately
+      secure: true
+```
+
+#### DigitalOcean Spaces example
+
+```yaml
+registry:
+  storage:
+    type: s3
+    s3:
+      bucket: my-canette-registry
+      region: nyc3  # Must match Spaces region
+      endpoint: https://nyc3.digitaloceanspaces.com
+      pathStyle: false
+      accessKey: DO00ABC...  # Spaces access key
+      secretKey: ...
+      secure: true
+```
+
+Create the bucket via the DigitalOcean Control Panel, then generate Spaces access keys under **API → Spaces Keys**.
+
+#### Backblaze B2 example
+
+```yaml
+registry:
+  storage:
+    type: s3
+    s3:
+      bucket: my-canette-registry
+      region: us-west-001  # Must match B2 region
+      endpoint: https://s3.us-west-001.backblazeb2.com
+      pathStyle: false
+      accessKey: 00abc...  # Application Key ID
+      secretKey: K00...    # Application Key
+      secure: true
+```
+
+Create the bucket in the B2 dashboard, then generate an Application Key with read/write access to the bucket.
+
+#### Wasabi example
+
+```yaml
+registry:
+  storage:
+    type: s3
+    s3:
+      bucket: my-canette-registry
+      region: us-east-1  # Must match Wasabi region
+      endpoint: https://s3.us-east-1.wasabisys.com
+      pathStyle: false
+      accessKey: WASABI-ACCESS-KEY
+      secretKey: WASABI-SECRET-KEY
+      secure: true
+```
+
+Available Wasabi regions: `us-east-1`, `us-east-2`, `us-west-1`, `eu-central-1`, `ap-northeast-1`
+
+#### Cloudflare R2 example
+
+```yaml
+registry:
+  storage:
+    type: s3
+    s3:
+      bucket: my-canette-registry
+      region: auto  # R2 uses automatic region selection
+      endpoint: https://<account-id>.r2.cloudflarestorage.com
+      pathStyle: false
+      accessKey: <r2-access-key>
+      secretKey: <r2-secret-key>
+      secure: true  # R2 encrypts at rest by default
+```
+
+Get your account ID and endpoint from **Cloudflare dashboard → R2 → Overview**. Generate API tokens under **R2 → Manage R2 API Tokens**.
+
+#### Migrating from filesystem to S3
+
+To migrate existing images from PVC storage to S3:
+
+1. Export all images from the current registry
+2. Switch Helm values to S3 storage and upgrade canette
+3. Re-push exported images to the new S3-backed registry
+4. Verify all apps can deploy
+5. Delete the old PVC
+
+```bash
+# 1. List all repositories
+kubectl port-forward -n canette-system svc/registry 5000:5000 &
+curl http://localhost:5000/v2/_catalog
+
+# 2. Pull and save each image locally
+docker pull registry.canette.example.com/my-app:abc123
+docker save -o my-app.tar registry.canette.example.com/my-app:abc123
+
+# 3. Switch to S3 storage
+helm upgrade canette ./charts/canette \
+  --reuse-values \
+  --set registry.storage.type=s3 \
+  --set registry.storage.s3.bucket=my-bucket \
+  --set registry.storage.s3.region=us-west-2 \
+  --set registry.storage.s3.secretRef.name=canette-s3-credentials
+
+# 4. Wait for registry to restart, then re-push
+docker load -i my-app.tar
+docker push registry.canette.example.com/my-app:abc123
+
+# 5. Delete old PVC (after verifying all apps work)
+kubectl delete pvc -n canette-system registry-data
+```
+
+<Callout type="warn">
+  **Registry-to-registry sync:** For large registries, consider using `crane` or `skopeo` to copy all repositories directly without downloading to your local machine. This requires both registries to be accessible simultaneously (e.g., temporarily deploying the S3 registry on a different hostname).
+</Callout>
+
+#### S3 security best practices
+
+1. **Credential management**
+   - Never commit access keys to values files
+   - Use `registry.storage.s3.secretRef` to reference a Kubernetes Secret
+   - Rotate credentials regularly (every 90 days recommended)
+   - Use separate credentials for each environment
+
+2. **Bucket security**
+   - Enable bucket versioning to recover from accidental deletions
+   - Configure lifecycle policies to automatically delete old image layers
+   - Block public access at the bucket policy level
+   - Enable access logging for audit trails
+
+3. **IAM/Access policies**
+   - Follow principle of least privilege — only grant S3 permissions needed (`GetObject`, `PutObject`, `DeleteObject`, `ListBucket`)
+   - For AWS: create a dedicated IAM user per cluster, never use root credentials
+   - For other providers: create application-specific access keys, not account-level keys
+
+4. **Encryption**
+   - For AWS S3: set `encrypt: true` to enable server-side encryption (AES-256)
+   - For other providers: check if encryption at rest is enabled by default
+   - Always use `secure: true` (HTTPS) to encrypt data in transit
+
+5. **Network security**
+   - Use private S3 endpoints (VPC endpoints for AWS) to avoid internet egress when possible
+   - For MinIO/self-hosted: use TLS certificates from a trusted CA
+
+#### Trade-offs
+
+**Advantages of S3 storage:**
+- Durability: 99.999999999% (11 9's) for AWS S3
+- Cost: ~$0.023/GB/month vs ~$0.10/GB/month for EBS
+- Scalability: No resizing required, unlimited capacity
+- Multi-cluster: Share registry data across multiple canette installations
+- Backup: Use S3 versioning and lifecycle policies
+
+**Disadvantages of S3 storage:**
+- Network latency: S3 API is slower than local disk for small files
+- Egress costs: Pulling images from S3 to nodes incurs data transfer fees (can be significant)
+- Complexity: Requires S3 bucket setup and credential management
+- No atomic operations: S3 is eventually consistent (can cause rare race conditions)
+
 ## Credentials
 
 Registry credentials are auto-generated on first install and reused on every upgrade — no configuration needed. Build jobs receive the credentials automatically via the `canette-registry-auth` docker config Secret.
