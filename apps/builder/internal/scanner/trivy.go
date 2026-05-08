@@ -27,6 +27,7 @@ type TrivyProvider struct {
 	namespace     string
 	trivyImage    string
 	regAuthSecret string
+	insecure      bool // true when scanning from an HTTP (non-TLS) registry
 	mandatory     bool
 	failSeverity  string
 	logAppender   LogAppender
@@ -38,11 +39,16 @@ func newTrivyProvider(cfg Config) *TrivyProvider {
 	if log == nil {
 		log = zap.NewNop()
 	}
+	// Auto-detect HTTP registries that need --insecure: in-cluster registry and localhost.
+	insecure := strings.Contains(cfg.ImageRepo, ".svc.cluster.local") ||
+		strings.HasPrefix(cfg.ImageRepo, "localhost") ||
+		strings.HasPrefix(cfg.ImageRepo, "127.0.0.1")
 	return &TrivyProvider{
 		k8s:           cfg.K8sClient,
 		namespace:     cfg.Namespace,
 		trivyImage:    cfg.TrivyImage,
 		regAuthSecret: cfg.RegAuthSecret,
+		insecure:      insecure,
 		mandatory:     cfg.Mandatory,
 		failSeverity:  cfg.FailSeverity,
 		logAppender:   cfg.LogAppender,
@@ -138,6 +144,14 @@ SBOM_B64=$(base64 < /results/sbom.json | tr -d '\n')
 echo "CAN_SCAN_SBOM=${SBOM_B64}"
 `
 
+func (p *TrivyProvider) buildEnv(imageRef string) []corev1.EnvVar {
+	env := []corev1.EnvVar{{Name: "IMAGE_REF", Value: imageRef}}
+	if p.insecure {
+		env = append(env, corev1.EnvVar{Name: "TRIVY_INSECURE", Value: "true"})
+	}
+	return env
+}
+
 func (p *TrivyProvider) buildJob(deploymentID, imageRef, jobName string) *batchv1.Job {
 	ttl := int32(600)
 	backoff := int32(0)
@@ -198,10 +212,10 @@ func (p *TrivyProvider) buildJob(deploymentID, imageRef, jobName string) *batchv
 					Volumes: volumes,
 					Containers: []corev1.Container{
 						{
-							Name:         "trivy",
-							Image:        p.trivyImage,
-							Command:      []string{"sh", "-c", scanScript},
-							Env:          []corev1.EnvVar{{Name: "IMAGE_REF", Value: imageRef}},
+							Name:    "trivy",
+							Image:   p.trivyImage,
+							Command: []string{"sh", "-c", scanScript},
+							Env:     p.buildEnv(imageRef),
 							VolumeMounts: volumeMounts,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
