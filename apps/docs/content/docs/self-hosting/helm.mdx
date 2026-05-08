@@ -224,7 +224,7 @@ Scanning is configured under `security.scan` and is applied at build time by the
 security:
   scan:
     provider: "auto"    # "auto" | "trivy" | "ecr" | "none"
-    enabled: ""         # "" = provider-aware default (see below)
+    enabled: ""         # "" = provider-aware default; use "true"/"false" (quoted strings)
     mandatory: false    # true blocks deployments when findings exceed failSeverity
     failSeverity: "HIGH" # CRITICAL | HIGH | MEDIUM | LOW
 ```

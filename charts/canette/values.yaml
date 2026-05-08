@@ -282,10 +282,11 @@ security:
     # "auto" detects from IMAGE_REPO: ECR URLs → ecr, everything else → trivy.
     provider: "auto"
     # Enabled: "" (provider-aware default) | "true" | "false"
+    # Must be a quoted string, not a YAML boolean — use "true" not true.
     # When empty: ECR provider is enabled by default (free), Trivy is disabled (slow, opt-in).
     enabled: ""
     # Block deployment when scan finds issues at or above this severity.
-    # Only applies when mandatory is true.
+    # Only applies when mandatory: true.
     mandatory: false
     failSeverity: "HIGH"  # CRITICAL | HIGH | MEDIUM | LOW
 

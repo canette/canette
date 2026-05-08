@@ -199,7 +199,7 @@ ECR basic scanning is **enabled by default** when the ECR provider is active (it
 security:
   scan:
     provider: "auto"   # "ecr" is auto-selected for ECR imageRepo URLs
-    enabled: "true"    # omit or set "" to use the provider-aware default (enabled for ECR)
+    enabled: "true"    # quoted string; omit or set "" to use the provider-aware default (enabled for ECR)
     mandatory: false   # set true to block deployments when findings exceed failSeverity
     failSeverity: "HIGH"
 ```
