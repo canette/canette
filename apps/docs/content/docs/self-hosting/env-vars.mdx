@@ -36,6 +36,11 @@ Each canette service is a single binary or container. All configuration is provi
 | `DEFAULT_CPU_LIMIT` | no | Default CPU limit for app deployments. Default: `500m`. |
 | `DEFAULT_MEMORY_LIMIT` | no | Default memory limit for app deployments. Default: `512Mi`. |
 | `WEBHOOK_BASE_URL` | no | Public base URL used when registering webhooks with git providers. Defaults to `UI_URL`. |
+| `IMAGE_REPO` | no | Registry address (same value as on the builder). Used by the API to resolve the active scan provider for the admin settings display. |
+| `SCAN_PROVIDER` | no | Mirrors the builder value — used to display the active scan configuration in the admin UI. |
+| `SCAN_ENABLED` | no | Mirrors the builder value — displayed in the admin UI. |
+| `SCAN_MANDATORY` | no | Mirrors the builder value — displayed in the admin UI. |
+| `SCAN_FAIL_SEVERITY` | no | Mirrors the builder value — displayed in the admin UI. |
 | `DISABLE_EMAIL_SIGNUP` | no | Set to `true` to prevent new users from signing up via email. Default: `false`. |
 | `RUN_MIGRATIONS` | no | Set to `false` to skip running database migrations at startup. Default: `true`. |
 
@@ -51,7 +56,11 @@ Each canette service is a single binary or container. All configuration is provi
 | `GIT_INIT_IMAGE` | yes | Image used for the git-clone init container in build jobs, e.g. `ghcr.io/canette/canette-builder-git-init:1.0.0`. |
 | `BUILDER_NAMESPACE` | yes | Kubernetes namespace where build jobs are created, e.g. `canette-system-build`. |
 | `REGISTRY_AUTH_SECRET` | no | Name of the Kubernetes Secret containing docker config JSON for registry authentication. Mounted into build job pods. |
-| `TRIVY_IMAGE` | no | Trivy image for vulnerability scanning jobs. Default: `aquasec/trivy:0.51.0`. |
+| `SCAN_PROVIDER` | no | Scan backend: `auto`, `trivy`, `ecr`, or `none`. `auto` (default) selects `ecr` for ECR registries and `trivy` otherwise. |
+| `SCAN_ENABLED` | no | `true` or `false`. Leave empty (default) for provider-aware defaults: ECR scanning is enabled, Trivy scanning is disabled. |
+| `SCAN_MANDATORY` | no | Set to `true` to block deployments when the scan finds issues at or above `SCAN_FAIL_SEVERITY`. Default: `false`. |
+| `SCAN_FAIL_SEVERITY` | no | Severity threshold for mandatory scans: `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW`. Default: `HIGH`. |
+| `TRIVY_IMAGE` | no | Trivy image used when `SCAN_PROVIDER=trivy`. Default: `aquasec/trivy:0.51.0`. |
 | `POLL_INTERVAL` | no | How often to poll for pending builds. Default: `5s`. |
 | `MAX_CONCURRENT` | no | Maximum number of concurrent builds. Default: `3`. |
 | `GITHUB_APP_ID` | no | GitHub App ID (for GitHub App git credential type). |
