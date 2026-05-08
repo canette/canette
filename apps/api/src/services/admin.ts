@@ -372,11 +372,9 @@ export async function getProjectsOverview(db: DB): Promise<AdminProjectOverview[
 // Scan configuration is set via Helm values and injected as environment variables.
 // It is read-only at runtime — change it by updating the Helm release.
 export function getSecurityInfo(): ScanInfo {
-  // Use String() to normalise values — Bun coerces bare "true"/"false" env vars
-  // to JS booleans, so process.env.SCAN_ENABLED may be boolean true, not string "true".
-  const providerEnv = String(process.env.SCAN_PROVIDER ?? "auto")
-  const enabledEnv = String(process.env.SCAN_ENABLED ?? "")
-  const imageRepo = String(process.env.IMAGE_REPO ?? "")
+  const providerEnv = process.env.SCAN_PROVIDER ?? "auto"
+  const enabledEnv = process.env.SCAN_ENABLED ?? ""
+  const imageRepo = process.env.IMAGE_REPO ?? ""
 
   // Resolve provider name for display (mirrors scanner.detectProvider in Go)
   let provider = providerEnv
@@ -396,7 +394,7 @@ export function getSecurityInfo(): ScanInfo {
   return {
     provider,
     enabled,
-    mandatory: String(process.env.SCAN_MANDATORY ?? "") === "true",
+    mandatory: process.env.SCAN_MANDATORY === "true",
     failSeverity: (process.env.SCAN_FAIL_SEVERITY ?? "HIGH") as ScanInfo["failSeverity"],
   }
 }
