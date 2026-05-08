@@ -331,6 +331,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		scanResult, scanErr := b.scanProvider.Scan(ctx, dep.ID, imageRef)
 		if scanErr != nil {
 			log.Warn("scan failed to run", zap.Error(scanErr))
+			_ = b.store.AppendLog(ctx, dep.ID, "stdout", "[canette] scan error: "+scanErr.Error())
 			_ = b.store.SetScanResults(ctx, dep.ID, "error", "", "")
 		} else {
 			_ = b.store.SetScanResults(ctx, dep.ID, scanResult.Status, scanResult.Summary, scanResult.SBOM)
