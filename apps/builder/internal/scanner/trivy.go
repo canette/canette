@@ -119,8 +119,7 @@ trivy image \
   --format json \
   --output /results/findings.json \
   --exit-code 0 \
-  --quiet \
-  "${IMAGE_REF}"
+  "${IMAGE_REF}" || { echo "[canette] trivy scan step failed"; exit 1; }
 
 echo "Generating SBOM ..."
 trivy image \
@@ -128,8 +127,7 @@ trivy image \
   --output /results/sbom.json \
   --scanners vuln \
   --exit-code 0 \
-  --quiet \
-  "${IMAGE_REF}"
+  "${IMAGE_REF}" || { echo "[canette] trivy sbom step failed"; exit 1; }
 
 CRITICAL=$(awk 'BEGIN{c=0} /"Severity":"CRITICAL"/{c++} END{print c}' /results/findings.json)
 HIGH=$(awk 'BEGIN{c=0} /"Severity":"HIGH"/{c++} END{print c}' /results/findings.json)
