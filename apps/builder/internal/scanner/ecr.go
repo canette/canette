@@ -102,7 +102,7 @@ func (p *ECRProvider) buildResult(findings *ecrtypes.ImageScanFindings) (*ScanRe
 	}
 	if findings != nil {
 		for sev, count := range findings.FindingSeverityCounts {
-			counts[strings.ToLower(string(sev))] = int(count)
+			counts[strings.ToLower(sev)] = int(count)
 		}
 	}
 
