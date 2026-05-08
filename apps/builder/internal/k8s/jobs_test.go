@@ -61,7 +61,6 @@ var baseCfg = BuildConfig{
 	BuildkitdAddr: "tcp://buildkitd.canette-build.svc.cluster.local:1234",
 	BuilderImage:  "registry.example.com/canette-builder:latest",
 	GitInitImage:  "registry.example.com/canette-builder-git-init:latest",
-	TrivyImage:    "aquasec/trivy:0.51.0",
 }
 
 const (
@@ -335,114 +334,6 @@ func TestBuildJob_CANETTECONFIGEncoding(t *testing.T) {
 	}
 }
 
-
-func TestScanJob(t *testing.T) {
-	const imageRef = "registry.example.com/myproject/myapp:git-abc1234"
-
-	tests := []struct {
-		name    string
-		cfg     BuildConfig
-		checkFn func(t *testing.T, spec corev1.PodSpec, trivy corev1.Container)
-	}{
-		{
-			name: "no registry auth",
-			cfg:  baseCfg,
-			checkFn: func(t *testing.T, spec corev1.PodSpec, trivy corev1.Container) {
-				if hasVolume(spec, "registry-auth") {
-					t.Error("registry-auth volume must not be present without RegistryAuthSecret")
-				}
-				for _, m := range trivy.VolumeMounts {
-					if m.Name == "registry-auth" {
-						t.Error("trivy must not have registry-auth mount without RegistryAuthSecret")
-					}
-				}
-			},
-		},
-		{
-			name: "with registry auth",
-			cfg: BuildConfig{
-				Namespace:          baseCfg.Namespace,
-				ImageRepo:          baseCfg.ImageRepo,
-				BuildkitdAddr:      baseCfg.BuildkitdAddr,
-				BuilderImage:       baseCfg.BuilderImage,
-				GitInitImage:       baseCfg.GitInitImage,
-				RegistryAuthSecret: "my-reg-secret",
-				TrivyImage:         baseCfg.TrivyImage,
-			},
-			checkFn: func(t *testing.T, spec corev1.PodSpec, trivy corev1.Container) {
-				if !hasVolume(spec, "registry-auth") {
-					t.Fatal("registry-auth volume must be present when RegistryAuthSecret is set")
-				}
-				if !hasMountAt(trivy, "registry-auth", "/root/.docker") { // trivy image runs as root
-					t.Error("trivy must mount registry-auth at /root/.docker")
-				}
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			job := ScanJob(testDeploymentID, imageRef, tc.cfg)
-
-			// --- Job metadata ---
-			if job.Name != ScanJobName(testDeploymentID) {
-				t.Errorf("job.Name = %q, want %q", job.Name, ScanJobName(testDeploymentID))
-			}
-			if job.Namespace != tc.cfg.Namespace {
-				t.Errorf("job.Namespace = %q, want %q", job.Namespace, tc.cfg.Namespace)
-			}
-			if job.Labels["canette.dev/deployment"] != testDeploymentID {
-				t.Errorf("label canette.dev/deployment = %q, want %q", job.Labels["canette.dev/deployment"], testDeploymentID)
-			}
-			if job.Annotations["canette.dev/deployment-id"] != testDeploymentID {
-				t.Errorf("annotation canette.dev/deployment-id = %q, want %q", job.Annotations["canette.dev/deployment-id"], testDeploymentID)
-			}
-
-			// --- Job spec ---
-			if job.Spec.TTLSecondsAfterFinished == nil || *job.Spec.TTLSecondsAfterFinished != 600 {
-				t.Error("TTLSecondsAfterFinished must be 600")
-			}
-			if job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 {
-				t.Error("BackoffLimit must be 0")
-			}
-
-			podSpec := job.Spec.Template.Spec
-			if podSpec.RestartPolicy != corev1.RestartPolicyNever {
-				t.Errorf("RestartPolicy = %q, want Never", podSpec.RestartPolicy)
-			}
-			if !hasVolume(podSpec, "results") {
-				t.Fatal("results volume must be present")
-			}
-
-			// --- trivy container ---
-			if len(podSpec.Containers) != 1 {
-				t.Fatalf("want 1 container, got %d", len(podSpec.Containers))
-			}
-			trivy := podSpec.Containers[0]
-			if trivy.Name != "trivy" {
-				t.Errorf("container name = %q, want 'trivy'", trivy.Name)
-			}
-			if trivy.Image != "aquasec/trivy:0.51.0" {
-				t.Errorf("trivy image = %q, want aquasec/trivy:0.51.0", trivy.Image)
-			}
-			if findEnv(t, trivy, "IMAGE_REF") != imageRef {
-				t.Errorf("IMAGE_REF = %q, want %q", findEnv(t, trivy, "IMAGE_REF"), imageRef)
-			}
-
-			// --- resource requests/limits ---
-			cpuReq := trivy.Resources.Requests[corev1.ResourceCPU]
-			if cpuReq.Cmp(resource.MustParse("100m")) != 0 {
-				t.Errorf("trivy CPU request = %v, want 100m", cpuReq)
-			}
-			memLim := trivy.Resources.Limits[corev1.ResourceMemory]
-			if memLim.Cmp(resource.MustParse("1Gi")) != 0 {
-				t.Errorf("trivy memory limit = %v, want 1Gi", memLim)
-			}
-
-			tc.checkFn(t, podSpec, trivy)
-		})
-	}
-}
 
 func TestBuildJob_SecurityContext(t *testing.T) {
 	job := BuildJob(

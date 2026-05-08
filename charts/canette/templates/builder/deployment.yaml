@@ -60,6 +60,14 @@ spec:
               value: {{ include "canette.serviceImage" (list . "canette-builder-git-init" .Values.builder.gitInitImage) | quote }}
             - name: TRIVY_IMAGE
               value: {{ .Values.builder.trivyImage | quote }}
+            - name: SCAN_PROVIDER
+              value: {{ .Values.security.scan.provider | quote }}
+            - name: SCAN_ENABLED
+              value: {{ .Values.security.scan.enabled | quote }}
+            - name: SCAN_MANDATORY
+              value: {{ .Values.security.scan.mandatory | quote }}
+            - name: SCAN_FAIL_SEVERITY
+              value: {{ .Values.security.scan.failSeverity | quote }}
             - name: POLL_INTERVAL
               value: {{ .Values.builder.pollInterval | quote }}
             - name: MAX_CONCURRENT

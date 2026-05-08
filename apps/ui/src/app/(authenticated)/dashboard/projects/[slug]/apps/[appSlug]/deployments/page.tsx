@@ -195,7 +195,7 @@ export default function DeploymentsPage() {
                     {d.status === "live" && (
                       <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setManifestDeployment(d)}>Manifest</Button>
                     )}
-                    {(d.scanStatus === "pass" || d.scanStatus === "fail") && (
+                    {d.hasSbom && (d.scanStatus === "pass" || d.scanStatus === "fail") && (
                       <Button size="sm" variant="ghost" className="h-7 px-2" onClick={async () => {
                         try {
                           const { sbom } = await api.deployments.sbom(d.id)

@@ -130,11 +130,14 @@ export interface Deployment {
   errorMessage?: string
   scanStatus?: ScanStatus
   scanSummary?: ScanSummary
+  hasSbom: boolean
   createdAt: string
   updatedAt: string
 }
 
-export interface ScanPolicy {
+// ScanInfo is the read-only security config served from env vars (Helm values).
+export interface ScanInfo {
+  provider: string      // resolved provider name: "trivy" | "ecr" | "none"
   enabled: boolean
   mandatory: boolean
   failSeverity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"

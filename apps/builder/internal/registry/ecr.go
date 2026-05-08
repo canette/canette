@@ -85,7 +85,7 @@ func (p *ECRProvider) EnsureRepository(ctx context.Context, repoName string) err
 	_, err = p.client.CreateRepository(ctx, &ecr.CreateRepositoryInput{
 		RepositoryName: aws.String(fullRepoName),
 		ImageScanningConfiguration: &types.ImageScanningConfiguration{
-			ScanOnPush: false, // canette uses Trivy for scanning
+			ScanOnPush: false, // canette triggers scans explicitly via StartImageScan
 		},
 		EncryptionConfiguration: &types.EncryptionConfiguration{
 			EncryptionType: types.EncryptionTypeAes256, // Default ECR encryption

@@ -34,11 +34,6 @@ type deploymentSnapshot struct {
 		Slug    string `json:"slug"`
 		OwnerID string `json:"owner_id"`
 	} `json:"project"`
-	ScanPolicy struct {
-		ScanEnabled   bool   `json:"scan_enabled"`
-		ScanMandatory bool   `json:"scan_mandatory"`
-		FailSeverity  string `json:"fail_severity"`
-	} `json:"scan_policy"`
 }
 
 // PendingDeployment is a deployment row joined with its app and project.
@@ -54,14 +49,6 @@ type PendingDeployment struct {
 	GitCredID     *string
 	ProjectSlug   string
 	CanetteConfig string // snapshotted from apps.canette_config at deployment creation; base layer for the build
-	ScanPolicy    ScanPolicy
-}
-
-// ScanPolicy holds the operator-configured scanning behaviour.
-type ScanPolicy struct {
-	Enabled      bool
-	Mandatory    bool
-	FailSeverity string // "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
 }
 
 // GitCredential is a decrypted-ready credential row.
@@ -144,14 +131,6 @@ func (s *Store) ClaimPending(ctx context.Context, limit int) ([]PendingDeploymen
 		if snap.App.GitCredentialID != "" {
 			credID := snap.App.GitCredentialID
 			d.GitCredID = &credID
-		}
-		d.ScanPolicy = ScanPolicy{
-			Enabled:      snap.ScanPolicy.ScanEnabled,
-			Mandatory:    snap.ScanPolicy.ScanMandatory,
-			FailSeverity: snap.ScanPolicy.FailSeverity,
-		}
-		if d.ScanPolicy.FailSeverity == "" {
-			d.ScanPolicy.FailSeverity = "CRITICAL"
 		}
 		deps = append(deps, d)
 	}

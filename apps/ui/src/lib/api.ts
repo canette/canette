@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminTeamOverview, App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanPolicy, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminTeamOverview, App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -164,9 +164,7 @@ export const admin = {
     request<void>(`/admin/teams/${teamId}/members/${userId}`, { method: "DELETE" }),
   sync: () => request<SyncResult>("/admin/sync", { method: "POST" }),
   resetStuck: () => request<SyncResult>("/admin/reset-stuck", { method: "POST" }),
-  getScanPolicy: () => request<ScanPolicy>("/admin/settings/security"),
-  updateScanPolicy: (patch: Partial<ScanPolicy>) =>
-    request<ScanPolicy>("/admin/settings/security", { method: "PATCH", body: JSON.stringify(patch) }),
+  getSecurityInfo: () => request<ScanInfo>("/admin/settings/security"),
   getWebhookSettings: () => request<WebhookSettings>("/admin/settings/webhooks"),
   getResourceDefaults: () => request<ResourceDefaults>("/admin/settings/resources"),
   resetUserPassword: (id: string) =>

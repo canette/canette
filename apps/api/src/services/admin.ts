@@ -1,5 +1,5 @@
 import type { DB } from "../db/db"
-import type { AdminAppSummary, AdminProjectOverview, DeploymentStatus, ResourceDefaults, ScanPolicy, SyncResult, TeamMember, User, UserDeletionImpact, UserRole, WebhookSettings } from "@canette/types"
+import type { AdminAppSummary, AdminProjectOverview, DeploymentStatus, ResourceDefaults, ScanInfo, SyncResult, TeamMember, User, UserDeletionImpact, UserRole, WebhookSettings } from "@canette/types"
 import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
@@ -367,53 +367,36 @@ export async function getProjectsOverview(db: DB): Promise<AdminProjectOverview[
   }))
 }
 
-// ── Scan policy ───────────────────────────────────────────────────────────────
+// ── Security info ─────────────────────────────────────────────────────────────
 
-export async function getScanPolicy(db: DB): Promise<ScanPolicy> {
-  const rows = await db
-    .selectFrom("admin_settings")
-    .select(["key", "value"])
-    .where("key", "like", "security.%")
-    .execute()
-  const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]))
+// Scan configuration is set via Helm values and injected as environment variables.
+// It is read-only at runtime — change it by updating the Helm release.
+export function getSecurityInfo(): ScanInfo {
+  const providerEnv = process.env.SCAN_PROVIDER ?? "auto"
+  const enabledEnv = process.env.SCAN_ENABLED ?? ""
+  const imageRepo = process.env.IMAGE_REPO ?? ""
+
+  // Resolve provider name for display (mirrors scanner.detectProvider in Go)
+  let provider = providerEnv
+  if (provider === "auto" || provider === "") {
+    provider = imageRepo.includes(".ecr.") && imageRepo.includes(".amazonaws.com") ? "ecr" : "trivy"
+  }
+  if (provider === "none") {
+    return { provider: "none", enabled: false, mandatory: false, failSeverity: "HIGH" }
+  }
+
+  // Resolve enabled with same provider-aware defaults as the Go builder
+  let enabled: boolean
+  if (enabledEnv === "true") enabled = true
+  else if (enabledEnv === "false") enabled = false
+  else enabled = provider === "ecr"
+
   return {
-    enabled: settings["security.scan_enabled"] === "true",
-    mandatory: settings["security.scan_mandatory"] === "true",
-    failSeverity: (settings["security.fail_severity"] ?? "CRITICAL") as ScanPolicy["failSeverity"],
+    provider,
+    enabled,
+    mandatory: process.env.SCAN_MANDATORY === "true",
+    failSeverity: (process.env.SCAN_FAIL_SEVERITY ?? "HIGH") as ScanInfo["failSeverity"],
   }
-}
-
-export async function updateScanPolicy(
-  db: DB,
-  patch: Partial<ScanPolicy>
-): Promise<ScanPolicy> {
-  const now = new Date().toISOString()
-  if (patch.enabled !== undefined) {
-    await db
-      .insertInto("admin_settings")
-      .values({ key: "security.scan_enabled", value: patch.enabled ? "true" : "false", updated_at: now })
-      .onConflict((oc) => oc.column("key").doUpdateSet({ value: patch.enabled ? "true" : "false", updated_at: now }))
-      .execute()
-  }
-  if (patch.mandatory !== undefined) {
-    await db
-      .insertInto("admin_settings")
-      .values({ key: "security.scan_mandatory", value: patch.mandatory ? "true" : "false", updated_at: now })
-      .onConflict((oc) => oc.column("key").doUpdateSet({ value: patch.mandatory ? "true" : "false", updated_at: now }))
-      .execute()
-  }
-  if (patch.failSeverity !== undefined) {
-    const valid = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
-    if (!valid.includes(patch.failSeverity)) {
-      throw new ServiceError("Invalid failSeverity", "VALIDATION_ERROR", 400)
-    }
-    await db
-      .insertInto("admin_settings")
-      .values({ key: "security.fail_severity", value: patch.failSeverity, updated_at: now })
-      .onConflict((oc) => oc.column("key").doUpdateSet({ value: patch.failSeverity!, updated_at: now }))
-      .execute()
-  }
-  return getScanPolicy(db)
 }
 
 // ── Resource defaults ─────────────────────────────────────────────────────────
