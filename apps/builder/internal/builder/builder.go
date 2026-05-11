@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -34,8 +33,21 @@ func base64Decode(s string) ([]byte, error) {
 }
 
 // Builder polls the database for pending deployments and runs them as K8s Jobs.
+// Storer is the subset of store.Store methods used by the builder.
+type Storer interface {
+	ClaimPending(ctx context.Context, limit int) ([]store.PendingDeployment, error)
+	AppendLog(ctx context.Context, deploymentID, stream, line string) error
+	MarkFailed(ctx context.Context, deploymentID, errMsg string) error
+	GetGitCredential(ctx context.Context, id string) (*store.GitCredential, error)
+	SetDeploymentCanetteConfig(ctx context.Context, deploymentID, yamlContent string) error
+	UpdateCommitSha(ctx context.Context, deploymentID, sha string) error
+	MarkScanning(ctx context.Context, deploymentID, scanJobName string) error
+	SetScanResults(ctx context.Context, deploymentID, scanStatus, scanSummary, sbom string) error
+	MarkDeploying(ctx context.Context, deploymentID, imageDigest string) error
+}
+
 type Builder struct {
-	store          *store.Store
+	store          Storer
 	k8s            kubernetes.Interface
 	cfg            k8sjobs.BuildConfig
 	cryptoKey      []byte
@@ -49,7 +61,7 @@ type Builder struct {
 
 // New creates a Builder.
 func New(
-	s *store.Store,
+	s Storer,
 	k kubernetes.Interface,
 	cfg k8sjobs.BuildConfig,
 	cryptoKey []byte,
@@ -58,14 +70,12 @@ func New(
 	maxConcurrent int,
 	scanCfg scanner.Config,
 ) *Builder {
-	// Read registry auth type from env, defaulting based on detected provider
-	registryAuthType := os.Getenv("REGISTRY_AUTH_TYPE")
-	if registryAuthType == "" {
-		provider := registry.DetectProvider(cfg.ImageRepo)
-		if provider == "ecr" {
-			registryAuthType = "irsa"
+	// Resolve registry auth type: explicit env var wins, otherwise detect from image repo URL.
+	if cfg.RegistryAuthType == "" {
+		if registry.DetectProvider(cfg.ImageRepo) == "ecr" {
+			cfg.RegistryAuthType = "irsa"
 		} else {
-			registryAuthType = "static"
+			cfg.RegistryAuthType = "static"
 		}
 	}
 
@@ -87,7 +97,7 @@ func New(
 		maxConcurrent: maxConcurrent,
 		registryConfig: registry.Config{
 			ImageRepo: cfg.ImageRepo,
-			AuthType:  registryAuthType,
+			AuthType:  cfg.RegistryAuthType,
 		},
 		scanProvider:  scanProvider,
 		scanProviderName: providerName,
