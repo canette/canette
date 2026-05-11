@@ -57,6 +57,38 @@ func CredSecretName(deploymentID string) string {
 	return "can-gitcred-" + short
 }
 
+// RegistryAuthSecretName returns the name of the per-build registry auth Secret.
+func RegistryAuthSecretName(deploymentID string) string {
+	short := deploymentID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	return "can-regauth-" + short
+}
+
+// CreateRegistryAuthSecret creates a per-build Secret containing a docker config.json
+// with the provided credentials. buildctl reads this and forwards auth to buildkitd.
+func CreateRegistryAuthSecret(ctx context.Context, client kubernetes.Interface, namespace, name, configJSON string) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "canette",
+				"canette.dev/component":        "builder",
+			},
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: []byte(configJSON),
+		},
+	}
+	if _, err := client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create registry auth secret: %w", err)
+	}
+	return nil
+}
+
 // BuildJob constructs a batchv1.Job that clones a git repo and builds it with railpack.
 // credSecretName may be empty when no git credentials are needed.
 // canetteConfig is the UI-configured canette.yaml YAML string (may be empty); it is
@@ -209,21 +241,8 @@ func BuildJob(
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					ServiceAccountName: func() string {
-						if cfg.RegistryAuthType == "irsa" {
-							return "canette-build-job"
-						}
-						return "" // uses default service account (token is never mounted when AutomountServiceAccountToken=false)
-					}(),
-					AutomountServiceAccountToken: func() *bool {
-						// IRSA requires the service account token to be mounted
-						if cfg.RegistryAuthType == "irsa" {
-							return ptrBool(true)
-						}
-						// Static auth doesn't need the token
-						return ptrBool(false)
-					}(),
+					RestartPolicy:                corev1.RestartPolicyNever,
+					AutomountServiceAccountToken: ptrBool(false),
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: ptrBool(true),
 						RunAsUser:    ptrInt64(10001),

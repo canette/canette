@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -99,16 +100,34 @@ func (p *ECRProvider) EnsureRepository(ctx context.Context, repoName string) err
 	return nil
 }
 
-// GetAuthConfig returns authentication configuration for BuildKit
+// GetAuthConfig fetches a short-lived ECR token using the ambient IAM credentials
+// (IRSA service account token, EC2 instance profile, or env-var credentials).
+// The returned token is valid for 12 hours and is used to create a per-build
+// docker config Secret that buildctl forwards to buildkitd on push.
 func (p *ECRProvider) GetAuthConfig(ctx context.Context) (*AuthConfig, error) {
-	// ECR always uses IRSA when authType="irsa"
-	// BuildKit will use IRSA credentials from environment automatically
-	if p.authType == "irsa" {
+	if p.authType != "irsa" {
+		// Static auth: credentials come from a pre-configured REGISTRY_AUTH_SECRET.
 		return nil, nil
 	}
 
-	// For static auth with ECR, credentials should be provided via
-	// existing REGISTRY_AUTH_SECRET mechanism (pre-generated ECR token)
-	// This is a fallback for non-EKS clusters
-	return nil, fmt.Errorf("ECR static auth not implemented - use REGISTRY_AUTH_SECRET")
+	out, err := p.client.GetAuthorizationToken(ctx, &ecr.GetAuthorizationTokenInput{})
+	if err != nil {
+		return nil, fmt.Errorf("get ECR authorization token: %w", err)
+	}
+	if len(out.AuthorizationData) == 0 {
+		return nil, fmt.Errorf("no ECR authorization data returned")
+	}
+
+	tokenBytes, err := base64.StdEncoding.DecodeString(aws.ToString(out.AuthorizationData[0].AuthorizationToken))
+	if err != nil {
+		return nil, fmt.Errorf("decode ECR authorization token: %w", err)
+	}
+
+	// ECR tokens are "AWS:<password>" encoded in base64.
+	parts := strings.SplitN(string(tokenBytes), ":", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("unexpected ECR token format")
+	}
+
+	return &AuthConfig{Username: parts[0], Password: parts[1]}, nil
 }
