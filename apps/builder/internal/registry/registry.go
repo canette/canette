@@ -55,8 +55,10 @@ func NewProvider(cfg Config) (Provider, error) {
 	}
 }
 
-// BuildDockerConfigJSON creates a Docker config.json for BuildKit
-func BuildDockerConfigJSON(registryURL string, auth *AuthConfig) (string, error) {
+// BuildDockerConfigJSON creates a Docker config.json for BuildKit.
+// imageRepo may include a path prefix (e.g. "host.example.com/org/"); only
+// the hostname is used as the auths key so Docker and buildctl can match it.
+func BuildDockerConfigJSON(imageRepo string, auth *AuthConfig) (string, error) {
 	if auth == nil {
 		// IRSA: return empty config, credentials come from environment
 		return "{}", nil
@@ -64,7 +66,7 @@ func BuildDockerConfigJSON(registryURL string, auth *AuthConfig) (string, error)
 
 	config := DockerConfigJSON{
 		Auths: map[string]AuthConfig{
-			registryURL: *auth,
+			ExtractRegistryURL(imageRepo): *auth,
 		},
 	}
 
