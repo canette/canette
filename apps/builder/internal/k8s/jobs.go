@@ -191,13 +191,21 @@ func BuildJob(
 			Image:           cfg.BuilderImage,
 			ImagePullPolicy: pullPolicy(cfg.BuilderImage),
 			Command:         []string{"/usr/local/bin/canette-build"},
-			Env: []corev1.EnvVar{
-				{Name: "APP_NAME", Value: projectSlug + "/" + appSlug},
-				{Name: "APP_PATH", Value: appPath},
-				{Name: "IMAGE_REPO", Value: cfg.ImageRepo},
-				{Name: "BUILDKIT_HOST", Value: cfg.BuildkitdAddr},
-				{Name: "CANETTE_CONFIG", Value: base64.StdEncoding.EncodeToString([]byte(canetteConfig))},
-			},
+			Env: func() []corev1.EnvVar {
+				env := []corev1.EnvVar{
+					{Name: "APP_NAME", Value: projectSlug + "/" + appSlug},
+					{Name: "APP_PATH", Value: appPath},
+					{Name: "IMAGE_REPO", Value: cfg.ImageRepo},
+					{Name: "BUILDKIT_HOST", Value: cfg.BuildkitdAddr},
+					{Name: "CANETTE_CONFIG", Value: base64.StdEncoding.EncodeToString([]byte(canetteConfig))},
+				}
+				if cfg.RegistryAuthSecret != "" {
+					// Tell buildctl exactly where the docker config is so it
+					// forwards credentials to buildkitd regardless of HOME.
+					env = append(env, corev1.EnvVar{Name: "DOCKER_CONFIG", Value: "/home/canette/.docker"})
+				}
+				return env
+			}(),
 			VolumeMounts: func() []corev1.VolumeMount {
 				mounts := []corev1.VolumeMount{
 					{Name: "workspace", MountPath: "/workspace", ReadOnly: true},
@@ -205,7 +213,7 @@ func BuildJob(
 				if cfg.RegistryAuthSecret != "" {
 					mounts = append(mounts, corev1.VolumeMount{
 						Name:      "registry-auth",
-						MountPath: "/home/canette/.docker", // matches USER canette home in the image-build Dockerfile
+						MountPath: "/home/canette/.docker",
 						ReadOnly:  true,
 					})
 				}

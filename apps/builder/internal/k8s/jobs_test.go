@@ -184,6 +184,9 @@ func TestBuildJob(t *testing.T) {
 				if !hasMountAt(imageBuild, "registry-auth", "/home/canette/.docker") {
 					t.Error("image-build must mount registry-auth at /home/canette/.docker")
 				}
+				if findEnv(t, imageBuild, "DOCKER_CONFIG") != "/home/canette/.docker" {
+					t.Error("DOCKER_CONFIG must point at the mount so buildctl forwards credentials to buildkitd")
+				}
 				// All build job pods run without a service account — registry auth is
 				// handled by mounting a docker config Secret, not via pod identity.
 				if spec.ServiceAccountName != "" {
@@ -215,6 +218,9 @@ func TestBuildJob(t *testing.T) {
 				}
 				if !hasMountAt(imageBuild, "registry-auth", "/home/canette/.docker") {
 					t.Error("image-build must mount registry-auth at /home/canette/.docker")
+				}
+				if findEnv(t, imageBuild, "DOCKER_CONFIG") != "/home/canette/.docker" {
+					t.Error("DOCKER_CONFIG must point at the mount so buildctl forwards credentials to buildkitd")
 				}
 				if spec.ServiceAccountName != "" {
 					t.Errorf("ServiceAccountName = %q, want empty — build job pod needs no SA", spec.ServiceAccountName)
