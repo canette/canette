@@ -379,7 +379,7 @@ export function getSecurityInfo(): ScanInfo {
   // Resolve provider name for display (mirrors scanner.detectProvider in Go)
   let provider = providerEnv
   if (provider === "auto" || provider === "") {
-    provider = imageRepo.includes(".ecr.") && imageRepo.includes(".amazonaws.com") ? "ecr" : "trivy"
+    provider = /\.ecr\.[a-z0-9-]+\.amazonaws\.com(\/|$)/.test(imageRepo) ? "ecr" : "trivy"
   }
   if (provider === "none") {
     return { provider: "none", enabled: false, mandatory: false, failSeverity: "HIGH" }

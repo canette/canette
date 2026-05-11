@@ -6,6 +6,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -116,8 +117,10 @@ func resolveEnabled(enabledStr, providerName string) bool {
 	}
 }
 
+var ecrRegistryRE = regexp.MustCompile(`\.ecr\.[a-z0-9-]+\.amazonaws\.com(/|$)`)
+
 func detectProvider(imageRepo string) string {
-	if strings.Contains(imageRepo, ".ecr.") && strings.Contains(imageRepo, ".amazonaws.com") {
+	if ecrRegistryRE.MatchString(imageRepo) {
 		return "ecr"
 	}
 	return "trivy"
