@@ -99,6 +99,7 @@ func run(log *zap.Logger) error {
 		BuilderImage:       builderImage,
 		GitInitImage:       gitInitImage,
 		RegistryAuthSecret: envOr("REGISTRY_AUTH_SECRET", ""),
+		RegistryAuthType:   envOr("REGISTRY_AUTH_TYPE", ""),
 	}
 
 	s := store.New(db, log)

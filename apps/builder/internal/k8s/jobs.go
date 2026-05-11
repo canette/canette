@@ -25,6 +25,7 @@ type BuildConfig struct {
 	BuilderImage       string // pre-built railpack+buildctl+build-binary image
 	GitInitImage       string // image containing the git-init binary (e.g. "my-registry/canette-builder-git-init:latest")
 	RegistryAuthSecret string // optional: Secret name containing .dockerconfigjson for registry push auth
+	RegistryAuthType   string // "irsa" or "static" — controls service account and token mounting for build jobs
 }
 
 // JobName returns the deterministic K8s Job name for a deployment ID.
@@ -208,8 +209,21 @@ func BuildJob(
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyNever,
-					AutomountServiceAccountToken: ptrBool(false),
+					RestartPolicy: corev1.RestartPolicyNever,
+					ServiceAccountName: func() string {
+						if cfg.RegistryAuthType == "irsa" {
+							return "canette-build-job"
+						}
+						return "" // uses default service account (token is never mounted when AutomountServiceAccountToken=false)
+					}(),
+					AutomountServiceAccountToken: func() *bool {
+						// IRSA requires the service account token to be mounted
+						if cfg.RegistryAuthType == "irsa" {
+							return ptrBool(true)
+						}
+						// Static auth doesn't need the token
+						return ptrBool(false)
+					}(),
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: ptrBool(true),
 						RunAsUser:    ptrInt64(10001),

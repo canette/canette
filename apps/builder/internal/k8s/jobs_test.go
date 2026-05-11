@@ -154,7 +154,7 @@ func TestBuildJob(t *testing.T) {
 			},
 		},
 		{
-			name:     "with registry auth secret",
+			name:     "with registry auth secret (static)",
 			credType: "none",
 			cfg: BuildConfig{
 				Namespace:          baseCfg.Namespace,
@@ -163,6 +163,7 @@ func TestBuildJob(t *testing.T) {
 				BuilderImage:       baseCfg.BuilderImage,
 				GitInitImage:       baseCfg.GitInitImage,
 				RegistryAuthSecret: "my-reg-secret",
+				RegistryAuthType:   "static",
 			},
 			checkFn: func(t *testing.T, spec corev1.PodSpec, imageBuild, gitClone corev1.Container) {
 				if !hasVolume(spec, "registry-auth") {
@@ -182,6 +183,37 @@ func TestBuildJob(t *testing.T) {
 				}
 				if !hasMountAt(imageBuild, "registry-auth", "/home/canette/.docker") {
 					t.Error("image-build must mount registry-auth at /home/canette/.docker")
+				}
+				// Static auth: no service account, token mounting disabled
+				if spec.ServiceAccountName != "" {
+					t.Errorf("ServiceAccountName = %q, want empty for static auth", spec.ServiceAccountName)
+				}
+				if spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+					t.Error("AutomountServiceAccountToken must be false for static auth")
+				}
+			},
+		},
+		{
+			name:     "with IRSA auth",
+			credType: "none",
+			cfg: BuildConfig{
+				Namespace:        baseCfg.Namespace,
+				ImageRepo:        baseCfg.ImageRepo,
+				BuildkitdAddr:    baseCfg.BuildkitdAddr,
+				BuilderImage:     baseCfg.BuilderImage,
+				GitInitImage:     baseCfg.GitInitImage,
+				RegistryAuthType: "irsa",
+			},
+			checkFn: func(t *testing.T, spec corev1.PodSpec, imageBuild, gitClone corev1.Container) {
+				// IRSA: uses service account, token mounting enabled, no registry-auth volume
+				if spec.ServiceAccountName != "canette-build-job" {
+					t.Errorf("ServiceAccountName = %q, want %q for IRSA", spec.ServiceAccountName, "canette-build-job")
+				}
+				if spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
+					t.Error("AutomountServiceAccountToken must be true for IRSA")
+				}
+				if hasVolume(spec, "registry-auth") {
+					t.Error("registry-auth volume must not be present when using IRSA")
 				}
 			},
 		},
