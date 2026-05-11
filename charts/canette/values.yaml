@@ -220,7 +220,7 @@ builder:
   # BuildKit daemon address. Auto-derived from the buildkit service when left empty.
   buildkitdAddr: ""
   # Trivy image used for vulnerability scanning jobs. Override to pin a specific version.
-  trivyImage: "aquasec/trivy:0.51.0"
+  trivyImage: "aquasec/trivy:0.70.0"
   pollInterval: 5s
   maxConcurrent: 3
   resources:
@@ -272,6 +272,26 @@ controller:
     limits:
       cpu: 500m
       memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Security / scanning
+# ---------------------------------------------------------------------------
+security:
+  scan:
+    # Provider: "auto" | "trivy" | "ecr" | "none"
+    # "auto" detects from IMAGE_REPO: ECR URLs → ecr, everything else → trivy.
+    provider: "auto"
+    # Enabled: "" (provider-aware default) | "true" | "false"
+    # Must be a quoted string, not a YAML boolean — use "true" not true.
+    # When empty: ECR provider is enabled by default (free), Trivy is disabled (slow, opt-in).
+    enabled: ""
+    # Block deployment when scan finds issues at or above this severity.
+    # Only applies when mandatory: true.
+    mandatory: false
+    failSeverity: "HIGH"  # CRITICAL | HIGH | MEDIUM | LOW
+    # Generate a CycloneDX SBOM alongside vulnerability findings.
+    # Requires a second trivy image pass — adds ~30–60 s to scan time. Default: false.
+    sbomEnabled: false
 
 # ---------------------------------------------------------------------------
 # API service (Bun + Hono)

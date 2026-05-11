@@ -13,7 +13,7 @@ type BuildLogRow = Selectable<Database["build_logs"]>
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
 
-function mapDeployment(row: DeploymentRow): Deployment {
+function mapDeployment(row: DeploymentRow, hasSbom = false): Deployment {
   return {
     id: row.id,
     appId: row.app_id,
@@ -25,9 +25,29 @@ function mapDeployment(row: DeploymentRow): Deployment {
     errorMessage: row.error_message ?? undefined,
     scanStatus: (row.scan_status ?? undefined) as Deployment["scanStatus"],
     scanSummary: row.scan_summary ? JSON.parse(row.scan_summary) : undefined,
+    hasSbom,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+async function getSbomSet(db: DB, deploymentIds: string[]): Promise<Set<string>> {
+  if (deploymentIds.length === 0) return new Set()
+  const rows = await db
+    .selectFrom("scan_sboms")
+    .select("deployment_id")
+    .where("deployment_id", "in", deploymentIds)
+    .execute()
+  return new Set(rows.map((r) => r.deployment_id))
+}
+
+async function hasSbomForId(db: DB, deploymentId: string): Promise<boolean> {
+  const row = await db
+    .selectFrom("scan_sboms")
+    .select("deployment_id")
+    .where("deployment_id", "=", deploymentId)
+    .executeTakeFirst()
+  return !!row
 }
 
 function mapBuildLog(row: BuildLogRow): BuildLog {
@@ -79,13 +99,6 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
     .execute()
   const envVars = envRows.map((r) => ({ key: r.key, value: r.value }))
 
-  const securityRows = await db
-    .selectFrom("admin_settings")
-    .select(["key", "value"])
-    .where("key", "like", "security.%")
-    .execute()
-  const securitySettings = Object.fromEntries(securityRows.map((r) => [r.key, r.value]))
-
   return JSON.stringify({
     app: {
       id: app.id,
@@ -109,11 +122,6 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
       cpu_limit: process.env.DEFAULT_CPU_LIMIT ?? "500m",
       memory_limit: process.env.DEFAULT_MEMORY_LIMIT ?? "512Mi",
     },
-    scan_policy: {
-      scan_enabled: securitySettings["security.scan_enabled"] === "true",
-      scan_mandatory: securitySettings["security.scan_mandatory"] === "true",
-      fail_severity: securitySettings["security.fail_severity"] ?? "CRITICAL",
-    },
   })
 }
 
@@ -132,7 +140,8 @@ export async function listDeployments(
     .orderBy("created_at", "desc")
     .limit(limit)
     .execute()
-  const items = rows.map(mapDeployment)
+  const sbomSet = await getSbomSet(db, rows.map((r) => r.id))
+  const items = rows.map((row) => mapDeployment(row, sbomSet.has(row.id)))
   return { items, total: items.length, page: 1, pageSize: items.length }
 }
 
@@ -366,7 +375,7 @@ export async function getDeploymentById(
     .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!row) return null
-  return mapDeployment(row)
+  return mapDeployment(row, await hasSbomForId(db, row.id))
 }
 
 // Verifies access itself via deployment → app → project → membership join.

@@ -11,17 +11,16 @@ import {
   forceSyncLiveApps,
   getProjectsOverview,
   getResourceDefaults,
-  getScanPolicy,
+  getSecurityInfo,
   getTeamMembersForAdmin,
   getUserDeletionImpact,
   getWebhookSettings,
   listUsers,
   resetStuckBuilds,
-  updateScanPolicy,
   updateUserRole,
 } from "../services/admin"
 import { listTeamsOverview, renameTeam, createTeam, deleteTeam, addMember, removeMember, findUserByEmail } from "../services/teams"
-import type { ScanPolicy, UserRole } from "@canette/types"
+import type { UserRole } from "@canette/types"
 
 function generatePassword(): string {
   const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -220,24 +219,10 @@ adminRouter.post("/reset-stuck", async (c) => {
   return c.json(result)
 })
 
-// Get security / scan policy
+// Get security / scan info (read-only — configured via Helm values)
 // GET /api/v1/admin/settings/security
-adminRouter.get("/settings/security", async (c) => {
-  const policy = await getScanPolicy(db)
-  return c.json(policy)
-})
-
-// Update security / scan policy
-// PATCH /api/v1/admin/settings/security
-adminRouter.patch("/settings/security", async (c) => {
-  const body = await c.req.json<Partial<ScanPolicy>>()
-  try {
-    const policy = await updateScanPolicy(db, body)
-    return c.json(policy)
-  } catch (e) {
-    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
-    throw e
-  }
+adminRouter.get("/settings/security", (c) => {
+  return c.json(getSecurityInfo())
 })
 
 // Get resource defaults (read-only — configured via Helm values)

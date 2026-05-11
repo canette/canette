@@ -117,6 +117,15 @@ Attach this permissions policy to the role:
         "ecr:CompleteLayerUpload"
       ],
       "Resource": "arn:aws:ecr:REGION:ACCOUNT_ID:repository/canette/*"
+    },
+    {
+      "Sid": "ECRScanning",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:InitiateImageScan",
+        "ecr:DescribeImageScanFindings"
+      ],
+      "Resource": "arn:aws:ecr:REGION:ACCOUNT_ID:repository/canette/*"
     }
   ]
 }
@@ -179,6 +188,27 @@ This allows nodes to pull images from ECR without requiring `imagePullSecrets`.
 5. EKS nodes use their IAM role to pull images from ECR
 
 ECR repositories follow the pattern: `canette/{project-slug}/{app-slug}`
+
+### ECR image scanning
+
+When canette detects an ECR registry (auto-detected from the `imageRepo` URL), it uses ECR basic scanning instead of running a Trivy K8s Job. After each image push the builder calls `StartImageScan`, then polls `DescribeImageScanFindings` until the scan is complete — typically within a minute for small images.
+
+ECR basic scanning is **enabled by default** when the ECR provider is active (it is free and adds no build infrastructure). You can still disable it or make it mandatory via Helm values:
+
+```yaml
+security:
+  scan:
+    provider: "auto"   # "ecr" is auto-selected for ECR imageRepo URLs
+    enabled: "true"    # quoted string; omit or set "" to use the provider-aware default (enabled for ECR)
+    mandatory: false   # set true to block deployments when findings exceed failSeverity
+    failSeverity: "HIGH"
+```
+
+The `ECRScanning` IAM statement in the policy above is required for this feature. If you omit it, the builder will log an access-denied error and mark the scan as errored — the deployment still proceeds unless `mandatory: true` is set.
+
+<Callout type="info">
+  ECR basic scanning reports vulnerability counts by severity (CRITICAL, HIGH, MEDIUM, LOW) but does not produce a CycloneDX SBOM. The SBOM download button on the deployments page is not shown for ECR-scanned deployments.
+</Callout>
 
 ## Values
 

@@ -4,7 +4,6 @@ package builder
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +25,7 @@ import (
 	"canette.dev/builder/internal/githubapp"
 	k8sjobs "canette.dev/builder/internal/k8s"
 	"canette.dev/builder/internal/registry"
+	"canette.dev/builder/internal/scanner"
 	"canette.dev/builder/internal/store"
 )
 
@@ -43,6 +43,8 @@ type Builder struct {
 	pollInterval   time.Duration
 	maxConcurrent  int
 	registryConfig registry.Config
+	scanProvider   scanner.Provider
+	scanProviderName  string // resolved provider name, used for MarkScanning job name
 }
 
 // New creates a Builder.
@@ -54,11 +56,11 @@ func New(
 	log *zap.Logger,
 	pollInterval time.Duration,
 	maxConcurrent int,
+	scanCfg scanner.Config,
 ) *Builder {
 	// Read registry auth type from env, defaulting based on detected provider
 	registryAuthType := os.Getenv("REGISTRY_AUTH_TYPE")
 	if registryAuthType == "" {
-		// Auto-default based on provider detection
 		provider := registry.DetectProvider(cfg.ImageRepo)
 		if provider == "ecr" {
 			registryAuthType = "irsa"
@@ -66,6 +68,14 @@ func New(
 			registryAuthType = "static"
 		}
 	}
+
+	scanProvider, providerName, err := scanner.NewProvider(scanCfg)
+	if err != nil {
+		log.Warn("failed to create scan provider, scanning disabled", zap.Error(err))
+		scanProvider = &scanner.NoneProvider{}
+		providerName = "none"
+	}
+	log.Info("scan provider ready", zap.String("provider", providerName))
 
 	return &Builder{
 		store:         s,
@@ -79,6 +89,8 @@ func New(
 			ImageRepo: cfg.ImageRepo,
 			AuthType:  registryAuthType,
 		},
+		scanProvider:  scanProvider,
+		scanProviderName: providerName,
 	}
 }
 
@@ -309,32 +321,26 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	}
 	log.Info("image pushed", zap.String("digest", digest), zap.String("ref", imageRef))
 
-	// 10. Optionally run a Trivy security scan.
-	policy := dep.ScanPolicy
-
-	if policy.Enabled {
-		scanJobName := k8sjobs.ScanJobName(dep.ID)
-		if err := b.store.MarkScanning(ctx, dep.ID, scanJobName); err != nil {
+	// 10. Optionally run a security scan.
+	if b.scanProvider.HasScan() {
+		scanName := scanner.ScanName(dep.ID, b.scanProviderName)
+		if err := b.store.MarkScanning(ctx, dep.ID, scanName); err != nil {
 			lastErr = fmt.Errorf("mark scanning: %w", err)
 			return
 		}
-
-		scanPassed, scanStatus, summary, sbom, scanErr := b.runScan(ctx, log, dep.ID, imageRef, policy.FailSeverity)
+		scanResult, scanErr := b.scanProvider.Scan(ctx, dep.ID, imageRef)
 		if scanErr != nil {
 			log.Warn("scan failed to run", zap.Error(scanErr))
+			_ = b.store.AppendLog(ctx, dep.ID, "stdout", "[canette] scan error: "+scanErr.Error())
 			_ = b.store.SetScanResults(ctx, dep.ID, "error", "", "")
-			if policy.Mandatory {
-				lastErr = fmt.Errorf("scan could not run and scanning is mandatory: %w", scanErr)
-				return
-			}
 		} else {
-			_ = b.store.SetScanResults(ctx, dep.ID, scanStatus, summary, sbom)
-			if !scanPassed && policy.Mandatory {
-				lastErr = fmt.Errorf("scan blocked deployment: %s", summary)
+			_ = b.store.SetScanResults(ctx, dep.ID, scanResult.Status, scanResult.Summary, scanResult.SBOM)
+			if scanResult.Blocked {
+				lastErr = fmt.Errorf("scan blocked deployment: %s", scanResult.Summary)
 				return
 			}
+			log.Info("scan complete", zap.String("status", scanResult.Status))
 		}
-		log.Info("scan complete", zap.String("status", scanStatus), zap.String("summary", summary))
 	}
 
 	// 11. Transition to deploying.
@@ -344,101 +350,6 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	}
 	log.Info("build complete, deployment queued for controller")
 	lastErr = nil // success — suppress the deferred MarkFailed
-}
-
-// runScan creates a Trivy scan Job, waits for it, and returns the parsed results.
-// Returns: (passed, scanStatus, summaryJSON, sbomJSON, error)
-func (b *Builder) runScan(ctx context.Context, log *zap.Logger, deploymentID, imageRef, failSeverity string) (bool, string, string, string, error) {
-	job := k8sjobs.ScanJob(deploymentID, imageRef, b.cfg)
-	jobName := k8sjobs.ScanJobName(deploymentID)
-
-	k8sjobs.LogJobManifest(log, job)
-	if _, err := b.k8s.BatchV1().Jobs(b.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
-		return false, "error", "", "", fmt.Errorf("create scan job: %w", err)
-	}
-	log.Info("scan job created", zap.String("job", jobName))
-
-	podName, err := b.waitForPod(ctx, log, jobName)
-	if err != nil {
-		return false, "error", "", "", fmt.Errorf("wait for scan pod: %w", err)
-	}
-
-	// Stream scan logs, intercepting structured output lines in memory so they
-	// are never written to build_logs (the SBOM can be hundreds of KB).
-	var summary, sbomB64 string
-	logDone := make(chan struct{})
-	go func() {
-		defer close(logDone)
-		b.streamScanLogs(ctx, log, deploymentID, podName, &summary, &sbomB64)
-	}()
-
-	succeeded, err := b.watchJob(ctx, log, jobName)
-	<-logDone
-	if err != nil {
-		return false, "error", "", "", fmt.Errorf("watch scan job: %w", err)
-	}
-	if !succeeded {
-		return false, "error", "", "", fmt.Errorf("scan job failed")
-	}
-
-	sbom := decodeSBOM(sbomB64)
-	passed := scanPassed(log, summary, failSeverity)
-	scanStatus := "pass"
-	if !passed {
-		scanStatus = "fail"
-	}
-	if summary == "" {
-		scanStatus = "error"
-	}
-	return passed, scanStatus, summary, sbom, nil
-}
-
-// streamScanLogs streams the trivy container logs, intercepting CAN_SCAN_SUMMARY=
-// and CAN_SCAN_SBOM= in memory rather than writing them to the build log store.
-func (b *Builder) streamScanLogs(ctx context.Context, log *zap.Logger, deploymentID, podName string, summary, sbomB64 *string) {
-	var linesWritten int
-	if err := b.streamContainerLogs(ctx, log, deploymentID, podName, "trivy", map[string]*string{
-		"CAN_SCAN_SUMMARY=": summary,
-		"CAN_SCAN_SBOM=":    sbomB64,
-	}, &linesWritten); err != nil {
-		log.Warn("scan log stream ended with error", zap.Error(err))
-	}
-}
-
-// decodeSBOM base64-decodes the SBOM emitted by the scan container.
-func decodeSBOM(b64 string) string {
-	if b64 == "" {
-		return ""
-	}
-	data, err := base64Decode(b64)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-// scanPassed returns true when no finding at or above failSeverity was found.
-func scanPassed(log *zap.Logger, summaryJSON, failSeverity string) bool {
-	if summaryJSON == "" {
-		log.Warn("scan failed, empty summary")
-		return false
-	}
-	var counts map[string]int
-	if err := json.Unmarshal([]byte(summaryJSON), &counts); err != nil {
-		log.Warn("scan failed, could not parse summary", zap.Error(err))
-		return false
-	}
-	order := []string{"critical", "high", "medium", "low"}
-	threshold := strings.ToLower(failSeverity)
-	for _, sev := range order {
-		if counts[sev] > 0 {
-			return false
-		}
-		if sev == threshold {
-			break
-		}
-	}
-	return true
 }
 
 // waitForPod polls until the pod for jobName has been assigned a name and

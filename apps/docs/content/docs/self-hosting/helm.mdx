@@ -216,6 +216,56 @@ The `registryAuthType` value controls authentication:
 
 See [AWS (EKS)](/docs/self-hosting/aws#ecr-integration) for IAM role setup.
 
+## Image scanning
+
+Scanning is configured under `security.scan` and is applied at build time by the builder.
+
+```yaml
+security:
+  scan:
+    provider: "auto"     # "auto" | "trivy" | "ecr" | "none"
+    enabled: ""          # "" = provider-aware default; use "true"/"false" (quoted strings)
+    mandatory: false     # true blocks deployments when findings exceed failSeverity
+    failSeverity: "HIGH" # CRITICAL | HIGH | MEDIUM | LOW
+    sbomEnabled: false   # true generates a CycloneDX SBOM (second Trivy pass, ~30–60 s extra)
+```
+
+### Provider selection
+
+`provider: "auto"` (the default) picks the backend based on the `builder.imageRepo` URL:
+
+| Registry | Provider | Enabled by default |
+|----------|----------|--------------------|
+| ECR (`*.ecr.*.amazonaws.com`) | ECR basic scanning | yes (free) |
+| Everything else | Trivy K8s Job | no (opt-in) |
+
+Override by setting `provider` explicitly, or flip the default with `enabled: "true"` or `"false"`.
+
+### ECR scanning
+
+The builder calls `StartImageScan` after each image push, then polls `DescribeImageScanFindings` until the scan completes (up to 10 minutes). No extra K8s Job is created. Results are stored as vulnerability counts — no CycloneDX SBOM is produced.
+
+The builder's IAM role needs two additional permissions. See [AWS (EKS) — ECR image scanning](/docs/self-hosting/aws#ecr-image-scanning) for the IAM policy.
+
+### Trivy scanning
+
+When `provider: "trivy"` (or auto-selected for non-ECR registries), the builder creates a short-lived K8s Job in the build namespace that runs `trivy image` against the pushed image. The job produces vulnerability counts and, optionally, a CycloneDX SBOM available for download on the deployment detail page.
+
+SBOM generation requires a second `trivy image` pass and adds roughly 30–60 seconds to scan time. It is disabled by default:
+
+```yaml
+security:
+  scan:
+    sbomEnabled: true
+```
+
+Override the Trivy image version:
+
+```yaml
+builder:
+  trivyImage: "aquasec/trivy:0.58.0"
+```
+
 ## Secret references
 
 Several sensitive values can be sourced from existing Kubernetes Secrets rather than plain Helm values. Create the secret in the system namespace before running `helm install` or `helm upgrade`.

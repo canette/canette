@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { useSession } from "@/lib/auth-client"
-import { Eye, EyeOff, Loader2, ChevronRight, GitBranch } from "lucide-react"
+import { Eye, EyeOff, Loader2, ChevronRight, GitBranch, Key } from "lucide-react"
 import { GitHubIcon } from "@/components/icons/github-icon"
 import { GitLabIcon } from "@/components/icons/gitlab-icon"
 import { GiteaIcon } from "@/components/icons/gitea-icon"
@@ -289,13 +289,16 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
             </CardDescription>
           </div>
           <Button size="sm" variant="outline" onClick={() => { resetDialog(); setAddDialogOpen(true) }} className="shrink-0 mt-1">
+            <Key className="size-4" />
             Add credential
           </Button>
         </CardHeader>
         <CardContent className="p-0">
           {activeProviders.length === 0 && (
             <p className="text-muted-foreground text-sm px-6 py-8 text-center">
-              No credentials yet. Add one to connect private repositories.
+              No credentials yet.{" "}
+              <button onClick={() => setAddDialogOpen(true)} className="underline hover:text-foreground transition-colors">Add one</button>
+              {" "}to connect private repositories.
             </p>
           )}
           {activeProviders.map((provider, pi) => {

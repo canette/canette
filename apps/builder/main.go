@@ -24,6 +24,7 @@ import (
 	"canette.dev/builder/internal/builder"
 	"canette.dev/builder/internal/crypto"
 	k8sjobs "canette.dev/builder/internal/k8s"
+	"canette.dev/builder/internal/scanner"
 	"canette.dev/builder/internal/store"
 )
 
@@ -98,7 +99,23 @@ func run(log *zap.Logger) error {
 		BuilderImage:       builderImage,
 		GitInitImage:       gitInitImage,
 		RegistryAuthSecret: envOr("REGISTRY_AUTH_SECRET", ""),
-		TrivyImage:         envOr("TRIVY_IMAGE", "aquasec/trivy:0.51.0"),
+	}
+
+	s := store.New(db, log)
+
+	scanCfg := scanner.Config{
+		Provider:      envOr("SCAN_PROVIDER", "auto"),
+		EnabledStr:    os.Getenv("SCAN_ENABLED"), // "" = provider-aware default
+		Mandatory:     os.Getenv("SCAN_MANDATORY") == "true",
+		FailSeverity:  envOr("SCAN_FAIL_SEVERITY", "HIGH"),
+		TrivyImage:    envOr("TRIVY_IMAGE", "aquasec/trivy:0.70.0"),
+		SBOMEnabled:   os.Getenv("SCAN_SBOM_ENABLED") == "true",
+		K8sClient:     k8sClient,
+		Namespace:     cfg.Namespace,
+		RegAuthSecret: cfg.RegistryAuthSecret,
+		LogAppender:   s,
+		ImageRepo:     imageRepo,
+		Log:           log,
 	}
 
 	pollInterval, err := time.ParseDuration(envOr("POLL_INTERVAL", "5s"))
@@ -125,13 +142,14 @@ func run(log *zap.Logger) error {
 	startHealthServer(ctx, log, envOr("HEALTH_ADDR", ":8081"))
 
 	b := builder.New(
-		store.New(db, log),
+		s,
 		k8sClient,
 		cfg,
 		cryptoKey,
 		log,
 		pollInterval,
 		maxConcurrent,
+		scanCfg,
 	)
 	return b.Run(ctx)
 }

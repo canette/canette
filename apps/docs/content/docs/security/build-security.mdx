@@ -89,7 +89,14 @@ Build jobs have outbound internet access (required to fetch dependencies). Durin
 
 ### Image content
 
-canette builds and deploys whatever the build produces. It does not scan images for vulnerabilities by default (optional Trivy scanning can be enabled). A malicious or vulnerable image runs inside your cluster with the same privileges as any other app.
+canette builds and deploys whatever the build produces. A malicious or vulnerable image runs inside your cluster with the same privileges as any other app.
+
+Vulnerability scanning is available via the `security.scan` Helm values. The active provider is selected automatically from the registry URL:
+
+- **ECR registry** — ECR basic scanning is used. The builder calls `StartImageScan` after each push and polls `DescribeImageScanFindings`. Scanning is **enabled by default** (free, no extra infrastructure).
+- **Other registries** — Trivy runs as a K8s Job in the build namespace. Scanning is **disabled by default** (adds build time; opt in via `security.scan.enabled: "true"`). SBOM generation (CycloneDX) is a separate opt-in via `security.scan.sbomEnabled: true` — it requires a second Trivy pass and adds ~30–60 s.
+
+Set `security.scan.mandatory: true` to block deployments when findings at or above `security.scan.failSeverity` are found.
 
 ### Shared `buildkitd`
 
@@ -107,6 +114,6 @@ All builds share a single `buildkitd` daemon. Build cache is shared between buil
 |---------|----------------|
 | Untrusted repositories | Review `canette.yaml` and `Dockerfile` before triggering a build |
 | Network exfiltration | Add a `NetworkPolicy` restricting egress from `canette-build` |
-| Vulnerable images | Enable Trivy scanning; set `scan_mandatory: true` in admin settings |
+| Vulnerable images | Enable scanning via `security.scan.enabled: "true"`; set `security.scan.mandatory: true` to block deployments |
 | Shared build cache | Use separate canette installations for trusted and untrusted workloads |
 | Build secrets | Never pass sensitive secrets as build args — use runtime secrets instead |

@@ -19,8 +19,18 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: canette-api
-        # Builder service pod (registry auth secret management)
-        - podSelector:
+        # Builder service pod (registry auth secret management) and Trivy scan jobs
+        # (scan jobs run in the build namespace, so a namespaceSelector is required)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: canette-builder
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "canette.buildNamespace" . }}
+          podSelector:
             matchLabels:
               app.kubernetes.io/name: canette-builder
         # BuildKit daemon (image push after build)
