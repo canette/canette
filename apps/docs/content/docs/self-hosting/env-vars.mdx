@@ -60,7 +60,8 @@ Each canette service is a single binary or container. All configuration is provi
 | `SCAN_ENABLED` | no | `true` or `false`. Leave empty (default) for provider-aware defaults: ECR scanning is enabled, Trivy scanning is disabled. |
 | `SCAN_MANDATORY` | no | Set to `true` to block deployments when the scan finds issues at or above `SCAN_FAIL_SEVERITY`. Default: `false`. |
 | `SCAN_FAIL_SEVERITY` | no | Severity threshold for mandatory scans: `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW`. Default: `HIGH`. |
-| `TRIVY_IMAGE` | no | Trivy image used when `SCAN_PROVIDER=trivy`. Default: `aquasec/trivy:0.51.0`. |
+| `SCAN_SBOM_ENABLED` | no | Set to `true` to generate a CycloneDX SBOM alongside vulnerability findings. Requires a second Trivy pass (~30–60 s extra). Default: `false`. |
+| `TRIVY_IMAGE` | no | Trivy image used when `SCAN_PROVIDER=trivy`. Default: `aquasec/trivy:0.70.0`. |
 | `POLL_INTERVAL` | no | How often to poll for pending builds. Default: `5s`. |
 | `MAX_CONCURRENT` | no | Maximum number of concurrent builds. Default: `3`. |
 | `GITHUB_APP_ID` | no | GitHub App ID (for GitHub App git credential type). |

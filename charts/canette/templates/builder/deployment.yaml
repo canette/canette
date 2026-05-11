@@ -68,6 +68,8 @@ spec:
               value: {{ .Values.security.scan.mandatory | quote }}
             - name: SCAN_FAIL_SEVERITY
               value: {{ .Values.security.scan.failSeverity | quote }}
+            - name: SCAN_SBOM_ENABLED
+              value: {{ .Values.security.scan.sbomEnabled | quote }}
             - name: POLL_INTERVAL
               value: {{ .Values.builder.pollInterval | quote }}
             - name: MAX_CONCURRENT

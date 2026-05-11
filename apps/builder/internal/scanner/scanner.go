@@ -46,6 +46,7 @@ type Config struct {
 
 	// Trivy-only
 	TrivyImage    string
+	SBOMEnabled   bool
 	K8sClient     kubernetes.Interface
 	Namespace     string
 	NodeSelector  map[string]string

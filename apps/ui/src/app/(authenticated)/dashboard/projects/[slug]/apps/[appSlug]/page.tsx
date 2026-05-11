@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
-import { Download, ExternalLink, Loader2, X } from "lucide-react"
+import { Download, ExternalLink, Loader2, ShieldAlert, ShieldCheck, X } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
@@ -32,6 +32,10 @@ function formatStatus(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+function formatHistoricalStatus(status: string) {
+  return status === "live" ? "Deployed" : formatStatus(status)
+}
+
 function shortSha(sha: string) { return sha.slice(0, 7) }
 
 function timeAgo(iso: string) {
@@ -52,10 +56,13 @@ function parseScanSummary(json: string | undefined): ScanSummary | null {
 function ScanBadge({ deployment }: { deployment: Deployment }) {
   const summary = parseScanSummary(deployment.scanSummary as string | undefined)
   if (!deployment.scanStatus || deployment.scanStatus === "skipped") return null
-  if (deployment.scanStatus === "error") return <span className="text-xs text-muted-foreground">Scan error</span>
-  const counts = summary ? `${summary.critical}C ${summary.high}H ${summary.medium}M` : ""
-  const color = deployment.scanStatus === "fail" ? "text-red-600" : "text-green-600"
-  return <span className={`text-xs ${color} shrink-0`}>Scan: {counts || (deployment.scanStatus === "pass" ? "clean" : "failed")}</span>
+  if (deployment.scanStatus === "error")
+    return <Badge variant="muted" className="gap-1"><ShieldAlert className="h-3 w-3" />Scan error</Badge>
+  if (deployment.scanStatus === "fail") {
+    const counts = summary ? `${summary.critical}C ${summary.high}H ${summary.medium}M` : "Failed"
+    return <Badge variant="failed" className="gap-1"><ShieldAlert className="h-3 w-3" />{counts}</Badge>
+  }
+  return <Badge variant="live" className="gap-1"><ShieldCheck className="h-3 w-3" />Clean</Badge>
 }
 
 // ── log dialog ────────────────────────────────────────────────────────────────
@@ -368,7 +375,7 @@ export default function AppOverviewPage() {
                 {latestDeployment.commitMessage && <span className="ml-2">{latestDeployment.commitMessage}</span>}
                 <span className="ml-2 text-xs">{timeAgo(latestDeployment.createdAt)}</span>
               </span>
-              <Badge variant={statusVariant(latestDeployment.status)}>{formatStatus(latestDeployment.status)}</Badge>
+              <Badge variant={statusVariant(latestDeployment.status)}>{formatHistoricalStatus(latestDeployment.status)}</Badge>
             </div>
           )}
           <div className="flex gap-2 flex-wrap">
@@ -417,7 +424,7 @@ export default function AppOverviewPage() {
                 {i > 0 && <Separator />}
                 <div className="flex items-center justify-between px-6 py-3">
                   <div className="flex items-center gap-3 min-w-0">
-                    <Badge variant={statusVariant(d.status)} className="shrink-0">{formatStatus(d.status)}</Badge>
+                    <Badge variant={statusVariant(d.status)} className="shrink-0">{formatHistoricalStatus(d.status)}</Badge>
                     <span className="font-mono text-xs text-muted-foreground shrink-0">{shortSha(d.commitSha)}</span>
                     {d.commitMessage && (
                       <span className="text-sm text-foreground/80 truncate">{d.commitMessage}</span>

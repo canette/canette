@@ -220,7 +220,7 @@ builder:
   # BuildKit daemon address. Auto-derived from the buildkit service when left empty.
   buildkitdAddr: ""
   # Trivy image used for vulnerability scanning jobs. Override to pin a specific version.
-  trivyImage: "aquasec/trivy:0.51.0"
+  trivyImage: "aquasec/trivy:0.70.0"
   pollInterval: 5s
   maxConcurrent: 3
   resources:
@@ -289,6 +289,9 @@ security:
     # Only applies when mandatory: true.
     mandatory: false
     failSeverity: "HIGH"  # CRITICAL | HIGH | MEDIUM | LOW
+    # Generate a CycloneDX SBOM alongside vulnerability findings.
+    # Requires a second trivy image pass — adds ~30–60 s to scan time. Default: false.
+    sbomEnabled: false
 
 # ---------------------------------------------------------------------------
 # API service (Bun + Hono)

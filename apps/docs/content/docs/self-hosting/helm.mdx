@@ -223,10 +223,11 @@ Scanning is configured under `security.scan` and is applied at build time by the
 ```yaml
 security:
   scan:
-    provider: "auto"    # "auto" | "trivy" | "ecr" | "none"
-    enabled: ""         # "" = provider-aware default; use "true"/"false" (quoted strings)
-    mandatory: false    # true blocks deployments when findings exceed failSeverity
+    provider: "auto"     # "auto" | "trivy" | "ecr" | "none"
+    enabled: ""          # "" = provider-aware default; use "true"/"false" (quoted strings)
+    mandatory: false     # true blocks deployments when findings exceed failSeverity
     failSeverity: "HIGH" # CRITICAL | HIGH | MEDIUM | LOW
+    sbomEnabled: false   # true generates a CycloneDX SBOM (second Trivy pass, ~30–60 s extra)
 ```
 
 ### Provider selection
@@ -248,7 +249,15 @@ The builder's IAM role needs two additional permissions. See [AWS (EKS) — ECR 
 
 ### Trivy scanning
 
-When `provider: "trivy"` (or auto-selected for non-ECR registries), the builder creates a short-lived K8s Job in the build namespace that runs `trivy image` against the pushed image. The job produces both vulnerability counts and a CycloneDX SBOM available for download on the deployment detail page.
+When `provider: "trivy"` (or auto-selected for non-ECR registries), the builder creates a short-lived K8s Job in the build namespace that runs `trivy image` against the pushed image. The job produces vulnerability counts and, optionally, a CycloneDX SBOM available for download on the deployment detail page.
+
+SBOM generation requires a second `trivy image` pass and adds roughly 30–60 seconds to scan time. It is disabled by default:
+
+```yaml
+security:
+  scan:
+    sbomEnabled: true
+```
 
 Override the Trivy image version:
 

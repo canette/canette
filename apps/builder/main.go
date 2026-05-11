@@ -108,7 +108,8 @@ func run(log *zap.Logger) error {
 		EnabledStr:    os.Getenv("SCAN_ENABLED"), // "" = provider-aware default
 		Mandatory:     os.Getenv("SCAN_MANDATORY") == "true",
 		FailSeverity:  envOr("SCAN_FAIL_SEVERITY", "HIGH"),
-		TrivyImage:    envOr("TRIVY_IMAGE", "aquasec/trivy:0.51.0"),
+		TrivyImage:    envOr("TRIVY_IMAGE", "aquasec/trivy:0.70.0"),
+		SBOMEnabled:   os.Getenv("SCAN_SBOM_ENABLED") == "true",
 		K8sClient:     k8sClient,
 		Namespace:     cfg.Namespace,
 		RegAuthSecret: cfg.RegistryAuthSecret,

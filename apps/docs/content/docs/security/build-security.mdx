@@ -94,7 +94,7 @@ canette builds and deploys whatever the build produces. A malicious or vulnerabl
 Vulnerability scanning is available via the `security.scan` Helm values. The active provider is selected automatically from the registry URL:
 
 - **ECR registry** — ECR basic scanning is used. The builder calls `StartImageScan` after each push and polls `DescribeImageScanFindings`. Scanning is **enabled by default** (free, no extra infrastructure).
-- **Other registries** — Trivy runs as a K8s Job in the build namespace. Scanning is **disabled by default** (adds build time; opt in via `security.scan.enabled: "true"`).
+- **Other registries** — Trivy runs as a K8s Job in the build namespace. Scanning is **disabled by default** (adds build time; opt in via `security.scan.enabled: "true"`). SBOM generation (CycloneDX) is a separate opt-in via `security.scan.sbomEnabled: true` — it requires a second Trivy pass and adds ~30–60 s.
 
 Set `security.scan.mandatory: true` to block deployments when findings at or above `security.scan.failSeverity` are found.
 

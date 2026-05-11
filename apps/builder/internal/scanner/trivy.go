@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -18,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
-	"go.uber.org/zap"
 )
 
 // TrivyProvider runs a Trivy K8s Job and streams its output to get scan results.
@@ -28,6 +28,7 @@ type TrivyProvider struct {
 	trivyImage    string
 	regAuthSecret string
 	insecure      bool // true when scanning from an HTTP (non-TLS) registry
+	sbomEnabled   bool
 	mandatory     bool
 	failSeverity  string
 	logAppender   LogAppender
@@ -49,6 +50,7 @@ func newTrivyProvider(cfg Config) *TrivyProvider {
 		trivyImage:    cfg.TrivyImage,
 		regAuthSecret: cfg.RegAuthSecret,
 		insecure:      insecure,
+		sbomEnabled:   cfg.SBOMEnabled,
 		mandatory:     cfg.Mandatory,
 		failSeverity:  cfg.FailSeverity,
 		logAppender:   cfg.LogAppender,
@@ -109,18 +111,31 @@ func (p *TrivyProvider) Scan(ctx context.Context, deploymentID, imageRef string)
 	}, nil
 }
 
-// scanScript is the Trivy container script — runs two passes (findings + SBOM)
-// and emits structured CAN_SCAN_SUMMARY= and CAN_SCAN_SBOM= lines for the builder.
-const scanScript = `set -eu
+// scanScriptTmpl is the Trivy container script template.
+// If sbomEnabled is true a second trivy image pass generates a CycloneDX SBOM;
+// otherwise only the vulnerability findings pass runs.
+const scanScriptTmpl = `set -eu
 IMAGE_REF="${IMAGE_REF}"
 
 echo "Scanning ${IMAGE_REF} ..."
 trivy image \
   --format json \
   --output /results/findings.json \
+  --scanners vuln \
   --exit-code 0 \
   "${IMAGE_REF}" || { echo "[canette] trivy scan step failed"; exit 1; }
+%s
+CRITICAL=$(grep -c '"Severity": "CRITICAL"' /results/findings.json || echo 0)
+HIGH=$(grep -c '"Severity": "HIGH"' /results/findings.json || echo 0)
+MEDIUM=$(grep -c '"Severity": "MEDIUM"' /results/findings.json || echo 0)
+LOW=$(grep -c '"Severity": "LOW"' /results/findings.json || echo 0)
+UNKNOWN=$(grep -c '"Severity": "UNKNOWN"' /results/findings.json || echo 0)
 
+echo "CAN_SCAN_SUMMARY={\"critical\":${CRITICAL},\"high\":${HIGH},\"medium\":${MEDIUM},\"low\":${LOW},\"unknown\":${UNKNOWN}}"
+echo "Scan complete: critical=${CRITICAL} high=${HIGH} medium=${MEDIUM} low=${LOW} unknown=${UNKNOWN}"
+%s`
+
+const sbomBlock = `
 echo "Generating SBOM ..."
 trivy image \
   --format cyclonedx \
@@ -128,26 +143,29 @@ trivy image \
   --scanners vuln \
   --exit-code 0 \
   "${IMAGE_REF}" || { echo "[canette] trivy sbom step failed"; exit 1; }
+`
 
-CRITICAL=$(awk 'BEGIN{c=0} /"Severity":"CRITICAL"/{c++} END{print c}' /results/findings.json)
-HIGH=$(awk 'BEGIN{c=0} /"Severity":"HIGH"/{c++} END{print c}' /results/findings.json)
-MEDIUM=$(awk 'BEGIN{c=0} /"Severity":"MEDIUM"/{c++} END{print c}' /results/findings.json)
-LOW=$(awk 'BEGIN{c=0} /"Severity":"LOW"/{c++} END{print c}' /results/findings.json)
-UNKNOWN=$(awk 'BEGIN{c=0} /"Severity":"UNKNOWN"/{c++} END{print c}' /results/findings.json)
-
-echo "CAN_SCAN_SUMMARY={\"critical\":${CRITICAL},\"high\":${HIGH},\"medium\":${MEDIUM},\"low\":${LOW},\"unknown\":${UNKNOWN}}"
-echo "Scan complete: critical=${CRITICAL} high=${HIGH} medium=${MEDIUM} low=${LOW} unknown=${UNKNOWN}"
-
+const sbomEmit = `
 SBOM_B64=$(base64 < /results/sbom.json | tr -d '\n')
 echo "CAN_SCAN_SBOM=${SBOM_B64}"
 `
 
 func (p *TrivyProvider) buildEnv(imageRef string) []corev1.EnvVar {
-	env := []corev1.EnvVar{{Name: "IMAGE_REF", Value: imageRef}}
+	env := []corev1.EnvVar{
+		{Name: "IMAGE_REF", Value: imageRef},
+		{Name: "TRIVY_LOG_LEVEL", Value: "warn"},
+	}
 	if p.insecure {
 		env = append(env, corev1.EnvVar{Name: "TRIVY_INSECURE", Value: "true"})
 	}
 	return env
+}
+
+func (p *TrivyProvider) buildScript() string {
+	if p.sbomEnabled {
+		return fmt.Sprintf(scanScriptTmpl, sbomBlock, sbomEmit)
+	}
+	return fmt.Sprintf(scanScriptTmpl, "", "")
 }
 
 func (p *TrivyProvider) buildJob(deploymentID, imageRef, jobName string) *batchv1.Job {
@@ -156,6 +174,7 @@ func (p *TrivyProvider) buildJob(deploymentID, imageRef, jobName string) *batchv
 
 	jobLabels := map[string]string{
 		"app.kubernetes.io/managed-by": "canette",
+		"app.kubernetes.io/name":       "canette-builder",
 		"canette.dev/component":        "builder",
 		"canette.dev/deployment":       deploymentID,
 	}
@@ -210,10 +229,10 @@ func (p *TrivyProvider) buildJob(deploymentID, imageRef, jobName string) *batchv
 					Volumes: volumes,
 					Containers: []corev1.Container{
 						{
-							Name:    "trivy",
-							Image:   p.trivyImage,
-							Command: []string{"sh", "-c", scanScript},
-							Env:     p.buildEnv(imageRef),
+							Name:         "trivy",
+							Image:        p.trivyImage,
+							Command:      []string{"sh", "-c", p.buildScript()},
+							Env:          p.buildEnv(imageRef),
 							VolumeMounts: volumeMounts,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
