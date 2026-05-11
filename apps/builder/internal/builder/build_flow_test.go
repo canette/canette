@@ -53,15 +53,6 @@ func (f *fakeStore) MarkDeploying(_ context.Context, id, _ string) error {
 	return nil
 }
 
-func hasVolume(spec corev1.PodSpec, name string) bool {
-	for _, v := range spec.Volumes {
-		if v.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 // genericRepo is a plain registry URL — DetectProvider returns "generic" so
 // no AWS calls are made during tests.
 const genericRepo = "registry.example.com/canette/"
@@ -143,25 +134,27 @@ func TestBuildFlow_StaticAuth_NoServiceAccount(t *testing.T) {
 	}
 }
 
-func TestBuildFlow_IRSAAuth_UsesServiceAccount(t *testing.T) {
-	dep := pendingDep("d59d1c36-0000-0000-0000-000000000002")
-	fs := &fakeStore{deployments: []store.PendingDeployment{dep}}
-	k8s := fake.NewSimpleClientset()
+func TestBuildFlow_NoServiceAccountOnBuildPod(t *testing.T) {
+	// Build job pods must never carry a service account regardless of auth type.
+	// Registry credentials are passed via a mounted docker config Secret, not pod identity.
+	for _, authType := range []string{"static", "irsa"} {
+		t.Run(authType, func(t *testing.T) {
+			dep := pendingDep("d59d1c36-0000-0000-0000-000000000002")
+			fs := &fakeStore{deployments: []store.PendingDeployment{dep}}
+			k8s := fake.NewSimpleClientset()
 
-	b := newBuildFlowBuilder(t, fs, k8s, "irsa")
-	runBuildOnce(t, b)
+			b := newBuildFlowBuilder(t, fs, k8s, authType)
+			runBuildOnce(t, b)
 
-	spec := jobFromFake(t, k8s)
+			spec := jobFromFake(t, k8s)
 
-	const wantSA = "canette-build-job"
-	if spec.ServiceAccountName != wantSA {
-		t.Errorf("ServiceAccountName = %q, want %q for IRSA", spec.ServiceAccountName, wantSA)
-	}
-	if spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
-		t.Error("AutomountServiceAccountToken must be true for IRSA")
-	}
-	if hasVolume(spec, "registry-auth") {
-		t.Error("registry-auth volume must not be present when using IRSA")
+			if spec.ServiceAccountName != "" {
+				t.Errorf("ServiceAccountName = %q, want empty — build job pod needs no SA", spec.ServiceAccountName)
+			}
+			if spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+				t.Error("AutomountServiceAccountToken must be false")
+			}
+		})
 	}
 }
 

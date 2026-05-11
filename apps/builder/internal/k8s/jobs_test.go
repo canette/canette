@@ -184,36 +184,49 @@ func TestBuildJob(t *testing.T) {
 				if !hasMountAt(imageBuild, "registry-auth", "/home/canette/.docker") {
 					t.Error("image-build must mount registry-auth at /home/canette/.docker")
 				}
-				// Static auth: no service account, token mounting disabled
+				if findEnv(t, imageBuild, "DOCKER_CONFIG") != "/home/canette/.docker" {
+					t.Error("DOCKER_CONFIG must point at the mount so buildctl forwards credentials to buildkitd")
+				}
+				// All build job pods run without a service account — registry auth is
+				// handled by mounting a docker config Secret, not via pod identity.
 				if spec.ServiceAccountName != "" {
-					t.Errorf("ServiceAccountName = %q, want empty for static auth", spec.ServiceAccountName)
+					t.Errorf("ServiceAccountName = %q, want empty", spec.ServiceAccountName)
 				}
 				if spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
-					t.Error("AutomountServiceAccountToken must be false for static auth")
+					t.Error("AutomountServiceAccountToken must be false")
 				}
 			},
 		},
 		{
-			name:     "with IRSA auth",
+			// IRSA: the builder daemon generates a short-lived ECR token and writes it
+			// to a per-build Secret referenced via RegistryAuthSecret, just like static
+			// auth. No service account is needed on the build job pod itself.
+			name:     "with IRSA auth (dynamic registry-auth secret)",
 			credType: "none",
 			cfg: BuildConfig{
-				Namespace:        baseCfg.Namespace,
-				ImageRepo:        baseCfg.ImageRepo,
-				BuildkitdAddr:    baseCfg.BuildkitdAddr,
-				BuilderImage:     baseCfg.BuilderImage,
-				GitInitImage:     baseCfg.GitInitImage,
-				RegistryAuthType: "irsa",
+				Namespace:          baseCfg.Namespace,
+				ImageRepo:          baseCfg.ImageRepo,
+				BuildkitdAddr:      baseCfg.BuildkitdAddr,
+				BuilderImage:       baseCfg.BuilderImage,
+				GitInitImage:       baseCfg.GitInitImage,
+				RegistryAuthType:   "irsa",
+				RegistryAuthSecret: "can-regauth-d59d1c36",
 			},
 			checkFn: func(t *testing.T, spec corev1.PodSpec, imageBuild, gitClone corev1.Container) {
-				// IRSA: uses service account, token mounting enabled, no registry-auth volume
-				if spec.ServiceAccountName != "canette-build-job" {
-					t.Errorf("ServiceAccountName = %q, want %q for IRSA", spec.ServiceAccountName, "canette-build-job")
+				if !hasVolume(spec, "registry-auth") {
+					t.Error("registry-auth volume must be present when RegistryAuthSecret is set")
 				}
-				if spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
-					t.Error("AutomountServiceAccountToken must be true for IRSA")
+				if !hasMountAt(imageBuild, "registry-auth", "/home/canette/.docker") {
+					t.Error("image-build must mount registry-auth at /home/canette/.docker")
 				}
-				if hasVolume(spec, "registry-auth") {
-					t.Error("registry-auth volume must not be present when using IRSA")
+				if findEnv(t, imageBuild, "DOCKER_CONFIG") != "/home/canette/.docker" {
+					t.Error("DOCKER_CONFIG must point at the mount so buildctl forwards credentials to buildkitd")
+				}
+				if spec.ServiceAccountName != "" {
+					t.Errorf("ServiceAccountName = %q, want empty — build job pod needs no SA", spec.ServiceAccountName)
+				}
+				if spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+					t.Error("AutomountServiceAccountToken must be false")
 				}
 			},
 		},

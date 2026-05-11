@@ -250,13 +250,39 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	}
 	log.Info("registry repository ready", zap.String("repo", repoName))
 
+	// 3b. Fetch registry credentials for this build.
+	// For IRSA/ECR, the builder daemon uses its own IAM role to get a short-lived
+	// ECR token, writes it to a per-build Secret, and mounts it into the build job.
+	// buildctl reads it and forwards the auth to buildkitd on push.
+	// For static auth, an operator-managed Secret is referenced via cfg.RegistryAuthSecret.
+	jobCfg := b.cfg
+	auth, err := provider.GetAuthConfig(ctx)
+	if err != nil {
+		lastErr = fmt.Errorf("get registry auth: %w", err)
+		return
+	}
+	if auth != nil {
+		configJSON, err := registry.BuildDockerConfigJSON(b.registryConfig.ImageRepo, auth)
+		if err != nil {
+			lastErr = fmt.Errorf("build docker config: %w", err)
+			return
+		}
+		regAuthSecretName := k8sjobs.RegistryAuthSecretName(dep.ID)
+		if err := k8sjobs.CreateRegistryAuthSecret(ctx, b.k8s, b.cfg.Namespace, regAuthSecretName, configJSON); err != nil {
+			lastErr = fmt.Errorf("create registry auth secret: %w", err)
+			return
+		}
+		defer k8sjobs.DeleteSecret(ctx, b.k8s, b.cfg.Namespace, regAuthSecretName)
+		jobCfg.RegistryAuthSecret = regAuthSecretName
+	}
+
 	// 4. Create the build Job.
 	job := k8sjobs.BuildJob(
 		dep.ID, dep.ProjectSlug, dep.AppSlug, dep.CommitSha,
 		dep.GitURL, dep.GitBranch, dep.AppPath,
 		credType, credSecretName,
 		dep.CanetteConfig,
-		b.cfg,
+		jobCfg,
 	)
 	k8sjobs.LogJobManifest(log, job)
 	if _, err := b.k8s.BatchV1().Jobs(b.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
