@@ -111,6 +111,7 @@ Attach this permissions policy to the role:
       "Effect": "Allow",
       "Action": [
         "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
         "ecr:PutImage",
         "ecr:InitiateLayerUpload",
         "ecr:UploadLayerPart",
@@ -122,7 +123,7 @@ Attach this permissions policy to the role:
       "Sid": "ECRScanning",
       "Effect": "Allow",
       "Action": [
-        "ecr:InitiateImageScan",
+        "ecr:StartImageScan",
         "ecr:DescribeImageScanFindings"
       ],
       "Resource": "arn:aws:ecr:REGION:ACCOUNT_ID:repository/canette/*"
