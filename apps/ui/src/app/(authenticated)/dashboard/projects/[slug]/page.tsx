@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useParams } from "next/navigation"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import type { App, Project } from "@canette/types"
 
@@ -49,6 +50,17 @@ export default function ProjectPage() {
         <p className="text-sm text-muted-foreground mb-6">{project.description}</p>
       )}
 
+      {!loading && (
+        <div className="flex gap-2 mb-6">
+          <Button size="sm" asChild>
+            <Link href={`/dashboard/projects/${slug}/apps/new`}>New app</Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild>
+            <Link href={`/dashboard/projects/${slug}/from-template`}>From template</Link>
+          </Button>
+        </div>
+      )}
+
       {loading ? (
         <SkeletonText />
       ) : apps.length === 0 ? (
@@ -56,12 +68,16 @@ export default function ProjectPage() {
           <p className="text-sm text-muted-foreground max-w-sm">
             An app is a deployable service — built from a Git repository or Docker image and served at its own URL.
           </p>
-          <Link
-            href={`/dashboard/projects/${slug}/apps/new`}
-            className="text-sm font-medium underline underline-offset-2 hover:no-underline"
-          >
-            Add the first app
-          </Link>
+          <p className="text-xs text-muted-foreground">
+            Create one manually or{" "}
+            <Link
+              href={`/dashboard/projects/${slug}/from-template`}
+              className="underline underline-offset-2 hover:no-underline"
+            >
+              load a template
+            </Link>
+            {" "}to set up a full stack at once.
+          </p>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

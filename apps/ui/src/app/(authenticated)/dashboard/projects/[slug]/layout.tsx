@@ -12,6 +12,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
   const [project, setProject] = useState<Project | null>(null)
 
   const isAppPage = pathname.includes(`/projects/${slug}/apps/`)
+  const isFullPage = isAppPage || pathname.includes(`/projects/${slug}/from-template`)
 
   const load = useCallback(async () => {
     try {
@@ -21,10 +22,10 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
   }, [slug])
 
   useEffect(() => {
-    if (!isAppPage) load()
-  }, [isAppPage, load])
+    if (!isFullPage) load()
+  }, [isFullPage, load])
 
-  if (isAppPage) return <>{children}</>
+  if (isFullPage) return <>{children}</>
 
   const base = `/dashboard/projects/${slug}`
   const isSettings = pathname.startsWith(`${base}/settings`)

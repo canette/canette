@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminTeamOverview, App, AppSecret, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminTeamOverview, App, AppSecret, AppTemplate, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -169,6 +169,12 @@ export const admin = {
   getResourceDefaults: () => request<ResourceDefaults>("/admin/settings/resources"),
   resetUserPassword: (id: string) =>
     request<{ password: string }>(`/admin/users/${id}/reset-password`, { method: "POST" }),
+}
+
+// Templates
+export const templates = {
+  parse: (body: { yaml?: string; url?: string }) =>
+    request<AppTemplate>("/templates/parse", { method: "POST", body: JSON.stringify(body) }),
 }
 
 // Environment variables and secrets

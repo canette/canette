@@ -15,6 +15,7 @@ import { usersRouter } from "./routes/users"
 import { githubAppRouter } from "./routes/github-app"
 import { wellKnownRouter, oauthRouter } from "./routes/oauth"
 import { mcpRouter } from "./routes/mcp"
+import { templatesRouter } from "./routes/templates"
 
 export function createApp() {
     const app = new Hono()
@@ -70,6 +71,7 @@ export function createApp() {
     api.route("/admin", adminRouter)
     api.route("/users", usersRouter)
     api.route("/github-app", githubAppRouter)
+    api.route("/", templatesRouter)
 
     // OAuth 2.1 AS and MCP (unauthenticated at router level — bearer auth applied in mcpRouter)
     app.route("/.well-known", wellKnownRouter)

@@ -1,4 +1,4 @@
 {
   "title": "Configuration",
-  "pages": ["canette-yaml", "secrets", "git-credentials", "github-app", "authentication"]
+  "pages": ["canette-yaml", "templates", "secrets", "git-credentials", "github-app", "authentication"]
 }
