@@ -50,16 +50,6 @@ export default function ProjectPage() {
         <p className="text-sm text-muted-foreground mb-6">{project.description}</p>
       )}
 
-      {!loading && (
-        <div className="flex gap-2 mb-6">
-          <Button size="sm" asChild>
-            <Link href={`/dashboard/projects/${slug}/apps/new`}>New app</Link>
-          </Button>
-          <Button size="sm" variant="outline" asChild>
-            <Link href={`/dashboard/projects/${slug}/from-template`}>From template</Link>
-          </Button>
-        </div>
-      )}
 
       {loading ? (
         <SkeletonText />

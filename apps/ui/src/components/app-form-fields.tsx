@@ -251,14 +251,6 @@ export function AppFormFields({
             )}
           </div>
 
-          <CredentialSelect
-            credentials={credentials}
-            value={value.gitCredentialId}
-            onChange={(v) => onChange({ gitCredentialId: v })}
-            teamId={teamId}
-            gitUrl={value.gitUrl}
-          />
-
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="gitBranch">Branch</Label>
@@ -282,6 +274,14 @@ export function AppFormFields({
               />
             </div>
           </div>
+
+          <CredentialSelect
+            credentials={credentials}
+            value={value.gitCredentialId}
+            onChange={(v) => onChange({ gitCredentialId: v })}
+            teamId={teamId}
+            gitUrl={value.gitUrl}
+          />
         </>
       ) : (
         <div className="grid grid-cols-2 gap-4">
@@ -370,7 +370,7 @@ export function AppFormFields({
                       const rows = value.envRows.map((r, i) => i === ri ? { ...r, key: next } : r)
                       onChange({ envRows: rows })
                     }}
-                    className="font-mono text-xs w-40 shrink-0"
+                    className="h-8 font-mono text-xs w-48 shrink-0"
                   />
                   <Input
                     placeholder={row.description ?? "value"}
@@ -380,32 +380,30 @@ export function AppFormFields({
                       const rows = value.envRows.map((r, i) => i === ri ? { ...r, value: e.target.value } : r)
                       onChange({ envRows: rows })
                     }}
-                    className="font-mono text-xs"
+                    className="h-8 font-mono text-xs flex-1"
                   />
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
+                    variant={row.isSecret ? "secondary" : "outline"}
                     onClick={() => {
                       const rows = value.envRows.map((r, i) => i === ri ? { ...r, isSecret: !r.isSecret } : r)
                       onChange({ envRows: rows })
                     }}
-                    className={cn(
-                      "text-xs shrink-0 px-2 py-1 rounded-md border transition-colors",
-                      row.isSecret
-                        ? "border-amber-500/50 text-amber-600 bg-amber-500/5 hover:bg-amber-500/10"
-                        : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
-                    )}
-                    aria-label={row.isSecret ? "Switch to plain variable" : "Switch to secret"}
+                    className={cn("h-8 shrink-0 text-xs", row.isSecret && "border border-amber-500/50 text-amber-600")}
                   >
                     Secret
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    size="sm"
+                    variant="ghost"
                     onClick={() => onChange({ envRows: value.envRows.filter((_, i) => i !== ri) })}
-                    className="text-muted-foreground hover:text-destructive text-xs shrink-0"
+                    className="h-8 shrink-0 text-muted-foreground hover:text-destructive px-2"
                     aria-label="Remove"
                   >
                     ✕
-                  </button>
+                  </Button>
                 </div>
                 {resolved !== null && (
                   <p className="text-xs text-muted-foreground pl-1">
