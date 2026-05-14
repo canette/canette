@@ -2,19 +2,14 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { useSession } from "@/lib/auth-client"
 import { SkeletonText } from "@/components/ui/skeleton"
 import * as api from "@/lib/api"
 import type { Team } from "@canette/types"
 
 export default function TeamsPage() {
   const router = useRouter()
-  const { data: session } = useSession()
-  const isAdmin = session?.user?.role === "admin"
-
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -24,12 +19,7 @@ export default function TeamsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Teams</h1>
-        {isAdmin && (
-          <Button size="sm" onClick={() => router.push("/admin/teams/new")}>New team</Button>
-        )}
-      </div>
+      <h1 className="text-xl font-semibold">Teams</h1>
       {loading ? (
         <SkeletonText />
       ) : teams.length === 0 ? (
