@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/
 import { cn } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { useSelectedTeam } from "@/lib/team-context"
 import * as api from "@/lib/api"
 import type { Team } from "@canette/types"
 
@@ -33,16 +34,18 @@ export default function NewProjectPage() {
   const [submitting, setSubmitting] = useState(false)
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const { selectedTeamId } = useSelectedTeam()
   const [teams, setTeams] = useState<Team[]>([])
   const [teamId, setTeamId] = useState<string>("")
 
-  // Load user's teams
+  // Load user's teams, pre-selecting the sidebar's active team
   useEffect(() => {
     api.teams.list().then((data) => {
       setTeams(data)
-      if (data.length > 0) setTeamId(data[0].id)
+      const match = data.find((t) => t.id === selectedTeamId)
+      setTeamId(match?.id ?? data[0]?.id ?? "")
     }).catch(() => {})
-  }, [])
+  }, [selectedTeamId])
 
   // Auto-derive slug from name unless user has manually edited it
   useEffect(() => {

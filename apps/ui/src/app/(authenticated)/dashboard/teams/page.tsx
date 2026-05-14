@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { SkeletonText } from "@/components/ui/skeleton"
+import { useSelectedTeam } from "@/lib/team-context"
 import * as api from "@/lib/api"
 import type { Team } from "@canette/types"
 
 export default function TeamsPage() {
   const router = useRouter()
+  const { setSelectedTeamId } = useSelectedTeam()
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -28,7 +30,7 @@ export default function TeamsPage() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {teams.map((team) => (
             <Card key={team.id} className="cursor-pointer hover:border-foreground/20 transition-colors"
-              onClick={() => router.push(`/dashboard/teams/${team.id}`)}>
+              onClick={() => { setSelectedTeamId(team.id); router.push(`/dashboard/teams/${team.id}`) }}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   {team.name}

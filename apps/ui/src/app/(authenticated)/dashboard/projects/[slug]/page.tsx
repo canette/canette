@@ -58,7 +58,13 @@ export default function ProjectPage() {
             An app is a deployable service — built from a Git repository or Docker image and served at its own URL.
           </p>
           <p className="text-xs text-muted-foreground">
-            Create one manually or{" "}
+            <Link
+              href={`/dashboard/projects/${slug}/apps/new`}
+              className="underline underline-offset-2 hover:no-underline"
+            >
+              Create one manually
+            </Link>
+            {" "}or{" "}
             <Link
               href={`/dashboard/projects/${slug}/from-template`}
               className="underline underline-offset-2 hover:no-underline"
