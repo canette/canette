@@ -173,7 +173,7 @@ export const admin = {
 
 // Templates
 export const templates = {
-  parse: (body: { yaml?: string; url?: string }) =>
+  parse: (body: { yaml: string }) =>
     request<AppTemplate>("/templates/parse", { method: "POST", body: JSON.stringify(body) }),
 }
 
