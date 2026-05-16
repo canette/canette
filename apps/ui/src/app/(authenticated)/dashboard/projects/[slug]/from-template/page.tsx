@@ -2,15 +2,14 @@
 
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { ClipboardPaste } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardDescription } from "@/components/ui/card"
 import { FormError } from "@/components/ui/form-error"
 import { AppFormFields, toSlug, isValidEnvKey } from "@/components/app-form-fields"
 import type { AppFormValue } from "@/components/app-form-fields"
-import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
 import { resolveTemplateVars, buildSlugMap } from "@/lib/template"
 import type { AppTemplate, GitCredential, Project } from "@canette/types"
@@ -59,9 +58,7 @@ export default function FromTemplatePage() {
   const [appForms, setAppForms] = useState<AppFormValue[]>([])
 
   // Load form state
-  const [loadInput, setLoadInput] = useState("paste")
   const [yamlText, setYamlText] = useState("")
-  const [urlText, setUrlText] = useState("")
   const [loadError, setLoadError] = useState("")
   const [loading, setLoading] = useState(false)
 
@@ -89,16 +86,25 @@ export default function FromTemplatePage() {
 
   // ── Load template ────────────────────────────────────────────────────────────
 
+  async function handlePasteFromClipboard() {
+    try {
+      const text = await navigator.clipboard.readText()
+      setYamlText(text)
+      setLoadError("")
+    } catch {
+      // Clipboard access denied — user can paste manually
+    }
+  }
+
   async function handleLoad() {
     setLoadError("")
+    if (!yamlText.trim()) {
+      setLoadError("Paste a template first")
+      return
+    }
     setLoading(true)
     try {
-      const body = loadInput === "url" ? { url: urlText.trim() } : { yaml: yamlText.trim() }
-      if (!body.yaml && !body.url) {
-        setLoadError(loadInput === "url" ? "Enter a URL" : "Paste a template first")
-        return
-      }
-      const parsed = await api.templates.parse(body)
+      const parsed = await api.templates.parse({ yaml: yamlText.trim() })
       setTemplate(parsed)
       setOriginalSlugs(parsed.apps.map((a) => a.slug))
       setAppForms(parsed.apps.map(formValueFromTemplate))
@@ -212,55 +218,24 @@ export default function FromTemplatePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
-            <div className="flex flex-col gap-4">
-              <div className="flex rounded-md border border-border overflow-hidden w-fit">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <Label>Template YAML</Label>
                 <button
                   type="button"
-                  onClick={() => setLoadInput("paste")}
-                  className={cn(
-                    "px-4 py-1.5 text-sm transition-colors",
-                    loadInput === "paste"
-                      ? "bg-foreground text-background font-medium"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted",
-                  )}
+                  onClick={handlePasteFromClipboard}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Paste YAML
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLoadInput("url")}
-                  className={cn(
-                    "px-4 py-1.5 text-sm transition-colors border-l border-border",
-                    loadInput === "url"
-                      ? "bg-foreground text-background font-medium"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted",
-                  )}
-                >
-                  From URL
+                  <ClipboardPaste className="size-3.5" />
+                  Paste from clipboard
                 </button>
               </div>
-
-              {loadInput === "paste" ? (
-                <Textarea
-                  placeholder={`name: "Full-stack starter"\napps:\n  - name: API\n    slug: api\n    source_type: git\n    git_url: https://github.com/org/repo\n    port: 3000`}
-                  value={yamlText}
-                  onChange={(e) => setYamlText(e.target.value)}
-                  className="font-mono text-xs min-h-[200px]"
-                />
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="templateUrl">Template URL</Label>
-                  <Input
-                    id="templateUrl"
-                    placeholder="https://raw.githubusercontent.com/org/repo/main/canette-template.yaml"
-                    value={urlText}
-                    onChange={(e) => setUrlText(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Must be a public URL. The file is fetched server-side.
-                  </p>
-                </div>
-              )}
+              <Textarea
+                placeholder={`name: "Full-stack starter"\napps:\n  - name: API\n    slug: api\n    source_type: git\n    git_url: https://github.com/org/repo\n    port: 3000`}
+                value={yamlText}
+                onChange={(e) => setYamlText(e.target.value)}
+                className="font-mono text-xs min-h-[280px]"
+              />
             </div>
 
             {loadError && <FormError message={loadError} />}

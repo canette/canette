@@ -163,29 +163,9 @@ apps:
     })
   })
 
-  it("rejects missing input", async () => {
-    await expect(parseTemplate({})).rejects.toMatchObject({
-      code: "MISSING_INPUT",
-    })
-  })
-
-  it("blocks private/loopback URLs", async () => {
-    for (const url of [
-      "http://localhost/template.yaml",
-      "http://127.0.0.1/template.yaml",
-      "http://10.0.0.1/template.yaml",
-      "http://192.168.1.1/template.yaml",
-      "http://172.16.0.1/template.yaml",
-    ]) {
-      await expect(parseTemplate({ url })).rejects.toMatchObject({
-        code: "FORBIDDEN_URL",
-      })
-    }
-  })
-
-  it("blocks non-http(s) URLs", async () => {
-    await expect(parseTemplate({ url: "file:///etc/passwd" })).rejects.toMatchObject({
-      code: "INVALID_URL",
+  it("rejects empty yaml", async () => {
+    await expect(parseTemplate({ yaml: "" })).rejects.toMatchObject({
+      code: "INVALID_TEMPLATE",
     })
   })
 })

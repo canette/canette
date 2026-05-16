@@ -4,9 +4,6 @@ import type { AppTemplate, AppSourceType, TemplateApp } from "@canette/types"
 
 const MAX_TEMPLATE_SIZE = 50 * 1024
 
-// RFC-1918 + loopback
-const PRIVATE_HOST_RE = /^(localhost|127\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)/
-
 // Fields consumed directly into the App row or as separate API calls.
 // Everything else is serialised back to YAML and stored as canetteConfig.
 const APP_ROW_FIELDS = new Set([
@@ -14,44 +11,6 @@ const APP_ROW_FIELDS = new Set([
   "git_credential_id", "app_path", "image_url", "image_tag",
   "port", "env", "secrets",
 ])
-
-function assertPrivateHost(hostname: string) {
-  if (PRIVATE_HOST_RE.test(hostname)) {
-    throw new ServiceError("URL points to a private or loopback address", "FORBIDDEN_URL", 400)
-  }
-}
-
-async function fetchTemplateYaml(url: string): Promise<string> {
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    throw new ServiceError("Invalid URL", "INVALID_URL", 400)
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ServiceError("Only http and https URLs are allowed", "INVALID_URL", 400)
-  }
-  assertPrivateHost(parsed.hostname)
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 5000)
-  try {
-    const res = await fetch(url, { signal: controller.signal })
-    if (!res.ok) {
-      throw new ServiceError(`Failed to fetch template: HTTP ${res.status}`, "FETCH_ERROR", 400)
-    }
-    const text = await res.text()
-    if (text.length > MAX_TEMPLATE_SIZE) {
-      throw new ServiceError("Template file exceeds the 50 KB limit", "TOO_LARGE", 400)
-    }
-    return text
-  } catch (e) {
-    if (e instanceof ServiceError) throw e
-    throw new ServiceError("Failed to fetch template URL", "FETCH_ERROR", 400)
-  } finally {
-    clearTimeout(timeout)
-  }
-}
 
 function parseTemplateApp(raw: Record<string, unknown>, index: number): TemplateApp {
   const name = raw.name
@@ -126,19 +85,11 @@ function parseTemplateApp(raw: Record<string, unknown>, index: number): Template
   }
 }
 
-export async function parseTemplate(input: { yaml?: string; url?: string }): Promise<AppTemplate> {
-  let yamlContent: string
-
-  if (input.url) {
-    yamlContent = await fetchTemplateYaml(input.url)
-  } else if (input.yaml) {
-    if (input.yaml.length > MAX_TEMPLATE_SIZE) {
-      throw new ServiceError("Template exceeds the 50 KB limit", "TOO_LARGE", 400)
-    }
-    yamlContent = input.yaml
-  } else {
-    throw new ServiceError("Either 'yaml' or 'url' is required", "MISSING_INPUT", 400)
+export async function parseTemplate(input: { yaml: string }): Promise<AppTemplate> {
+  if (input.yaml.length > MAX_TEMPLATE_SIZE) {
+    throw new ServiceError("Template exceeds the 50 KB limit", "TOO_LARGE", 400)
   }
+  const yamlContent = input.yaml
 
   let doc: unknown
   try {
