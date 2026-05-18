@@ -115,21 +115,31 @@ function TeamSelector({
 
   return (
     <div className="relative">
-      <button
-        type="button"
-        onClick={() => hasMultiple && setOpen((o) => !o)}
-        className={cn(
-          "w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-semibold text-foreground transition-colors",
-          isTeamsPage && "bg-muted",
-          hasMultiple ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"
-        )}
-      >
-        <Layers size={15} className="shrink-0" />
-        <span className="flex-1 text-left truncate">{name}</span>
+      <div className="flex items-center">
+        <Link
+          href="/dashboard/teams"
+          className={cn(
+            "flex-1 flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted/50 min-w-0",
+            hasMultiple ? "rounded-l-md" : "rounded-md",
+            isTeamsPage && "bg-muted",
+          )}
+        >
+          <Layers size={15} className="shrink-0" />
+          <span className="truncate">{name}</span>
+        </Link>
         {hasMultiple && (
-          <ChevronDown size={13} className={cn("shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className={cn(
+              "px-1.5 py-1.5 rounded-r-md transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/50",
+              open && "bg-muted/50 text-foreground",
+            )}
+          >
+            <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
+          </button>
         )}
-      </button>
+      </div>
 
       {open && hasMultiple && (
         <>
@@ -186,6 +196,7 @@ export function Sidebar({
   const [teamProjects, setTeamProjects] = useState<Project[]>([])
   const [project, setProject] = useState<Project | null>(null)
   const [apps, setApps] = useState<App[]>([])
+  const [projectsOpen, setProjectsOpen] = useState(false)
 
   useEffect(() => {
     if (isAdmin) return
@@ -221,10 +232,6 @@ export function Sidebar({
   }, [isAdmin, selectedTeamId, teams, setSelectedTeamId])
 
   // Fetch projects for the selected team when at team root.
-  // Re-fetch the project list on every pathname change when at team root.
-  // Using pathname (not projectSlug) as a dep ensures a refresh happens any time
-  // the user lands on a non-project page — even via browser back — while keeping
-  // the existing list visible during project-page navigation to avoid flashing.
   useEffect(() => {
     if (isAdmin || !selectedTeamId) {
       setTeamProjects([])
@@ -243,6 +250,25 @@ export function Sidebar({
       .catch(() => {})
     return () => { cancelled = true }
   }, [pathname, isAdmin, selectedTeamId, projectSlug])
+
+  // Fetch team projects when inside a project (for the quick-switch dropdown).
+  useEffect(() => {
+    if (isAdmin || !project) return
+    let cancelled = false
+    fetch("/api/v1/projects", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) {
+          const all: Project[] = d.items ?? []
+          setTeamProjects(all.filter((p) => p.teamId === project.teamId))
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [isAdmin, project])
+
+  // Close the projects dropdown on navigation.
+  useEffect(() => { setProjectsOpen(false) }, [pathname])
 
   const activeTeam = teams.find((t) => t.id === selectedTeamId) ?? teams[0]
 
@@ -288,11 +314,56 @@ export function Sidebar({
 
     nav = (
       <>
-        <Link href="/dashboard" title={collapsed ? "All projects" : undefined}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
-          <LayoutDashboard size={15} className="shrink-0" />
-          {!collapsed && <span className="truncate">Projects</span>}
-        </Link>
+        <div className="relative">
+          <div className="flex items-center">
+            <Link
+              href="/dashboard"
+              title={collapsed ? "All projects" : undefined}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors min-w-0",
+                !collapsed && teamProjects.length > 0 ? "rounded-l-md flex-1" : "rounded-md",
+                collapsed && "justify-center",
+              )}
+            >
+              <LayoutDashboard size={15} className="shrink-0" />
+              {!collapsed && <span className="truncate">Projects</span>}
+            </Link>
+            {!collapsed && teamProjects.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setProjectsOpen((o) => !o)}
+                className={cn(
+                  "px-1.5 py-1.5 rounded-r-md transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                  projectsOpen && "bg-muted/50 text-foreground",
+                )}
+              >
+                <ChevronDown size={13} className={cn("transition-transform", projectsOpen && "rotate-180")} />
+              </button>
+            )}
+          </div>
+          {projectsOpen && !collapsed && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setProjectsOpen(false)} />
+              <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-popover border border-border rounded-md shadow-md py-1 max-h-60 overflow-y-auto">
+                {teamProjects.map((p) => (
+                  <Link
+                    key={p.id}
+                    href={`/dashboard/projects/${p.slug}`}
+                    onClick={() => setProjectsOpen(false)}
+                    className={cn(
+                      "block px-3 py-1.5 text-sm truncate transition-colors",
+                      p.slug === projectSlug
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                    )}
+                  >
+                    {p.name}
+                  </Link>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         {project && !collapsed && (
           <Link href={`/dashboard/projects/${projectSlug}`}
             className="px-3 py-1 text-sm font-medium text-foreground truncate block rounded-md hover:bg-muted/50 transition-colors">
@@ -346,11 +417,11 @@ export function Sidebar({
             <span>New project</span>
           </Link>
         )}
-        {teamId && !(collapsed && pathname.startsWith("/dashboard/teams")) && (
+        {teamId && (
           <>
             <Divider />
             {!activeTeam?.isPersonal && <NavItem href={`/dashboard/teams/${teamId}/members`} label="Team Members" icon={Users} collapsed={collapsed} />}
-            <NavItem href={`/dashboard/teams/${teamId}/credentials`} label="Git Credentials" icon={Key} collapsed={collapsed} />            
+            <NavItem href={`/dashboard/teams/${teamId}/credentials`} label="Git Credentials" icon={Key} collapsed={collapsed} />
           </>
         )}
       </>

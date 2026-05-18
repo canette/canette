@@ -2,19 +2,16 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { useSession } from "@/lib/auth-client"
 import { SkeletonText } from "@/components/ui/skeleton"
+import { useSelectedTeam } from "@/lib/team-context"
 import * as api from "@/lib/api"
 import type { Team } from "@canette/types"
 
 export default function TeamsPage() {
   const router = useRouter()
-  const { data: session } = useSession()
-  const isAdmin = session?.user?.role === "admin"
-
+  const { setSelectedTeamId } = useSelectedTeam()
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -24,12 +21,7 @@ export default function TeamsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Teams</h1>
-        {isAdmin && (
-          <Button size="sm" onClick={() => router.push("/admin/teams/new")}>New team</Button>
-        )}
-      </div>
+      <h1 className="text-xl font-semibold">Teams</h1>
       {loading ? (
         <SkeletonText />
       ) : teams.length === 0 ? (
@@ -38,7 +30,7 @@ export default function TeamsPage() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {teams.map((team) => (
             <Card key={team.id} className="cursor-pointer hover:border-foreground/20 transition-colors"
-              onClick={() => router.push(`/dashboard/teams/${team.id}`)}>
+              onClick={() => { setSelectedTeamId(team.id); router.push(`/dashboard/teams/${team.id}`) }}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   {team.name}

@@ -215,6 +215,35 @@ export interface UserDeletionImpact {
   sharedTeamsReowned: string[]
 }
 
+// Template types
+
+export interface AppTemplate {
+  name: string
+  description?: string
+  apps: TemplateApp[]
+}
+
+export interface TemplateSecret {
+  name: string
+  description?: string
+}
+
+export interface TemplateApp {
+  name: string
+  slug: string
+  sourceType: AppSourceType
+  gitUrl?: string
+  gitBranch?: string
+  gitCredentialId?: string
+  appPath?: string
+  imageUrl?: string
+  imageTag?: string
+  port?: number
+  env?: Record<string, string>
+  secrets?: TemplateSecret[]
+  canetteConfig?: string
+}
+
 // API envelope types
 
 export interface ApiError {

@@ -1,0 +1,232 @@
+---
+title: Templates
+description: Use a canette-template.yaml file to create one or more apps at once from a single file.
+---
+
+A **template** is a YAML file that describes one or more apps to create in a project. It is the fastest way to get a full stack running — paste the file or give canette a URL, review the settings in the wizard, and all apps are created in one go.
+
+## Loading a template
+
+1. Open a project in the dashboard.
+2. Click **From template** next to the **New app** button.
+3. Paste the YAML directly, or enter a public URL (e.g. a raw GitHub link). The file is fetched server-side.
+4. Step through the wizard — one screen per app — to review or adjust any field.
+5. Click **Create _N_ apps** on the summary screen.
+
+## File format
+
+A template file is a superset of [`canette.yaml`](/docs/configuration/canette-yaml). It adds a top-level `name`, an optional `description`, and an `apps` array. Each entry in `apps` is a single-app configuration.
+
+```yaml
+name: "Template display name"    # required
+description: "Optional subtitle"
+
+apps:
+  - name: My App                 # display name — required
+    slug: my-app                 # suggested slug — required, lowercase alphanumeric + hyphens
+
+    # Source: git repo or Docker image
+    source_type: git             # "git" (default) or "image"
+    git_url: https://github.com/org/repo
+    git_branch: main             # optional, defaults to "main"
+    app_path: ""                 # optional, subdirectory within the repo
+
+    # Or for a Docker image:
+    # source_type: image
+    # image_url: nginx
+    # image_tag: latest
+
+    port: 3000
+
+    # Env vars (plaintext, shown and editable in the wizard)
+    env:
+      KEY: value
+
+    # Secret names only — the wizard prompts for values.
+    # Optionally add a description to guide whoever fills in the value.
+    secrets:
+      - SECRET_NAME
+      - name: ANNOTATED_SECRET
+        description: "A 32-character random string — run: openssl rand -hex 16"
+
+    # Any canette.yaml runtime fields are accepted here too:
+    # runtime, resources, replicas, healthcheck, ingress, build
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+```
+
+### Cross-app references
+
+When one app's env var needs to reference another app's slug (for example, a service hostname), use the `{{apps.<slug>.slug}}` syntax:
+
+```yaml
+env:
+  DB_HOST: "{{apps.db.slug}}"
+```
+
+The wizard shows a live preview of the resolved value as you type. At creation time, all references are substituted with the slugs the user confirmed in the wizard.
+
+## Field notes
+
+- **`name`** and **`slug`** are the only required fields per app.
+- **`slug`** is a suggestion — the wizard pre-fills it and lets you edit. If a slug is already taken in the project you will be asked to choose another.
+- **Env vars** are shown in the wizard as editable key-value pairs. Values containing `{{apps.X.slug}}` show a resolved preview.
+- **Secrets** listed under `secrets` appear as required password fields in the wizard. Values are encrypted at rest and are never returned by the API. Each entry can be a plain string or an object with `name` and an optional `description` shown as hint text in the wizard.
+- Any field not recognised as an app-row field (`source_type`, `git_url`, etc.) is passed through as `canette.yaml` content and stored as the app's advanced configuration. Unknown fields are silently ignored for forward compatibility.
+
+---
+
+## Examples
+
+### Minimal — single Git app
+
+The simplest possible template. Good for sharing a repo with a one-click deploy link.
+
+```yaml
+name: "Hello World"
+
+apps:
+  - name: Hello World
+    slug: hello-world
+    source_type: git
+    git_url: https://github.com/org/hello-world
+    port: 3000
+```
+
+---
+
+### Single Docker image
+
+Deploy a pre-built image straight from a registry.
+
+```yaml
+name: "Nginx static site"
+
+apps:
+  - name: Web
+    slug: web
+    source_type: image
+    image_url: nginx
+    image_tag: "1.27"
+    port: 80
+```
+
+---
+
+### Node.js API + Postgres
+
+A two-app stack where the API connects to the database over the cluster-internal hostname.
+
+```yaml
+name: "Node API + Postgres"
+description: "Express API backed by a Postgres database"
+
+apps:
+  - name: API
+    slug: api
+    source_type: git
+    git_url: https://github.com/org/api
+    git_branch: main
+    port: 3000
+    env:
+      DATABASE_URL: "postgresql://app:{{apps.db.slug}}@{{apps.db.slug}}:5432/app"
+      NODE_ENV: production
+    secrets:
+      - name: SESSION_SECRET
+        description: "A 32-character random string — run: openssl rand -hex 16"
+
+  - name: Postgres
+    slug: db
+    source_type: image
+    image_url: postgres
+    image_tag: "16"
+    port: 5432
+    secrets:
+      - name: POSTGRES_PASSWORD
+        description: "Choose a strong password — must match DATABASE_URL above"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+```
+
+> The `{{apps.db.slug}}` references in `DATABASE_URL` are resolved to the slug you confirm for the Postgres app in the wizard.
+
+---
+
+### Full-stack with resource limits and health checks
+
+Demonstrates most template fields at once.
+
+```yaml
+name: "Full-stack starter"
+description: "Next.js frontend, Go API, and Postgres"
+
+apps:
+  - name: Frontend
+    slug: frontend
+    source_type: git
+    git_url: https://github.com/org/frontend
+    git_branch: main
+    port: 3000
+    env:
+      NEXT_PUBLIC_API_URL: "http://{{apps.api.slug}}:4000"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    healthcheck:
+      path: /
+      port: 3000
+      initial_delay: 15
+      period: 30
+
+  - name: API
+    slug: api
+    source_type: git
+    git_url: https://github.com/org/api
+    git_branch: main
+    port: 4000
+    env:
+      DATABASE_URL: "postgresql://app:secret@{{apps.db.slug}}:5432/app"
+      ENVIRONMENT: production
+    secrets:
+      - JWT_SECRET
+      - DATABASE_PASSWORD
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+    healthcheck:
+      path: /healthz
+      port: 4000
+      initial_delay: 10
+      period: 15
+
+  - name: Postgres
+    slug: db
+    source_type: image
+    image_url: postgres
+    image_tag: "16"
+    port: 5432
+    secrets:
+      - POSTGRES_PASSWORD
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+```
