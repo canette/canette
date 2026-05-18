@@ -246,7 +246,7 @@ function StopDialog({ onConfirm, onClose, stopping }: { onConfirm: () => void; o
 
 export default function AppOverviewPage() {
   const { slug: projectSlug, appSlug } = useParams<{ slug: string; appSlug: string }>()
-  const { app, refresh } = useAppContext()
+  const { app, project, refresh } = useAppContext()
 
   const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
   const [loadingDeps, setLoadingDeps] = useState(true)
@@ -367,6 +367,12 @@ export default function AppOverviewPage() {
               {app.liveUrl}
               <ExternalLink size={12} className="text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
             </a>
+          )}
+          {liveDeployment && app.deploymentType === "private" && (
+            <div className="flex items-center gap-2 w-fit rounded-md border border-border px-3 py-1.5 text-sm font-mono text-muted-foreground">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+              {app.slug}.can-{app.projectId.slice(0, 8)}-{project.slug}.svc.cluster.local
+            </div>
           )}
           {showLatestBuildRow && latestDeployment && (
             <div className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">

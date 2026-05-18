@@ -1,5 +1,5 @@
 import type { DB } from "../db/db"
-import type { App, AppSourceType, PaginatedResponse } from "@canette/types"
+import type { App, AppDeploymentType, AppSourceType, PaginatedResponse } from "@canette/types"
 import type { Selectable, Updateable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
@@ -19,6 +19,7 @@ function mapApp(row: AppRow): App {
     name: row.name,
     slug: row.slug,
     sourceType: row.source_type as AppSourceType,
+    deploymentType: row.deployment_type as AppDeploymentType,
     gitUrl: row.git_url,
     gitBranch: row.git_branch,
     gitCredentialId: row.git_credential_id ?? undefined,
@@ -168,6 +169,7 @@ export async function createApp(
     name: string
     slug: string
     sourceType?: AppSourceType
+    deploymentType?: AppDeploymentType
     gitUrl?: string
     gitBranch?: string
     gitCredentialId?: string
@@ -190,6 +192,10 @@ export async function createApp(
   const sourceType: AppSourceType = input.sourceType ?? "git"
   if (sourceType !== "git" && sourceType !== "image") {
     throw new ServiceError("sourceType must be 'git' or 'image'", "VALIDATION_ERROR", 400)
+  }
+  const deploymentType: AppDeploymentType = input.deploymentType ?? "web"
+  if (!["web", "private", "cronjob"].includes(deploymentType)) {
+    throw new ServiceError("deploymentType must be 'web', 'private', or 'cronjob'", "VALIDATION_ERROR", 400)
   }
   if (sourceType === "git" && !input.gitUrl?.trim()) {
     throw new ServiceError("gitUrl is required for git source type", "VALIDATION_ERROR", 400)
@@ -242,6 +248,7 @@ export async function createApp(
         name: input.name.trim(),
         slug: input.slug,
         source_type: sourceType,
+        deployment_type: deploymentType,
         git_url: sourceType === "git" ? (input.gitUrl?.trim() ?? "") : "",
         git_branch: sourceType === "git" ? (input.gitBranch ?? "main") : "main",
         git_credential_id: input.gitCredentialId ?? null,
@@ -276,6 +283,7 @@ export async function updateApp(
   patch: {
     name?: string
     sourceType?: AppSourceType
+    deploymentType?: AppDeploymentType
     gitUrl?: string
     gitBranch?: string
     appPath?: string
@@ -293,6 +301,9 @@ export async function updateApp(
 
   if (patch.sourceType !== undefined && patch.sourceType !== "git" && patch.sourceType !== "image") {
     throw new ServiceError("sourceType must be 'git' or 'image'", "VALIDATION_ERROR", 400)
+  }
+  if (patch.deploymentType !== undefined && !["web", "private", "cronjob"].includes(patch.deploymentType)) {
+    throw new ServiceError("deploymentType must be 'web', 'private', or 'cronjob'", "VALIDATION_ERROR", 400)
   }
   if (patch.port !== undefined && (!Number.isInteger(patch.port) || patch.port < 1 || patch.port > 65535)) {
     throw new ServiceError("port must be an integer between 1 and 65535", "VALIDATION_ERROR", 400)
@@ -340,6 +351,7 @@ export async function updateApp(
   const updates: Updateable<Database["apps"]> = {}
   if (patch.name !== undefined)            updates.name = patch.name.trim()
   if (patch.sourceType !== undefined)      updates.source_type = patch.sourceType
+  if (patch.deploymentType !== undefined)  updates.deployment_type = patch.deploymentType
   if (patch.gitUrl !== undefined)          updates.git_url = patch.gitUrl.trim()
   if (patch.gitBranch !== undefined)       updates.git_branch = patch.gitBranch.trim()
   if (patch.appPath !== undefined)         updates.app_path = patch.appPath

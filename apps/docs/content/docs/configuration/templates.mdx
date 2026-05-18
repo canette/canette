@@ -36,6 +36,7 @@ apps:
     # image_url: nginx
     # image_tag: latest
 
+    deployment_type: web       # "web" (default) or "private" — see below
     port: 3000
 
     # Env vars (plaintext, shown and editable in the wizard)
@@ -72,9 +73,10 @@ The wizard shows a live preview of the resolved value as you type. At creation t
 
 - **`name`** and **`slug`** are the only required fields per app.
 - **`slug`** is a suggestion — the wizard pre-fills it and lets you edit. If a slug is already taken in the project you will be asked to choose another.
+- **`deployment_type`** controls whether a public URL is created. `web` (default) creates a `Deployment` + `Service` + `HTTPRoute`. `private` creates only `Deployment` + `Service` — the app is reachable inside the cluster at `<slug>.<namespace>.svc.cluster.local` but has no public URL. Use `private` for databases, internal APIs, and background services. See [Apps — Visibility](/docs/concepts/apps#visibility-deployment-type).
 - **Env vars** are shown in the wizard as editable key-value pairs. Values containing `{{apps.X.slug}}` show a resolved preview.
 - **Secrets** listed under `secrets` appear as required password fields in the wizard. Values are encrypted at rest and are never returned by the API. Each entry can be a plain string or an object with `name` and an optional `description` shown as hint text in the wizard.
-- Any field not recognised as an app-row field (`source_type`, `git_url`, etc.) is passed through as `canette.yaml` content and stored as the app's advanced configuration. Unknown fields are silently ignored for forward compatibility.
+- Any field not recognised as an app-row field (`source_type`, `deployment_type`, `git_url`, etc.) is passed through as `canette.yaml` content and stored as the app's advanced configuration. Unknown fields are silently ignored for forward compatibility.
 
 ---
 
@@ -140,6 +142,7 @@ apps:
   - name: Postgres
     slug: db
     source_type: image
+    deployment_type: private   # no public URL — only reachable inside the cluster
     image_url: postgres
     image_tag: "16"
     port: 5432
@@ -155,7 +158,7 @@ apps:
         memory: 512Mi
 ```
 
-> The `{{apps.db.slug}}` references in `DATABASE_URL` are resolved to the slug you confirm for the Postgres app in the wizard.
+> The `{{apps.db.slug}}` references in `DATABASE_URL` are resolved to the slug you confirm for the Postgres app in the wizard. The Postgres app uses `deployment_type: private` so it has no public URL and is only accessible from other apps inside the cluster.
 
 ---
 
@@ -217,6 +220,7 @@ apps:
   - name: Postgres
     slug: db
     source_type: image
+    deployment_type: private
     image_url: postgres
     image_tag: "16"
     port: 5432

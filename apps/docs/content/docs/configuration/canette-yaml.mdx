@@ -43,6 +43,7 @@ healthcheck:
   period: 15
 
 ingress:
+  enabled: true             # set to false to suppress the HTTPRoute (private-equivalent override)
   host: my-app.apps.company.com
   tls: true
   path: /
@@ -58,7 +59,8 @@ Fields are split between the UI (stored in the database) and `canette.yaml` (com
 | `runtime.port`, `runtime.command`, `replicas`, `resources`, `healthcheck` | UI as default, `canette.yaml` overrides | File wins when present; UI value is the fallback |
 | `env` | `canette.yaml` only | Plaintext vars committed to the repo; merged at deploy time |
 | `secrets` | UI only (values); `canette.yaml` can list names | Secret values are never stored in the file |
-| `ingress` | UI as default, `canette.yaml` overrides | File wins when present |
+| `ingress.enabled` | UI as default, `canette.yaml` overrides | `false` suppresses the HTTPRoute for this deployment only — equivalent to setting the app's visibility to Private in the UI |
+| `ingress.host`, `ingress.path` | UI as default, `canette.yaml` overrides | File wins when present |
 
 ## Build detection
 

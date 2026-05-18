@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"canette.dev/controller/internal/config"
 	"canette.dev/controller/internal/crypto"
 	k8sres "canette.dev/controller/internal/k8s"
 	"canette.dev/controller/internal/store"
@@ -87,7 +88,13 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	}
 
 	// 4. Build K8s resources.
-	deployCfg := c.buildDeployConfig(appCfg, secretData, imagePullSecretName, imagePullSecretData)
+	skipHTTPRoute := appCfg.DeploymentType == "private"
+	if runtimeCfg, err2 := config.ParseRuntimeConfig(dep.CanetteConfig); err2 == nil {
+		if runtimeCfg.Ingress.Enabled != nil && !*runtimeCfg.Ingress.Enabled {
+			skipHTTPRoute = true
+		}
+	}
+	deployCfg := c.buildDeployConfig(appCfg, secretData, imagePullSecretName, imagePullSecretData, skipHTTPRoute)
 	res := k8sres.BuildResources(deployCfg)
 
 	// 5. Render and store manifest (before applying — preserves intent even if apply fails).
@@ -157,13 +164,18 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		return
 	}
 
-	liveURL := fmt.Sprintf("https://%s-%s.%s", dep.AppSlug, dep.ProjectSlug, c.cfg.ClusterDomain)
-	if err := c.store.SetAppLiveURL(ctx, dep.AppID, liveURL); err != nil {
-		log.Warn("failed to set live url", zap.Error(err))
+	if deployCfg.SkipHTTPRoute {
+		clusterDNS := fmt.Sprintf("%s.%s.svc.cluster.local", dep.AppSlug, appNS)
+		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("Private deployment live. Reachable at %s", clusterDNS))
+		log.Info("deployment live (private)", zap.String("cluster_dns", clusterDNS))
+	} else {
+		liveURL := fmt.Sprintf("https://%s-%s.%s", dep.AppSlug, dep.ProjectSlug, c.cfg.ClusterDomain)
+		if err := c.store.SetAppLiveURL(ctx, dep.AppID, liveURL); err != nil {
+			log.Warn("failed to set live url", zap.Error(err))
+		}
+		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("Deployment live at %s", liveURL))
+		log.Info("deployment live", zap.String("url", liveURL))
 	}
-
-	c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("Deployment live at %s", liveURL))
-	log.Info("deployment live", zap.String("url", liveURL))
 	lastErr = nil
 }
 

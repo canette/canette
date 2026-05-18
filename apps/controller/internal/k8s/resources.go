@@ -38,6 +38,7 @@ type DeployConfig struct {
 	GatewayName         string
 	GatewayNamespace    string
 	ClusterDomain       string
+	SkipHTTPRoute       bool   // true when deployment_type == "private" or ingress.enabled == false
 	ImagePullSecretName string // Name of the imagePullSecret to reference in pod spec
 	ImagePullSecretData []byte // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
 }
@@ -222,44 +223,47 @@ func BuildResources(cfg DeployConfig) AppResources {
 		},
 	}
 
-	hostname := fmt.Sprintf("%s-%s.%s", cfg.AppSlug, cfg.ProjectSlug, cfg.ClusterDomain)
-	httpRoute := map[string]interface{}{
-		"apiVersion": "gateway.networking.k8s.io/v1",
-		"kind":       "HTTPRoute",
-		"metadata": map[string]interface{}{
-			"name":      cfg.AppSlug,
-			"namespace": ns,
-			"labels":    labels,
-		},
-		"spec": map[string]interface{}{
-			"parentRefs": []interface{}{
-				map[string]interface{}{
-					"group":     "gateway.networking.k8s.io",
-					"kind":      "Gateway",
-					"name":      cfg.GatewayName,
-					"namespace": cfg.GatewayNamespace,
-				},
+	var httpRoute map[string]interface{}
+	if !cfg.SkipHTTPRoute {
+		hostname := fmt.Sprintf("%s-%s.%s", cfg.AppSlug, cfg.ProjectSlug, cfg.ClusterDomain)
+		httpRoute = map[string]interface{}{
+			"apiVersion": "gateway.networking.k8s.io/v1",
+			"kind":       "HTTPRoute",
+			"metadata": map[string]interface{}{
+				"name":      cfg.AppSlug,
+				"namespace": ns,
+				"labels":    labels,
 			},
-			"hostnames": []interface{}{hostname},
-			"rules": []interface{}{
-				map[string]interface{}{
-					"matches": []interface{}{
-						map[string]interface{}{
-							"path": map[string]interface{}{
-								"type":  "PathPrefix",
-								"value": "/",
+			"spec": map[string]interface{}{
+				"parentRefs": []interface{}{
+					map[string]interface{}{
+						"group":     "gateway.networking.k8s.io",
+						"kind":      "Gateway",
+						"name":      cfg.GatewayName,
+						"namespace": cfg.GatewayNamespace,
+					},
+				},
+				"hostnames": []interface{}{hostname},
+				"rules": []interface{}{
+					map[string]interface{}{
+						"matches": []interface{}{
+							map[string]interface{}{
+								"path": map[string]interface{}{
+									"type":  "PathPrefix",
+									"value": "/",
+								},
+							},
+						},
+						"backendRefs": []interface{}{
+							map[string]interface{}{
+								"name": cfg.AppSlug,
+								"port": port,
 							},
 						},
 					},
-					"backendRefs": []interface{}{
-						map[string]interface{}{
-							"name": cfg.AppSlug,
-							"port": port,
-						},
-					},
 				},
 			},
-		},
+		}
 	}
 
 	return AppResources{
