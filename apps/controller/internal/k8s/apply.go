@@ -91,6 +91,12 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 		if err := ApplyResource(ctx, dyn, gvrHTTPRoute, ns, res.HTTPRoute); err != nil {
 			return fmt.Errorf("apply httproute: %w", err)
 		}
+	} else {
+		// Private deployment — delete any HTTPRoute left over from a previous web deployment.
+		appName, _ := objectName(res.Deployment)
+		if err := DeleteResource(ctx, dyn, gvrHTTPRoute, ns, appName); err != nil {
+			return fmt.Errorf("delete stale httproute: %w", err)
+		}
 	}
 	return nil
 }

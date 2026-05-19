@@ -174,6 +174,9 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("CronJob scheduled with expression: %s", deployCfg.Schedule))
 		log.Info("cronjob deployment live", zap.String("schedule", deployCfg.Schedule))
 	} else if deployCfg.SkipHTTPRoute {
+		if err := c.store.ClearAppLiveURL(ctx, dep.AppID); err != nil {
+			log.Warn("failed to clear live url", zap.Error(err))
+		}
 		clusterDNS := fmt.Sprintf("%s.%s.svc.cluster.local", dep.AppSlug, appNS)
 		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("Private deployment live. Reachable at %s", clusterDNS))
 		log.Info("deployment live (private)", zap.String("cluster_dns", clusterDNS))
