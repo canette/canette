@@ -27,6 +27,7 @@ function mapApp(row: AppRow): App {
     imageUrl: row.image_url,
     imageTag: row.image_tag,
     port: row.port,
+    schedule: row.schedule ?? undefined,
     liveUrl: row.live_url ?? undefined,
     latestDeploymentStatus: (row.latest_deployment_status as App["latestDeploymentStatus"]) ?? undefined,
     canetteConfig: row.canette_config ?? undefined,
@@ -134,6 +135,19 @@ export async function getAppByRef(
   return mapApp(row)
 }
 
+// Standard 5-field cron OR @-prefixed K8s predefined schedules.
+const CRON_RE = /^(@(hourly|daily|weekly|monthly|yearly|annually|midnight)|((\S+) (\S+) (\S+) (\S+) (\S+)))$/
+
+function validateSchedule(schedule: string): void {
+  if (!CRON_RE.test(schedule.trim())) {
+    throw new ServiceError(
+      "schedule must be a valid cron expression (e.g. '0 2 * * *') or a predefined schedule (e.g. '@daily')",
+      "VALIDATION_ERROR",
+      400
+    )
+  }
+}
+
 function validateCanetteConfig(yaml: string): void {
   // Basic size guard — full YAML parsing happens in the controller at deploy time.
   if (yaml.length > 10 * 1024) {
@@ -177,6 +191,7 @@ export async function createApp(
     imageUrl?: string
     imageTag?: string
     port?: number
+    schedule?: string
     canetteConfig?: string
   }
 ): Promise<App> {
@@ -197,6 +212,10 @@ export async function createApp(
   if (!["web", "private", "cronjob"].includes(deploymentType)) {
     throw new ServiceError("deploymentType must be 'web', 'private', or 'cronjob'", "VALIDATION_ERROR", 400)
   }
+  if (deploymentType === "cronjob" && !input.schedule?.trim()) {
+    throw new ServiceError("schedule is required for cronjob deployment type", "VALIDATION_ERROR", 400)
+  }
+  if (input.schedule?.trim()) validateSchedule(input.schedule.trim())
   if (sourceType === "git" && !input.gitUrl?.trim()) {
     throw new ServiceError("gitUrl is required for git source type", "VALIDATION_ERROR", 400)
   }
@@ -256,6 +275,7 @@ export async function createApp(
         image_url: sourceType === "image" ? (input.imageUrl?.trim() ?? "") : "",
         image_tag: sourceType === "image" ? (input.imageTag?.trim() ?? "latest") : "",
         port,
+        schedule: deploymentType === "cronjob" ? (input.schedule?.trim() ?? null) : null,
         canette_config: input.canetteConfig ?? null,
         created_at: now,
         updated_at: now,
@@ -290,6 +310,7 @@ export async function updateApp(
     imageUrl?: string
     imageTag?: string
     port?: number
+    schedule?: string | null    // null clears it, undefined leaves unchanged
     gitCredentialId?: string | null  // null clears it, undefined leaves unchanged
     canetteConfig?: string | null    // null clears it, undefined leaves unchanged
   }
@@ -305,6 +326,14 @@ export async function updateApp(
   if (patch.deploymentType !== undefined && !["web", "private", "cronjob"].includes(patch.deploymentType)) {
     throw new ServiceError("deploymentType must be 'web', 'private', or 'cronjob'", "VALIDATION_ERROR", 400)
   }
+  const effectiveDeploymentType = patch.deploymentType ?? app.deploymentType
+  if (effectiveDeploymentType === "cronjob") {
+    const effectiveSchedule = patch.schedule !== undefined ? patch.schedule : app.schedule
+    if (!effectiveSchedule?.trim()) {
+      throw new ServiceError("schedule is required for cronjob deployment type", "VALIDATION_ERROR", 400)
+    }
+  }
+  if (patch.schedule != null && patch.schedule.trim()) validateSchedule(patch.schedule.trim())
   if (patch.port !== undefined && (!Number.isInteger(patch.port) || patch.port < 1 || patch.port > 65535)) {
     throw new ServiceError("port must be an integer between 1 and 65535", "VALIDATION_ERROR", 400)
   }
@@ -358,6 +387,7 @@ export async function updateApp(
   if (patch.imageUrl !== undefined)        updates.image_url = patch.imageUrl.trim()
   if (patch.imageTag !== undefined)        updates.image_tag = patch.imageTag.trim()
   if (patch.port !== undefined)            updates.port = patch.port
+  if (patch.schedule !== undefined)        updates.schedule = patch.schedule?.trim() || null
   if (patch.gitCredentialId !== undefined) updates.git_credential_id = patch.gitCredentialId
   if (patch.canetteConfig !== undefined)   updates.canette_config = patch.canetteConfig
   if (!Object.keys(updates).length) throw new ServiceError("Nothing to update", "VALIDATION_ERROR", 400)

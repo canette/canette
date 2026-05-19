@@ -24,6 +24,7 @@ var (
 	gvrDeployment = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 	gvrService    = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}
 	gvrHTTPRoute  = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}
+	gvrCronJob    = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}
 )
 
 const fieldManager = "can-controller"
@@ -53,7 +54,9 @@ func ApplyResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupV
 	return nil
 }
 
-// ApplyAll applies Namespace first, then Secrets (env + imagePull), then Deployment, Service, HTTPRoute.
+// ApplyAll applies Namespace first, then Secrets (env + imagePull), then app workload resources.
+// For CronJob deployments: applies CronJob only (no Deployment, Service, or HTTPRoute).
+// For web/private deployments: applies Deployment, Service, and optionally HTTPRoute.
 func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) error {
 	ns, _ := objectName(res.Namespace)
 	nsNamespace := "" // cluster-scoped
@@ -70,6 +73,12 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.ImagePullSecret); err != nil {
 			return fmt.Errorf("apply imagepullsecret: %w", err)
 		}
+	}
+	if res.CronJob != nil {
+		if err := ApplyResource(ctx, dyn, gvrCronJob, ns, res.CronJob); err != nil {
+			return fmt.Errorf("apply cronjob: %w", err)
+		}
+		return nil
 	}
 	if err := ApplyResource(ctx, dyn, gvrDeployment, ns, res.Deployment); err != nil {
 		return fmt.Errorf("apply deployment: %w", err)
@@ -217,6 +226,12 @@ func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug 
 		return err
 	}
 	return nil
+}
+
+// TeardownCronJob deletes the app's CronJob.
+// The Namespace and Secret are left in place (cheap; reused on next deploy).
+func TeardownCronJob(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
+	return DeleteResource(ctx, dyn, gvrCronJob, namespace, appSlug)
 }
 
 // DeleteAllPodsForApp force-deletes all pods for an app. Used by teardown to

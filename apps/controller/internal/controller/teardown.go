@@ -19,13 +19,20 @@ func (c *Controller) runTeardown(ctx context.Context, dep store.StoppedDeploymen
 	)
 
 	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
-	if err := k8sres.TeardownApp(ctx, c.dynClient, appNS, dep.AppSlug); err != nil {
-		log.Warn("teardown error", zap.Error(err))
-		// non-fatal: idempotent, will retry next poll
-		return
-	}
-	if err := k8sres.DeleteAllPodsForApp(ctx, c.client, appNS, dep.AppSlug); err != nil {
-		log.Warn("delete pods error", zap.Error(err))
+	if dep.DeploymentType == "cronjob" {
+		if err := k8sres.TeardownCronJob(ctx, c.dynClient, appNS, dep.AppSlug); err != nil {
+			log.Warn("cronjob teardown error", zap.Error(err))
+			return
+		}
+	} else {
+		if err := k8sres.TeardownApp(ctx, c.dynClient, appNS, dep.AppSlug); err != nil {
+			log.Warn("teardown error", zap.Error(err))
+			// non-fatal: idempotent, will retry next poll
+			return
+		}
+		if err := k8sres.DeleteAllPodsForApp(ctx, c.client, appNS, dep.AppSlug); err != nil {
+			log.Warn("delete pods error", zap.Error(err))
+		}
 	}
 
 	if err := c.store.ClearAppLiveURL(ctx, dep.AppID); err != nil {

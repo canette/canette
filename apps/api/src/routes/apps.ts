@@ -60,6 +60,7 @@ appsRouter.post("/projects/:projectId/apps", async (c) => {
     imageUrl?: string
     imageTag?: string
     port?: number
+    schedule?: string
     canetteConfig?: string
   }>()
   try {
@@ -108,6 +109,7 @@ appsRouter.patch("/apps/:id", async (c) => {
     imageUrl?: string
     imageTag?: string
     port?: number
+    schedule?: string | null
     gitCredentialId?: string | null
     canetteConfig?: string | null
   }>()

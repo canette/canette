@@ -29,6 +29,7 @@ type deploymentSnapshot struct {
 		AppPath         string `json:"app_path"`
 		GitCredentialID string `json:"git_credential_id"`
 		Port            int    `json:"port"`
+		Schedule        string `json:"schedule"`
 	} `json:"app"`
 	Project struct {
 		ID      string `json:"id"`
@@ -82,6 +83,7 @@ type AppConfig struct {
 	CommitSha      string
 	SourceType     string // "git" | "image"
 	DeploymentType string // "web" | "private" | "cronjob"
+	Schedule       string // cron expression, only set when DeploymentType == "cronjob"
 	Port           int
 	Replicas       int
 	Resources      Resources
@@ -108,11 +110,12 @@ func New(db *sql.DB, log *zap.Logger) *Store {
 
 // StoppedDeployment is the data needed to tear down a stopped app's K8s resources.
 type StoppedDeployment struct {
-	ID          string
-	AppID       string
-	AppSlug     string
-	ProjectID   string
-	ProjectSlug string
+	ID             string
+	AppID          string
+	AppSlug        string
+	ProjectID      string
+	ProjectSlug    string
+	DeploymentType string // "web" | "private" | "cronjob"
 }
 
 // ClaimTeardown returns up to limit deployments with status='stopped' that still have
@@ -154,6 +157,10 @@ func (s *Store) ClaimTeardown(ctx context.Context, limit int) ([]StoppedDeployme
 		d.AppSlug = snap.App.Slug
 		d.ProjectID = snap.Project.ID
 		d.ProjectSlug = snap.Project.Slug
+		d.DeploymentType = snap.App.DeploymentType
+		if d.DeploymentType == "" {
+			d.DeploymentType = "web"
+		}
 		deps = append(deps, d)
 	}
 	return deps, rows.Err()
@@ -319,6 +326,7 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		CommitSha:      dep.CommitSha,
 		SourceType:     dep.SourceType,
 		DeploymentType: dep.DeploymentType,
+		Schedule:       snap.App.Schedule,
 		Port:           port,
 		Replicas:       replicas,
 		Resources:      res,

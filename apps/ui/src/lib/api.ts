@@ -77,7 +77,8 @@ export const apps = {
       name: string
       slug: string
       sourceType?: "git" | "image"
-      deploymentType?: "web" | "private"
+      deploymentType?: "web" | "private" | "cronjob"
+      schedule?: string
       gitUrl?: string
       gitBranch?: string
       appPath?: string
@@ -91,7 +92,8 @@ export const apps = {
     body: {
       name?: string
       sourceType?: "git" | "image"
-      deploymentType?: "web" | "private"
+      deploymentType?: "web" | "private" | "cronjob"
+      schedule?: string | null
       gitUrl?: string
       gitBranch?: string
       appPath?: string

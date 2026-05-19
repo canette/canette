@@ -374,6 +374,12 @@ export default function AppOverviewPage() {
               {app.slug}.can-{app.projectId.slice(0, 8)}-{project.slug}.svc.cluster.local
             </div>
           )}
+          {app.deploymentType === "cronjob" && app.schedule && (
+            <div className="flex items-center gap-2 w-fit rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground">
+              <span className="text-xs">Schedule:</span>
+              <code className="font-mono text-foreground">{app.schedule}</code>
+            </div>
+          )}
           {showLatestBuildRow && latestDeployment && (
             <div className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
               <span className="text-muted-foreground">

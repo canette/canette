@@ -375,9 +375,10 @@ export default function SettingsPage() {
   // General settings
   const [name, setName] = useState(app.name)
   const [sourceType, setSourceType] = useState<"git" | "image">(app.sourceType)
-  const [deploymentType, setDeploymentType] = useState<"web" | "private">(
-    (app.deploymentType as "web" | "private") ?? "web"
+  const [deploymentType, setDeploymentType] = useState<"web" | "private" | "cronjob">(
+    app.deploymentType ?? "web"
   )
+  const [schedule, setSchedule] = useState(app.schedule ?? "")
   const [gitUrl, setGitUrl] = useState(app.gitUrl)
   const [gitBranch, setGitBranch] = useState(app.gitBranch)
   const [appPath, setAppPath] = useState(app.appPath)
@@ -410,7 +411,8 @@ export default function SettingsPage() {
   const isDirty = (
     name !== app.name ||
     sourceType !== app.sourceType ||
-    deploymentType !== ((app.deploymentType as "web" | "private") ?? "web") ||
+    deploymentType !== (app.deploymentType ?? "web") ||
+    schedule !== (app.schedule ?? "") ||
     gitUrl !== app.gitUrl ||
     gitBranch !== app.gitBranch ||
     appPath !== app.appPath ||
@@ -429,12 +431,13 @@ export default function SettingsPage() {
         name,
         sourceType,
         deploymentType,
+        schedule: deploymentType === "cronjob" ? schedule : null,
         gitUrl: sourceType === "git" ? gitUrl : undefined,
         gitBranch: sourceType === "git" ? gitBranch : undefined,
         appPath: sourceType === "git" ? appPath : undefined,
         imageUrl: sourceType === "image" ? imageUrl : undefined,
         imageTag: sourceType === "image" ? imageTag : undefined,
-        port,
+        port: deploymentType !== "cronjob" ? port : undefined,
         gitCredentialId: credentialChanged ? (gitCredentialId || null) : undefined,
       })
       await refresh()
@@ -495,7 +498,7 @@ export default function SettingsPage() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label>Visibility</Label>
+            <Label>Type</Label>
             <div className="flex rounded-md border border-border overflow-hidden w-fit">
               <button type="button" onClick={() => setDeploymentType("web")}
                 className={cn("px-4 py-1.5 text-sm transition-colors",
@@ -507,11 +510,33 @@ export default function SettingsPage() {
                   deploymentType === "private" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
                 Private
               </button>
+              <button type="button" onClick={() => setDeploymentType("cronjob")}
+                className={cn("px-4 py-1.5 text-sm transition-colors border-l border-border",
+                  deploymentType === "cronjob" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
+                Scheduled
+              </button>
             </div>
             {deploymentType === "private" && (
               <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
             )}
+            {deploymentType === "cronjob" && (
+              <p className="text-xs text-muted-foreground">Runs as a Kubernetes CronJob on the given schedule. No public URL.</p>
+            )}
           </div>
+
+          {deploymentType === "cronjob" && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="schedule">Schedule</Label>
+              <Input
+                id="schedule"
+                placeholder="0 2 * * *"
+                value={schedule}
+                onChange={(e) => setSchedule(e.target.value)}
+                className="font-mono w-48"
+              />
+              <p className="text-xs text-muted-foreground">Standard cron expression, e.g. <code>0 2 * * *</code> or <code>@daily</code>.</p>
+            </div>
+          )}
 
           {sourceType === "git" ? (
             <>
@@ -545,11 +570,13 @@ export default function SettingsPage() {
             </div>
           )}
 
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="port">Port</Label>
-            <Input id="port" type="number" min={1} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value))}
-              className="w-32 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
-          </div>
+          {deploymentType !== "cronjob" && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="port">Port</Label>
+              <Input id="port" type="number" min={1} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value))}
+                className="w-32 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
+            </div>
+          )}
 
           {saveError && <p className="text-sm text-destructive">{saveError}</p>}
           {savedMsg && <p className="text-sm text-amber-600">{savedMsg}</p>}

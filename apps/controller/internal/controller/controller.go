@@ -170,6 +170,8 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		GatewayNamespace:    c.cfg.GatewayNamespace,
 		ClusterDomain:       c.cfg.ClusterDomain,
 		SkipHTTPRoute:       skipHTTPRoute,
+		IsCronJob:           cfg.DeploymentType == "cronjob",
+		Schedule:            cfg.Schedule,
 		ImagePullSecretName: imagePullSecretName,
 		ImagePullSecretData: imagePullSecretData,
 	}

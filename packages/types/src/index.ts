@@ -76,6 +76,7 @@ export interface App {
   imageUrl: string
   imageTag: string
   port: number
+  schedule?: string
   liveUrl?: string
   latestDeploymentStatus?: DeploymentStatus
   canetteConfig?: string
