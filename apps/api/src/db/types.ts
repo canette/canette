@@ -107,6 +107,7 @@ export interface Database {
     image_url: string
     image_tag: string
     port: number
+    deployment_type: string
     live_url: string | null
     canette_config: string | null
     created_at: string

@@ -17,7 +17,10 @@ func RenderManifest(res AppResources) (string, error) {
 	if res.Secret != nil {
 		objs = append(objs, redactSecret(res.Secret))
 	}
-	objs = append(objs, res.Deployment, res.Service, res.HTTPRoute)
+	objs = append(objs, res.Deployment, res.Service)
+	if res.HTTPRoute != nil {
+		objs = append(objs, res.HTTPRoute)
+	}
 
 	for _, obj := range objs {
 		y, err := sigsyaml.Marshal(obj)

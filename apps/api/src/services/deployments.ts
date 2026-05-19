@@ -65,6 +65,7 @@ interface SnapshotAppRow {
   id: string
   slug: string
   source_type: string
+  deployment_type: string
   git_url: string
   git_branch: string
   app_path: string
@@ -80,7 +81,7 @@ interface SnapshotAppRow {
 // This eliminates cross-table joins in the builder and controller at claim time.
 async function buildSnapshot(db: DB, appId: string): Promise<string> {
   const appRows = await sql<SnapshotAppRow>`
-    SELECT a.id, a.slug, a.source_type, a.git_url, a.git_branch,
+    SELECT a.id, a.slug, a.source_type, a.deployment_type, a.git_url, a.git_branch,
            a.app_path, a.git_credential_id, a.port,
            p.id AS project_id, p.slug AS project_slug,
            COALESCE(p.created_by, '') AS project_owner
@@ -104,6 +105,7 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
       id: app.id,
       slug: app.slug,
       source_type: app.source_type,
+      deployment_type: app.deployment_type,
       git_url: app.git_url,
       git_branch: app.git_branch,
       app_path: app.app_path,

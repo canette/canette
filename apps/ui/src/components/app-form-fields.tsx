@@ -21,6 +21,7 @@ export type AppFormValue = {
   slug: string
   slugState: SlugState
   sourceType: "git" | "image"
+  deploymentType: "web" | "private"
   gitUrl: string
   gitBranch: string
   appPath: string
@@ -38,6 +39,7 @@ export function defaultAppFormValue(): AppFormValue {
     slug: "",
     slugState: "idle",
     sourceType: "git",
+    deploymentType: "web",
     gitUrl: "",
     gitBranch: "main",
     appPath: "",
@@ -232,6 +234,40 @@ export function AppFormFields({
             Docker Image
           </button>
         </div>
+      </div>
+
+      {/* Deployment type toggle */}
+      <div className="flex flex-col gap-1.5">
+        <Label>Visibility</Label>
+        <div className="flex rounded-md border border-border overflow-hidden w-fit">
+          <button
+            type="button"
+            onClick={() => onChange({ deploymentType: "web" })}
+            className={cn(
+              "px-4 py-1.5 text-sm transition-colors",
+              value.deploymentType === "web"
+                ? "bg-foreground text-background font-medium"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
+            )}
+          >
+            Public
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange({ deploymentType: "private" })}
+            className={cn(
+              "px-4 py-1.5 text-sm transition-colors border-l border-border",
+              value.deploymentType === "private"
+                ? "bg-foreground text-background font-medium"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
+            )}
+          >
+            Private
+          </button>
+        </div>
+        {value.deploymentType === "private" && (
+          <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
+        )}
       </div>
 
       {/* Git fields */}

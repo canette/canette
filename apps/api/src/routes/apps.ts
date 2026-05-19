@@ -52,6 +52,7 @@ appsRouter.post("/projects/:projectId/apps", async (c) => {
     name: string
     slug: string
     sourceType?: "git" | "image"
+    deploymentType?: "web" | "private" | "cronjob"
     gitUrl?: string
     gitBranch?: string
     gitCredentialId?: string
@@ -100,6 +101,7 @@ appsRouter.patch("/apps/:id", async (c) => {
   const body = await c.req.json<{
     name?: string
     sourceType?: "git" | "image"
+    deploymentType?: "web" | "private" | "cronjob"
     gitUrl?: string
     gitBranch?: string
     appPath?: string

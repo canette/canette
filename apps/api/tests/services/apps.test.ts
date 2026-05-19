@@ -166,6 +166,53 @@ describe("services/apps", () => {
     ).rejects.toThrow(ServiceError)
   })
 
+  describe("deploymentType", () => {
+    it("createApp: defaults to 'web' when omitted", async () => {
+      const result = await createApp(db, "projectId", "userId", {
+        name: "Deployment Type Default",
+        slug: "dt-default",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+      })
+      expect(result.deploymentType).toBe("web")
+    })
+
+    it("createApp: stores 'private' when specified", async () => {
+      const result = await createApp(db, "projectId", "userId", {
+        name: "Private App",
+        slug: "dt-private",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+        deploymentType: "private",
+      })
+      expect(result.deploymentType).toBe("private")
+    })
+
+    it("updateApp: can change deploymentType from 'web' to 'private'", async () => {
+      const created = await createApp(db, "projectId", "userId", {
+        name: "Update DT App",
+        slug: "dt-update",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+      })
+      expect(created.deploymentType).toBe("web")
+      const updated = await updateApp(db, created.id, "userId", { deploymentType: "private" })
+      expect(updated?.deploymentType).toBe("private")
+    })
+
+    it("createApp: rejects invalid deploymentType", async () => {
+      await expect(
+        createApp(db, "projectId", "userId", {
+          name: "Bad DT App",
+          slug: "dt-bad",
+          sourceType: "git",
+          gitUrl: "https://github.com/canette/canette",
+          deploymentType: "invalid" as never,
+        })
+      ).rejects.toThrow(ServiceError)
+    })
+  })
+
   describe("updateApp", () => {
     it("accepts credential belonging to the same team", async () => {
       const result = await updateApp(db, "existingAppId", "userId", {

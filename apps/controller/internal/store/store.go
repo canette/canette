@@ -23,6 +23,7 @@ type deploymentSnapshot struct {
 		ID              string `json:"id"`
 		Slug            string `json:"slug"`
 		SourceType      string `json:"source_type"`
+		DeploymentType  string `json:"deployment_type"`
 		GitURL          string `json:"git_url"`
 		GitBranch       string `json:"git_branch"`
 		AppPath         string `json:"app_path"`
@@ -48,17 +49,18 @@ type deploymentSnapshot struct {
 
 // DeployingDeployment is the data needed to reconcile one deployment.
 type DeployingDeployment struct {
-	ID           string
-	AppID        string
-	AppSlug      string
-	ProjectID    string
-	ProjectSlug  string
-	ProjectOwner string // user ID from projects.created_by (may be empty)
-	ImageDigest  string
-	CommitSha    string
-	SourceType   string // "git" | "image"
-	CanetteConfig string // deployments.canette_config — snapshotted from apps at creation, overwritten by builder if repo has canette.yaml
-	snapshot     deploymentSnapshot
+	ID             string
+	AppID          string
+	AppSlug        string
+	ProjectID      string
+	ProjectSlug    string
+	ProjectOwner   string // user ID from projects.created_by (may be empty)
+	ImageDigest    string
+	CommitSha      string
+	SourceType     string // "git" | "image"
+	DeploymentType string // "web" | "private" | "cronjob"
+	CanetteConfig  string // deployments.canette_config — snapshotted from apps at creation, overwritten by builder if repo has canette.yaml
+	snapshot       deploymentSnapshot
 }
 
 // Resources holds resolved Kubernetes resource requests and limits.
@@ -71,18 +73,19 @@ type Resources struct {
 
 // AppConfig is the full config for an app needed during reconciliation.
 type AppConfig struct {
-	AppID        string
-	AppSlug      string
-	ProjectID    string
-	ProjectSlug  string
-	ProjectOwner string // user ID from projects.created_by (may be empty)
-	ImageDigest  string
-	CommitSha    string
-	SourceType   string // "git" | "image"
-	Port         int
-	Replicas     int
-	Resources    Resources
-	Env          map[string]string
+	AppID          string
+	AppSlug        string
+	ProjectID      string
+	ProjectSlug    string
+	ProjectOwner   string // user ID from projects.created_by (may be empty)
+	ImageDigest    string
+	CommitSha      string
+	SourceType     string // "git" | "image"
+	DeploymentType string // "web" | "private" | "cronjob"
+	Port           int
+	Replicas       int
+	Resources      Resources
+	Env            map[string]string
 }
 
 // Secret is an encrypted secret row.
@@ -227,6 +230,10 @@ func (s *Store) ClaimDeploying(ctx context.Context, limit int) ([]DeployingDeplo
 		d.ProjectSlug = d.snapshot.Project.Slug
 		d.ProjectOwner = d.snapshot.Project.OwnerID
 		d.SourceType = d.snapshot.App.SourceType
+		d.DeploymentType = d.snapshot.App.DeploymentType
+		if d.DeploymentType == "" {
+			d.DeploymentType = "web" // backward compat: snapshots before migration have no field
+		}
 		deps = append(deps, d)
 	}
 	return deps, rows.Err()
@@ -303,18 +310,19 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 	}
 
 	return &AppConfig{
-		AppID:        dep.AppID,
-		AppSlug:      dep.AppSlug,
-		ProjectID:    dep.ProjectID,
-		ProjectSlug:  dep.ProjectSlug,
-		ProjectOwner: dep.ProjectOwner,
-		ImageDigest:  dep.ImageDigest,
-		CommitSha:    dep.CommitSha,
-		SourceType:   dep.SourceType,
-		Port:         port,
-		Replicas:     replicas,
-		Resources:    res,
-		Env:          envMap,
+		AppID:          dep.AppID,
+		AppSlug:        dep.AppSlug,
+		ProjectID:      dep.ProjectID,
+		ProjectSlug:    dep.ProjectSlug,
+		ProjectOwner:   dep.ProjectOwner,
+		ImageDigest:    dep.ImageDigest,
+		CommitSha:      dep.CommitSha,
+		SourceType:     dep.SourceType,
+		DeploymentType: dep.DeploymentType,
+		Port:           port,
+		Replicas:       replicas,
+		Resources:      res,
+		Env:            envMap,
 	}, parseErr
 }
 

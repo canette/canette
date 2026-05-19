@@ -1,23 +1,38 @@
 ---
 title: Apps
-description: An app represents a single deployable service backed by a Git repository.
+description: An app represents a single deployable service — a Git repo or Docker image that canette builds and runs in your cluster.
 ---
 
 import { Callout } from "fumadocs-ui/components/callout"
 
-An **app** represents a single deployable service backed by a Git repository.
-
-<Callout type="info">
-  This page is a work in progress.
-</Callout>
+An **app** represents a single deployable service backed by a Git repository or a Docker image. It lives inside a [project](/docs/concepts/projects) and is the unit that gets built, deployed, and monitored.
 
 ## What defines an app
 
-- **Git URL** — the repository to build from
+- **Source** — a Git repository (built on every deploy) or a pre-built Docker image
 - **Branch** — which branch to track (default: `main`)
 - **App path** — subdirectory within the repo (for monorepos)
+- **Port** — the port your process listens on
 - **Git credential** — optional credential for private repos
-- **Secrets** — encrypted environment variables
+- **Environment variables** — plaintext key-value pairs injected at runtime
+- **Secrets** — encrypted environment variables, never returned by the API after being set
+
+## Visibility (deployment type)
+
+Every app has a **visibility** setting that controls whether a public URL is created:
+
+| Setting | Kubernetes resources | Access |
+|---------|---------------------|--------|
+| **Public** (default) | `Deployment` + `Service` + `HTTPRoute` | Reachable at `https://<app>-<project>.<cluster-domain>` |
+| **Private** | `Deployment` + `Service` only | Reachable inside the cluster at `<slug>.<namespace>.svc.cluster.local` |
+
+Set visibility in the **Visibility** toggle on the app creation or settings page. It can also be set via `deployment_type` in a [template](/docs/configuration/templates) or overridden per-deployment by setting `ingress.enabled: false` in [`canette.yaml`](/docs/configuration/canette-yaml).
+
+Use **Private** for databases, internal APIs, message brokers, or any service that should not be exposed through the gateway.
+
+<Callout type="info">
+  Changing visibility takes effect on the next deployment — existing live resources are not updated until you redeploy.
+</Callout>
 
 ## Lifecycle
 

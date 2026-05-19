@@ -58,6 +58,7 @@ export interface GitCredential {
 }
 
 export type AppSourceType = "git" | "image"
+export type AppDeploymentType = "web" | "private" | "cronjob"
 
 export interface App {
   id: string
@@ -65,6 +66,7 @@ export interface App {
   name: string
   slug: string
   sourceType: AppSourceType
+  deploymentType: AppDeploymentType
   // Git source (empty string when sourceType === 'image')
   gitUrl: string
   gitBranch: string
@@ -232,6 +234,7 @@ export interface TemplateApp {
   name: string
   slug: string
   sourceType: AppSourceType
+  deploymentType?: AppDeploymentType
   gitUrl?: string
   gitBranch?: string
   gitCredentialId?: string

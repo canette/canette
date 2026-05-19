@@ -1,13 +1,13 @@
 import jsyaml from "js-yaml"
 import { ServiceError } from "./errors"
-import type { AppTemplate, AppSourceType, TemplateApp } from "@canette/types"
+import type { AppDeploymentType, AppTemplate, AppSourceType, TemplateApp } from "@canette/types"
 
 const MAX_TEMPLATE_SIZE = 50 * 1024
 
 // Fields consumed directly into the App row or as separate API calls.
 // Everything else is serialised back to YAML and stored as canetteConfig.
 const APP_ROW_FIELDS = new Set([
-  "name", "slug", "source_type", "git_url", "git_branch",
+  "name", "slug", "source_type", "deployment_type", "git_url", "git_branch",
   "git_credential_id", "app_path", "image_url", "image_tag",
   "port", "env", "secrets",
 ])
@@ -33,6 +33,11 @@ function parseTemplateApp(raw: Record<string, unknown>, index: number): Template
   const sourceType = raw.source_type
   if (sourceType !== undefined && sourceType !== "git" && sourceType !== "image") {
     throw new ServiceError(`App '${name}': source_type must be 'git' or 'image'`, "INVALID_TEMPLATE", 400)
+  }
+
+  const deploymentType = raw.deployment_type
+  if (deploymentType !== undefined && deploymentType !== "web" && deploymentType !== "private" && deploymentType !== "cronjob") {
+    throw new ServiceError(`App '${name}': deployment_type must be 'web' or 'private'`, "INVALID_TEMPLATE", 400)
   }
 
   const env = raw.env
@@ -68,6 +73,7 @@ function parseTemplateApp(raw: Record<string, unknown>, index: number): Template
     name: (name as string).trim(),
     slug: (slug as string).trim(),
     sourceType: ((sourceType as string | undefined) ?? "git") as AppSourceType,
+    deploymentType: deploymentType as AppDeploymentType | undefined,
     gitUrl: typeof raw.git_url === "string" ? raw.git_url : undefined,
     gitBranch: typeof raw.git_branch === "string" ? raw.git_branch : undefined,
     gitCredentialId: typeof raw.git_credential_id === "string" ? raw.git_credential_id : undefined,

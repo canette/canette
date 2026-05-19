@@ -375,6 +375,9 @@ export default function SettingsPage() {
   // General settings
   const [name, setName] = useState(app.name)
   const [sourceType, setSourceType] = useState<"git" | "image">(app.sourceType)
+  const [deploymentType, setDeploymentType] = useState<"web" | "private">(
+    (app.deploymentType as "web" | "private") ?? "web"
+  )
   const [gitUrl, setGitUrl] = useState(app.gitUrl)
   const [gitBranch, setGitBranch] = useState(app.gitBranch)
   const [appPath, setAppPath] = useState(app.appPath)
@@ -407,6 +410,7 @@ export default function SettingsPage() {
   const isDirty = (
     name !== app.name ||
     sourceType !== app.sourceType ||
+    deploymentType !== ((app.deploymentType as "web" | "private") ?? "web") ||
     gitUrl !== app.gitUrl ||
     gitBranch !== app.gitBranch ||
     appPath !== app.appPath ||
@@ -424,6 +428,7 @@ export default function SettingsPage() {
       await api.apps.update(app.id, {
         name,
         sourceType,
+        deploymentType,
         gitUrl: sourceType === "git" ? gitUrl : undefined,
         gitBranch: sourceType === "git" ? gitBranch : undefined,
         appPath: sourceType === "git" ? appPath : undefined,
@@ -487,6 +492,25 @@ export default function SettingsPage() {
                 Docker Image
               </button>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label>Visibility</Label>
+            <div className="flex rounded-md border border-border overflow-hidden w-fit">
+              <button type="button" onClick={() => setDeploymentType("web")}
+                className={cn("px-4 py-1.5 text-sm transition-colors",
+                  deploymentType === "web" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
+                Public
+              </button>
+              <button type="button" onClick={() => setDeploymentType("private")}
+                className={cn("px-4 py-1.5 text-sm transition-colors border-l border-border",
+                  deploymentType === "private" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
+                Private
+              </button>
+            </div>
+            {deploymentType === "private" && (
+              <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
+            )}
           </div>
 
           {sourceType === "git" ? (

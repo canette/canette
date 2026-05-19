@@ -77,8 +77,10 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 	if err := ApplyResource(ctx, dyn, gvrService, ns, res.Service); err != nil {
 		return fmt.Errorf("apply service: %w", err)
 	}
-	if err := ApplyResource(ctx, dyn, gvrHTTPRoute, ns, res.HTTPRoute); err != nil {
-		return fmt.Errorf("apply httproute: %w", err)
+	if res.HTTPRoute != nil {
+		if err := ApplyResource(ctx, dyn, gvrHTTPRoute, ns, res.HTTPRoute); err != nil {
+			return fmt.Errorf("apply httproute: %w", err)
+		}
 	}
 	return nil
 }
