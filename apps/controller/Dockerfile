@@ -7,7 +7,7 @@ RUN cd apps/controller && go mod download
 
 COPY apps/controller/ ./apps/controller/
 COPY packages/golib/ ./packages/golib/
-RUN CGO_ENABLED=0 GOOS=linux go build -o /controller ./apps/controller/
+RUN cd apps/controller && CGO_ENABLED=0 GOOS=linux go build -o /controller .
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

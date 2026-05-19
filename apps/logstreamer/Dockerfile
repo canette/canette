@@ -7,7 +7,7 @@ RUN cd apps/logstreamer && go mod download
 
 COPY apps/logstreamer/ ./apps/logstreamer/
 COPY packages/golib/ ./packages/golib/
-RUN CGO_ENABLED=0 GOOS=linux go build -o /logstreamer ./apps/logstreamer/
+RUN cd apps/logstreamer && CGO_ENABLED=0 GOOS=linux go build -o /logstreamer .
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

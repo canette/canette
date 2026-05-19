@@ -7,7 +7,7 @@ RUN cd apps/builder && go mod download
 
 COPY apps/builder/ ./apps/builder/
 COPY packages/golib/ ./packages/golib/
-RUN CGO_ENABLED=0 GOOS=linux go build -o /builder ./apps/builder/
+RUN cd apps/builder && CGO_ENABLED=0 GOOS=linux go build -o /builder .
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
