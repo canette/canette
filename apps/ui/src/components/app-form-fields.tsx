@@ -290,7 +290,7 @@ export function AppFormFields({
       {/* Cron schedule (only for scheduled type) */}
       {value.deploymentType === "cronjob" && (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="schedule">
+          <Label htmlFor="schedule" className="flex items-center gap-1">
             Schedule
             <HelpTooltip>
               <p className="mb-1.5">Standard cron expression with five fields: minute, hour, day-of-month, month, day-of-week.</p>
