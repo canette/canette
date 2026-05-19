@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
-import { Download, ExternalLink, Loader2, ShieldAlert, ShieldCheck, X } from "lucide-react"
+import { Download, ExternalLink, Info, Loader2, ShieldAlert, ShieldCheck, X } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
@@ -385,13 +385,21 @@ export default function AppOverviewPage() {
               <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">{currentDeployment.errorMessage}</p>
             </div>
           )}
-          {liveDeployment && app.liveUrl && (
+          {liveDeployment && app.liveUrl && app.deploymentType !== "private" && (
             <a href={app.liveUrl} target="_blank" rel="noopener noreferrer"
               className="group flex items-center gap-2 w-fit rounded-md border border-border px-3 py-1.5 text-sm font-mono hover:border-foreground/30 transition-colors">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
               {app.liveUrl}
               <ExternalLink size={12} className="text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
             </a>
+          )}
+          {app.deploymentType === "private" && app.liveUrl && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
+              <Info size={14} className="text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-muted-foreground">
+                This app still has a public URL from a previous deployment. Redeploy to remove it and switch fully to private mode.
+              </p>
+            </div>
           )}
           {liveDeployment && app.deploymentType === "private" && (
             <div className="flex items-center gap-2 w-fit rounded-md border border-border px-3 py-1.5 text-sm font-mono text-muted-foreground">
