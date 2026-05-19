@@ -397,7 +397,7 @@ export default function AppOverviewPage() {
             <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
               <Info size={14} className="text-amber-500 shrink-0 mt-0.5" />
               <p className="text-xs text-muted-foreground">
-                This app still has a public URL from a previous deployment. Redeploy to remove it and switch fully to private mode.
+                This app still has a <a href={app.liveUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground transition-colors">public URL</a> from a previous deployment. Redeploy to remove it and switch fully to private mode.
               </p>
             </div>
           )}
