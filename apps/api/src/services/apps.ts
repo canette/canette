@@ -326,6 +326,15 @@ export async function updateApp(
   if (patch.deploymentType !== undefined && !["web", "private", "cronjob"].includes(patch.deploymentType)) {
     throw new ServiceError("deploymentType must be 'web', 'private', or 'cronjob'", "VALIDATION_ERROR", 400)
   }
+  if (patch.deploymentType !== undefined && patch.deploymentType !== app.deploymentType) {
+    if (app.deploymentType === "cronjob" || patch.deploymentType === "cronjob") {
+      throw new ServiceError(
+        "Cannot change deployment type to or from 'cronjob'",
+        "VALIDATION_ERROR",
+        400
+      )
+    }
+  }
   const effectiveDeploymentType = patch.deploymentType ?? app.deploymentType
   if (effectiveDeploymentType === "cronjob") {
     const effectiveSchedule = patch.schedule !== undefined ? patch.schedule : app.schedule

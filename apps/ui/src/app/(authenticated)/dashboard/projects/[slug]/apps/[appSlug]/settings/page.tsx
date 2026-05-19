@@ -499,28 +499,29 @@ export default function SettingsPage() {
 
           <div className="flex flex-col gap-1.5">
             <Label>Type</Label>
-            <div className="flex rounded-md border border-border overflow-hidden w-fit">
-              <button type="button" onClick={() => setDeploymentType("web")}
-                className={cn("px-4 py-1.5 text-sm transition-colors",
-                  deploymentType === "web" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
-                Public
-              </button>
-              <button type="button" onClick={() => setDeploymentType("private")}
-                className={cn("px-4 py-1.5 text-sm transition-colors border-l border-border",
-                  deploymentType === "private" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
-                Private
-              </button>
-              <button type="button" onClick={() => setDeploymentType("cronjob")}
-                className={cn("px-4 py-1.5 text-sm transition-colors border-l border-border",
-                  deploymentType === "cronjob" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
-                Scheduled
-              </button>
-            </div>
+            {app.deploymentType === "cronjob" ? (
+              <div className="flex rounded-md border border-border overflow-hidden w-fit opacity-60 cursor-not-allowed select-none">
+                <span className="px-4 py-1.5 text-sm bg-foreground text-background font-medium">Scheduled</span>
+              </div>
+            ) : (
+              <div className="flex rounded-md border border-border overflow-hidden w-fit">
+                <button type="button" onClick={() => setDeploymentType("web")}
+                  className={cn("px-4 py-1.5 text-sm transition-colors",
+                    deploymentType === "web" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
+                  Public
+                </button>
+                <button type="button" onClick={() => setDeploymentType("private")}
+                  className={cn("px-4 py-1.5 text-sm transition-colors border-l border-border",
+                    deploymentType === "private" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
+                  Private
+                </button>
+              </div>
+            )}
             {deploymentType === "private" && (
               <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
             )}
-            {deploymentType === "cronjob" && (
-              <p className="text-xs text-muted-foreground">Runs as a Kubernetes CronJob on the given schedule. No public URL.</p>
+            {app.deploymentType === "cronjob" && (
+              <p className="text-xs text-muted-foreground">Deployment type cannot be changed after creation.</p>
             )}
           </div>
 

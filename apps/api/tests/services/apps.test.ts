@@ -290,6 +290,32 @@ describe("services/apps", () => {
         updateApp(db, created.id, "userId", { schedule: null })
       ).rejects.toThrow(ServiceError)
     })
+
+    it("updateApp: rejects changing cronjob to web", async () => {
+      const created = await createApp(db, "projectId", "userId", {
+        name: "CronJob Lock",
+        slug: "dt-cronjob-lock",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+        deploymentType: "cronjob",
+        schedule: "0 2 * * *",
+      })
+      await expect(
+        updateApp(db, created.id, "userId", { deploymentType: "web" })
+      ).rejects.toThrow(ServiceError)
+    })
+
+    it("updateApp: rejects changing web to cronjob", async () => {
+      const created = await createApp(db, "projectId", "userId", {
+        name: "Web Lock",
+        slug: "dt-web-lock",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+      })
+      await expect(
+        updateApp(db, created.id, "userId", { deploymentType: "cronjob", schedule: "0 2 * * *" })
+      ).rejects.toThrow(ServiceError)
+    })
   })
 
   describe("updateApp", () => {
