@@ -20,7 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"go.uber.org/zap"
 
-	"canette.dev/builder/internal/crypto"
+	"canette.dev/lib/crypto"
 	"canette.dev/builder/internal/githubapp"
 	k8sjobs "canette.dev/builder/internal/k8s"
 	"canette.dev/builder/internal/registry"

@@ -1,19 +1,19 @@
 import type { DB } from "../db/db"
-import { appNamespace } from "../utils/k8s"
 
-// getAppNamespace returns the Kubernetes namespace components needed to proxy log streams.
+// getAppForLogStream returns the identifiers needed to proxy log streams.
 // Returns null if the user does not have access to the app.
 export async function getAppNamespace(
   db: DB,
   appId: string,
   userId: string
-): Promise<{ appSlug: string; namespace: string } | null> {
+): Promise<{ appSlug: string; projectId: string; projectSlug: string; deploymentType: string } | null> {
   const row = await db
     .selectFrom("apps as a")
     .innerJoin("projects as p", "p.id", "a.project_id")
     .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
     .select([
       "a.slug as app_slug",
+      "a.deployment_type",
       "p.id as project_id",
       "p.slug as project_slug",
     ])
@@ -24,7 +24,9 @@ export async function getAppNamespace(
 
   return {
     appSlug: row.app_slug,
-    namespace: appNamespace(row.project_id, row.project_slug),
+    projectId: row.project_id,
+    projectSlug: row.project_slug,
+    deploymentType: row.deployment_type,
   }
 }
 

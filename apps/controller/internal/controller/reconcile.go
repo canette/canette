@@ -10,9 +10,9 @@ import (
 	"go.uber.org/zap"
 
 	"canette.dev/controller/internal/config"
-	"canette.dev/controller/internal/crypto"
 	k8sres "canette.dev/controller/internal/k8s"
 	"canette.dev/controller/internal/store"
+	"canette.dev/lib/crypto"
 )
 
 func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeployment) {

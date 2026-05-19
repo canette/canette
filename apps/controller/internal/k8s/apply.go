@@ -11,11 +11,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+
+	libk8s "canette.dev/lib/k8s"
 )
 
 var (
@@ -140,7 +141,7 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 
 func checkPodsForFailure(ctx context.Context, client kubernetes.Interface, namespace, appName string) (string, bool) {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{"canette.dev/app": appName}.String(),
+		LabelSelector: libk8s.AppLabelSelector(appName),
 	})
 	if err != nil {
 		return "", false
@@ -162,7 +163,7 @@ func checkPodsForFailure(ctx context.Context, client kubernetes.Interface, names
 // Returns nil lines (no error) if no running pod exists.
 func GetPodLogs(ctx context.Context, client kubernetes.Interface, namespace, appSlug string, sinceTime *metav1.Time, tailLines int64) ([]string, error) {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{"canette.dev/app": appSlug}.String(),
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list pods: %w", err)
@@ -238,7 +239,7 @@ func TeardownCronJob(ctx context.Context, dyn dynamic.Interface, namespace, appS
 // clear pods immediately rather than waiting for Deployment cascading deletion.
 func DeleteAllPodsForApp(ctx context.Context, client kubernetes.Interface, namespace, appSlug string) error {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{"canette.dev/app": appSlug}.String(),
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
 	})
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -261,7 +262,7 @@ func DeleteAllPodsForApp(ctx context.Context, client kubernetes.Interface, names
 // CrashLoopBackOff. Returns the number of pods deleted.
 func DeleteStuckPods(ctx context.Context, client kubernetes.Interface, namespace, appSlug string) (int, error) {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{"canette.dev/app": appSlug}.String(),
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
 	})
 	if err != nil {
 		if errors.IsNotFound(err) {

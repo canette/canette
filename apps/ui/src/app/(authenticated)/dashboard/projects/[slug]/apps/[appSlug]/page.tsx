@@ -147,9 +147,18 @@ function LogDialog({ deployment, onClose }: { deployment: Deployment; onClose: (
 
 // ── runtime log dialog ────────────────────────────────────────────────────────
 
-function RuntimeLogDialog({ appId, onClose }: { appId: string; onClose: () => void }) {
+type CronRunMeta = { status: "succeeded" | "failed" | "no_runs"; startedAt?: string; finishedAt?: string }
+
+function formatDuration(startedAt: string, finishedAt: string): string {
+  const secs = Math.round((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000)
+  if (secs < 60) return `${secs}s`
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`
+}
+
+function RuntimeLogDialog({ appId, isCronJob, onClose }: { appId: string; isCronJob: boolean; onClose: () => void }) {
   const [lines, setLines] = useState<string[]>([])
   const [connected, setConnected] = useState(false)
+  const [cronMeta, setCronMeta] = useState<CronRunMeta | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const userScrolledUp = useRef(false)
 
@@ -158,6 +167,9 @@ function RuntimeLogDialog({ appId, onClose }: { appId: string; onClose: () => vo
     source.onopen = () => setConnected(true)
     source.addEventListener("log", (e) => {
       setLines((prev) => { const next = [...prev, (e as MessageEvent).data]; return next.length > 500 ? next.slice(-500) : next })
+    })
+    source.addEventListener("meta", (e) => {
+      try { setCronMeta(JSON.parse((e as MessageEvent).data)) } catch { /* ignore */ }
     })
     source.onerror = () => { setConnected(false); source.close() }
     source.addEventListener("ping", () => {})
@@ -171,20 +183,33 @@ function RuntimeLogDialog({ appId, onClose }: { appId: string; onClose: () => vo
   return (
     <DialogContent className="max-h-[80vh] flex flex-col max-w-3xl" aria-describedby={undefined}>
       <DialogHeader className="flex-row items-center justify-between">
-        <DialogTitle className="text-sm">App logs</DialogTitle>
+        <DialogTitle className="text-sm">{isCronJob ? "Last run logs" : "App logs"}</DialogTitle>
         <DialogClose asChild>
           <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7"><X size={14} /></Button>
         </DialogClose>
       </DialogHeader>
+      {cronMeta && cronMeta.status !== "no_runs" && (
+        <div className="mx-6 mb-2 flex items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <span className={cronMeta.status === "succeeded" ? "text-green-500 font-medium" : "text-destructive font-medium"}>
+            {cronMeta.status === "succeeded" ? "Succeeded" : "Failed"}
+          </span>
+          {cronMeta.startedAt && <span>{new Date(cronMeta.startedAt).toLocaleString()}</span>}
+          {cronMeta.startedAt && cronMeta.finishedAt && (
+            <span>{formatDuration(cronMeta.startedAt, cronMeta.finishedAt)}</span>
+          )}
+        </div>
+      )}
       <div ref={scrollRef} onScroll={() => {
         const el = scrollRef.current
         if (el) userScrolledUp.current = el.scrollHeight - el.scrollTop - el.clientHeight > 48
       }} className="flex-1 overflow-y-auto p-6 pt-0">
-        {!connected
-          ? <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />Connecting…</div>
-          : lines.length === 0
-            ? <p className="text-muted-foreground text-sm">No logs yet. They will appear here once the app starts generating output.</p>
-            : <pre className="text-xs font-mono text-foreground/80 whitespace-pre-wrap leading-5">{lines.join("\n")}</pre>
+        {cronMeta?.status === "no_runs"
+          ? <p className="text-muted-foreground text-sm">No runs yet.</p>
+          : (!connected && !cronMeta)
+            ? <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />{isCronJob ? "Fetching last run…" : "Connecting…"}</div>
+            : lines.length === 0
+              ? <p className="text-muted-foreground text-sm">{isCronJob ? "No output." : "No logs yet. They will appear here once the app starts generating output."}</p>
+              : <pre className="text-xs font-mono text-foreground/80 whitespace-pre-wrap leading-5">{lines.join("\n")}</pre>
         }
       </div>
     </DialogContent>
@@ -413,7 +438,9 @@ export default function AppOverviewPage() {
               <Button size="sm" variant="ghost" onClick={() => setLogDeployment(latestDeployment)}>Deploy logs</Button>
             )}
             {currentDeployment?.status === "live" && (
-              <Button size="sm" variant="ghost" onClick={() => setShowRuntimeLogs(true)}>App logs</Button>
+              <Button size="sm" variant="ghost" onClick={() => setShowRuntimeLogs(true)}>
+                {app.deploymentType === "cronjob" ? "Last run logs" : "App logs"}
+              </Button>
             )}
           </div>
         </CardContent>
@@ -467,7 +494,7 @@ export default function AppOverviewPage() {
       </Dialog>
 
       <Dialog open={showRuntimeLogs} onOpenChange={(o) => { if (!o) setShowRuntimeLogs(false) }}>
-        {showRuntimeLogs && <RuntimeLogDialog appId={app.id} onClose={() => setShowRuntimeLogs(false)} />}
+        {showRuntimeLogs && <RuntimeLogDialog appId={app.id} isCronJob={app.deploymentType === "cronjob"} onClose={() => setShowRuntimeLogs(false)} />}
       </Dialog>
 
       <Dialog open={!!manifestDeployment} onOpenChange={(o) => { if (!o) setManifestDeployment(null) }}>

@@ -29,3 +29,7 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["httproutes"]
     verbs: ["create", "get", "patch", "delete"]
+  # CronJob workloads for scheduled apps
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["create", "get", "patch", "delete"]

@@ -109,7 +109,7 @@ docker buildx build \
   "${OUTPUT_FLAG}" \
   "${t_builder[@]}" \
   -f "${REPO_ROOT}/apps/builder/Dockerfile" \
-  "${REPO_ROOT}/apps/builder"
+  "${REPO_ROOT}"
 
 # ── git-init ─────────────────────────────────────────────────────────────────
 echo "==> [4/7] git-init: ${GIT_INIT_IMAGE}:${TAG}"
@@ -127,7 +127,7 @@ docker buildx build \
   "${OUTPUT_FLAG}" \
   "${t_controller[@]}" \
   -f "${REPO_ROOT}/apps/controller/Dockerfile" \
-  "${REPO_ROOT}/apps/controller"
+  "${REPO_ROOT}"
 
 # ── image-build ──────────────────────────────────────────────────────────────
 echo "==> [6/7] image-build: ${IMAGE_BUILD_IMAGE}:${TAG}"
@@ -145,7 +145,7 @@ docker buildx build \
   "${OUTPUT_FLAG}" \
   "${t_logstreamer[@]}" \
   -f "${REPO_ROOT}/apps/logstreamer/Dockerfile" \
-  "${REPO_ROOT}/apps/logstreamer"
+  "${REPO_ROOT}"
 
 # ── summary ──────────────────────────────────────────────────────────────────
 echo ""

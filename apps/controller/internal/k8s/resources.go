@@ -3,6 +3,8 @@ package k8s
 
 import (
 	"fmt"
+
+	libk8s "canette.dev/lib/k8s"
 )
 
 // AppResources holds all K8s objects needed to deploy one app.
@@ -39,6 +41,7 @@ type DeployConfig struct {
 	GatewayName         string
 	GatewayNamespace    string
 	ClusterDomain       string
+	Command             []string // optional command override (canette.yaml runtime.command)
 	SkipHTTPRoute       bool   // true when deployment_type == "private" or ingress.enabled == false
 	IsCronJob           bool   // true when deployment_type == "cronjob"
 	Schedule            string // cron expression, only used when IsCronJob
@@ -47,17 +50,7 @@ type DeployConfig struct {
 }
 
 // AppNamespace returns the K8s namespace for a project: can-{id[:8]}-{slug[:50]}.
-func AppNamespace(projectID, projectSlug string) string {
-	idPart := projectID
-	if len(idPart) > 8 {
-		idPart = idPart[:8]
-	}
-	slug := projectSlug
-	if len(slug) > 50 {
-		slug = slug[:50]
-	}
-	return "can-" + idPart + "-" + slug
-}
+var AppNamespace = libk8s.AppNamespace
 
 func secretName(appSlug string) string {
 	return appSlug + "-secrets"
@@ -67,19 +60,19 @@ func secretName(appSlug string) string {
 func BuildResources(cfg DeployConfig) AppResources {
 	ns := AppNamespace(cfg.ProjectID, cfg.ProjectSlug)
 	labels := map[string]interface{}{
-		"app.kubernetes.io/managed-by": "canette",
-		"canette.dev/project":          cfg.ProjectSlug,
-		"canette.dev/project-id":       cfg.ProjectID,
-		"canette.dev/app":              cfg.AppSlug,
+		libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
+		libk8s.LabelProject:    cfg.ProjectSlug,
+		libk8s.LabelProjectID:  cfg.ProjectID,
+		libk8s.LabelApp:        cfg.AppSlug,
 	}
 
 	nsLabels := map[string]interface{}{
-		"app.kubernetes.io/managed-by": "canette",
-		"canette.dev/project":          cfg.ProjectSlug,
-		"canette.dev/project-id":       cfg.ProjectID,
+		libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
+		libk8s.LabelProject:    cfg.ProjectSlug,
+		libk8s.LabelProjectID:  cfg.ProjectID,
 	}
 	if cfg.ProjectOwner != "" {
-		nsLabels["canette.dev/owner"] = cfg.ProjectOwner
+		nsLabels[libk8s.LabelOwner] = cfg.ProjectOwner
 	}
 
 	namespace := map[string]interface{}{
@@ -161,6 +154,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 		"image":     cfg.ImageRef,
 		"env":       envList,
 		"resources": resourceSpec,
+	}
+	if len(cfg.Command) > 0 {
+		containerSpec["command"] = cfg.Command
 	}
 	if !cfg.IsCronJob {
 		containerSpec["ports"] = []interface{}{

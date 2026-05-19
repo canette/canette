@@ -4,7 +4,6 @@ import type { Selectable, Updateable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
-import { appNamespace } from "../utils/k8s"
 import { isTeamMember } from "./membership"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
@@ -200,7 +199,6 @@ export async function updateProject(
   }
 
   if (slugChanging) {
-    const oldNamespace = appNamespace(projectId, project.slug)
     await db
       .updateTable("deployments")
       .set({ applied_manifest: null })
@@ -213,8 +211,8 @@ export async function updateProject(
       .execute()
 
     await db
-      .insertInto("pending_namespace_deletions")
-      .values({ id: crypto.randomUUID(), namespace: oldNamespace, created_at: new Date().toISOString() })
+      .insertInto("queued_namespace_cleanups")
+      .values({ id: crypto.randomUUID(), project_id: projectId, project_slug: project.slug, created_at: new Date().toISOString() })
       .onConflict((oc) => oc.doNothing())
       .execute()
   }

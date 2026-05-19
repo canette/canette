@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,10 +20,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"canette.dev/builder/internal/builder"
-	"canette.dev/builder/internal/crypto"
 	k8sjobs "canette.dev/builder/internal/k8s"
 	"canette.dev/builder/internal/scanner"
 	"canette.dev/builder/internal/store"
+	"canette.dev/lib/crypto"
+	"canette.dev/lib/env"
+	"canette.dev/lib/health"
 )
 
 func main() {
@@ -49,7 +49,7 @@ func run(log *zap.Logger) error {
 	}
 
 	// ── Encryption key ─────────────────────────────────────────────────────────
-	encKey, err := requireEnv("ENCRYPTION_KEY")
+	encKey, err := env.RequireEnv("ENCRYPTION_KEY")
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func run(log *zap.Logger) error {
 	}
 
 	// ── Database ───────────────────────────────────────────────────────────────
-	dbURL := envOr("DATABASE_URL", "postgresql://canette:canette@localhost:5432/canette")
+	dbURL := env.EnvOr("DATABASE_URL", "postgresql://canette:canette@localhost:5432/canette")
 	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -77,39 +77,39 @@ func run(log *zap.Logger) error {
 	}
 
 	// ── Build config ───────────────────────────────────────────────────────────
-	imageRepo, err := requireEnv("IMAGE_REPO")
+	imageRepo, err := env.RequireEnv("IMAGE_REPO")
 	if err != nil {
 		return err
 	}
 	imageRepo = strings.TrimSuffix(imageRepo, "/") + "/"
 
-	builderImage, err := requireEnv("BUILDER_IMAGE")
+	builderImage, err := env.RequireEnv("BUILDER_IMAGE")
 	if err != nil {
 		return err
 	}
-	gitInitImage, err := requireEnv("GIT_INIT_IMAGE")
+	gitInitImage, err := env.RequireEnv("GIT_INIT_IMAGE")
 	if err != nil {
 		return err
 	}
 
 	cfg := k8sjobs.BuildConfig{
-		Namespace:          envOr("BUILDER_NAMESPACE", "canette-build"),
+		Namespace:          env.EnvOr("BUILDER_NAMESPACE", "canette-build"),
 		ImageRepo:          imageRepo,
-		BuildkitdAddr:      envOr("BUILDKITD_ADDR", "tcp://buildkitd.canette-build.svc.cluster.local:1234"),
+		BuildkitdAddr:      env.EnvOr("BUILDKITD_ADDR", "tcp://buildkitd.canette-build.svc.cluster.local:1234"),
 		BuilderImage:       builderImage,
 		GitInitImage:       gitInitImage,
-		RegistryAuthSecret: envOr("REGISTRY_AUTH_SECRET", ""),
-		RegistryAuthType:   envOr("REGISTRY_AUTH_TYPE", ""),
+		RegistryAuthSecret: env.EnvOr("REGISTRY_AUTH_SECRET", ""),
+		RegistryAuthType:   env.EnvOr("REGISTRY_AUTH_TYPE", ""),
 	}
 
 	s := store.New(db, log)
 
 	scanCfg := scanner.Config{
-		Provider:      envOr("SCAN_PROVIDER", "auto"),
+		Provider:      env.EnvOr("SCAN_PROVIDER", "auto"),
 		EnabledStr:    os.Getenv("SCAN_ENABLED"), // "" = provider-aware default
 		Mandatory:     os.Getenv("SCAN_MANDATORY") == "true",
-		FailSeverity:  envOr("SCAN_FAIL_SEVERITY", "HIGH"),
-		TrivyImage:    envOr("TRIVY_IMAGE", "aquasec/trivy:0.70.0"),
+		FailSeverity:  env.EnvOr("SCAN_FAIL_SEVERITY", "HIGH"),
+		TrivyImage:    env.EnvOr("TRIVY_IMAGE", "aquasec/trivy:0.70.0"),
 		SBOMEnabled:   os.Getenv("SCAN_SBOM_ENABLED") == "true",
 		K8sClient:     k8sClient,
 		Namespace:     cfg.Namespace,
@@ -119,11 +119,11 @@ func run(log *zap.Logger) error {
 		Log:           log,
 	}
 
-	pollInterval, err := time.ParseDuration(envOr("POLL_INTERVAL", "5s"))
+	pollInterval, err := time.ParseDuration(env.EnvOr("POLL_INTERVAL", "5s"))
 	if err != nil {
 		return fmt.Errorf("POLL_INTERVAL: %w", err)
 	}
-	maxConcurrent, err := strconv.Atoi(envOr("MAX_CONCURRENT", "3"))
+	maxConcurrent, err := strconv.Atoi(env.EnvOr("MAX_CONCURRENT", "3"))
 	if err != nil {
 		return fmt.Errorf("MAX_CONCURRENT: %w", err)
 	}
@@ -140,7 +140,7 @@ func run(log *zap.Logger) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	startHealthServer(ctx, log, envOr("HEALTH_ADDR", ":8081"))
+	health.StartServer(ctx, log, env.EnvOr("HEALTH_ADDR", ":8081"))
 
 	b := builder.New(
 		s,
@@ -155,35 +155,10 @@ func run(log *zap.Logger) error {
 	return b.Run(ctx)
 }
 
-func startHealthServer(ctx context.Context, log *zap.Logger, addr string) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutCtx)
-	}()
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("health server error", zap.Error(err))
-		}
-	}()
-}
-
 func buildK8sClient() (kubernetes.Interface, error) {
-	// Try in-cluster config first (when running as a pod).
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		// Fall back to kubeconfig file.
-		kubeconfig := os.Getenv("KUBECONFIG")
+		kubeconfig := env.EnvOr("KUBECONFIG", "")
 		if kubeconfig == "" {
 			home, _ := os.UserHomeDir()
 			kubeconfig = filepath.Join(home, ".kube", "config")
@@ -194,31 +169,4 @@ func buildK8sClient() (kubernetes.Interface, error) {
 		}
 	}
 	return kubernetes.NewForConfig(config)
-}
-
-func requireEnv(key string) (string, error) {
-	v := readSecretOrEnv(key)
-	if v == "" {
-		return "", fmt.Errorf("required environment variable %s is not set", key)
-	}
-	return v, nil
-}
-
-// readSecretOrEnv reads a secret value from a file if <KEY>_FILE is set,
-// falling back to the plain environment variable. This supports both the
-// Kubernetes file-mount pattern (production) and plain env vars (local dev).
-func readSecretOrEnv(key string) string {
-	if path := os.Getenv(key + "_FILE"); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			return strings.TrimRight(string(data), "\n")
-		}
-	}
-	return os.Getenv(key)
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

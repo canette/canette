@@ -1,9 +1,13 @@
 FROM golang:1.26.2-alpine AS builder
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /logstreamer .
+
+COPY apps/logstreamer/go.mod apps/logstreamer/go.sum ./apps/logstreamer/
+COPY packages/golib/go.mod packages/golib/go.sum ./packages/golib/
+RUN cd apps/logstreamer && go mod download
+
+COPY apps/logstreamer/ ./apps/logstreamer/
+COPY packages/golib/ ./packages/golib/
+RUN CGO_ENABLED=0 GOOS=linux go build -o /logstreamer ./apps/logstreamer/
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

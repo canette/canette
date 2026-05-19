@@ -183,9 +183,10 @@ export interface Database {
     created_at: string
   }
 
-  pending_namespace_deletions: {
+  queued_namespace_cleanups: {
     id: string
-    namespace: string
+    project_id: string
+    project_slug: string
     created_at: string
   }
 

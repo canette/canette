@@ -1,0 +1,8 @@
+go 1.26.0
+
+use (
+	./apps/builder
+	./apps/controller
+	./apps/logstreamer
+	./packages/golib
+)
