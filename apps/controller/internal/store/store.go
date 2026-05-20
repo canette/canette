@@ -29,6 +29,7 @@ type deploymentSnapshot struct {
 		AppPath         string `json:"app_path"`
 		GitCredentialID string `json:"git_credential_id"`
 		Port            int    `json:"port"`
+		Schedule        string `json:"schedule"`
 	} `json:"app"`
 	Project struct {
 		ID      string `json:"id"`
@@ -82,6 +83,8 @@ type AppConfig struct {
 	CommitSha      string
 	SourceType     string // "git" | "image"
 	DeploymentType string // "web" | "private" | "cronjob"
+	Schedule       string // cron expression, only set when DeploymentType == "cronjob"
+	Command        []string
 	Port           int
 	Replicas       int
 	Resources      Resources
@@ -108,11 +111,12 @@ func New(db *sql.DB, log *zap.Logger) *Store {
 
 // StoppedDeployment is the data needed to tear down a stopped app's K8s resources.
 type StoppedDeployment struct {
-	ID          string
-	AppID       string
-	AppSlug     string
-	ProjectID   string
-	ProjectSlug string
+	ID             string
+	AppID          string
+	AppSlug        string
+	ProjectID      string
+	ProjectSlug    string
+	DeploymentType string // "web" | "private" | "cronjob"
 }
 
 // ClaimTeardown returns up to limit deployments with status='stopped' that still have
@@ -154,6 +158,10 @@ func (s *Store) ClaimTeardown(ctx context.Context, limit int) ([]StoppedDeployme
 		d.AppSlug = snap.App.Slug
 		d.ProjectID = snap.Project.ID
 		d.ProjectSlug = snap.Project.Slug
+		d.DeploymentType = snap.App.DeploymentType
+		if d.DeploymentType == "" {
+			d.DeploymentType = "web"
+		}
 		deps = append(deps, d)
 	}
 	return deps, rows.Err()
@@ -319,6 +327,8 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		CommitSha:      dep.CommitSha,
 		SourceType:     dep.SourceType,
 		DeploymentType: dep.DeploymentType,
+		Schedule:       snap.App.Schedule,
+		Command:        cfg.Runtime.Command,
 		Port:           port,
 		Replicas:       replicas,
 		Resources:      res,
@@ -404,16 +414,17 @@ func (s *Store) AppendLog(ctx context.Context, deploymentID, stream, line string
 	return nil
 }
 
-// PendingNamespaceDeletion is a namespace queued for deletion after a project rename.
+// PendingNamespaceDeletion holds the project coordinates for a namespace queued for cleanup.
 type PendingNamespaceDeletion struct {
-	ID        string
-	Namespace string
+	ID          string
+	ProjectID   string
+	ProjectSlug string
 }
 
-// ClaimNamespaceDeletions returns up to limit namespaces queued for deletion.
+// ClaimNamespaceDeletions returns up to limit entries queued for namespace cleanup.
 func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]PendingNamespaceDeletion, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, namespace FROM pending_namespace_deletions ORDER BY created_at ASC LIMIT $1`, limit)
+		`SELECT id, project_id, project_slug FROM queued_namespace_cleanups ORDER BY created_at ASC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query namespace deletions: %w", err)
 	}
@@ -422,7 +433,7 @@ func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]Pendi
 	var dels []PendingNamespaceDeletion
 	for rows.Next() {
 		var d PendingNamespaceDeletion
-		if err := rows.Scan(&d.ID, &d.Namespace); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ProjectSlug); err != nil {
 			return nil, fmt.Errorf("scan namespace deletion row: %w", err)
 		}
 		dels = append(dels, d)
@@ -430,10 +441,10 @@ func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]Pendi
 	return dels, rows.Err()
 }
 
-// MarkNamespaceDeleted removes a pending namespace deletion record.
+// MarkNamespaceDeleted removes a queued namespace cleanup record.
 func (s *Store) MarkNamespaceDeleted(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM pending_namespace_deletions WHERE id = $1`, id)
+		`DELETE FROM queued_namespace_cleanups WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("mark namespace deleted: %w", err)
 	}

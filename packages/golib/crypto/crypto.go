@@ -15,7 +15,7 @@ import (
 )
 
 // NewKey decodes and validates a 64-character hex string into a 32-byte AES key.
-// Call once at startup and panic/fatal on error.
+// Call once at startup and fatal on error.
 func NewKey(hexStr string) ([]byte, error) {
 	if len(hexStr) != 64 {
 		return nil, fmt.Errorf("ENCRYPTION_KEY must be 64 hex chars (32 bytes), got %d chars", len(hexStr))

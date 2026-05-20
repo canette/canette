@@ -4,7 +4,6 @@ import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
-import { appNamespace } from "../utils/k8s"
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
@@ -261,10 +260,9 @@ export async function deleteUser(
       // Queue namespace deletions before removing project records.
       const now = new Date().toISOString()
       for (const project of projects) {
-        const ns = appNamespace(project.id, project.slug)
         await db
-          .insertInto("pending_namespace_deletions")
-          .values({ id: crypto.randomUUID(), namespace: ns, created_at: now })
+          .insertInto("queued_namespace_cleanups")
+          .values({ id: crypto.randomUUID(), project_id: project.id, project_slug: project.slug, created_at: now })
           .onConflict((oc) => oc.doNothing())
           .execute()
       }

@@ -30,7 +30,8 @@ function formValueFromTemplate(app: AppTemplate["apps"][number]): AppFormValue {
     slug: app.slug,
     slugState: "idle",
     sourceType: app.sourceType,
-    deploymentType: (app.deploymentType as "web" | "private") ?? "web",
+    deploymentType: app.deploymentType ?? "web",
+    schedule: "",
     gitUrl: app.gitUrl ?? "",
     gitBranch: app.gitBranch ?? "main",
     appPath: app.appPath ?? "",
@@ -135,8 +136,11 @@ export default function FromTemplatePage() {
       if (form.slugState !== "available") return false
       if (form.sourceType === "git" && !form.gitUrl.trim()) return false
       if (form.sourceType === "image" && !form.imageUrl.trim()) return false
-      const port = parseInt(form.port, 10)
-      if (isNaN(port) || port < 1 || port > 65535) return false
+      if (form.deploymentType === "cronjob" && !form.schedule.trim()) return false
+      if (form.deploymentType !== "cronjob") {
+        const port = parseInt(form.port, 10)
+        if (isNaN(port) || port < 1 || port > 65535) return false
+      }
       if (form.envRows.some((r) => r.key.trim() && !isValidEnvKey(r.key.trim()))) return false
       return true
     })
@@ -165,11 +169,12 @@ export default function FromTemplatePage() {
                 slug: form.slug,
                 sourceType: "git" as const,
                 deploymentType: form.deploymentType,
+                schedule: form.deploymentType === "cronjob" ? form.schedule.trim() : undefined,
                 gitUrl: form.gitUrl.trim(),
                 gitBranch: form.gitBranch.trim() || "main",
                 appPath: form.appPath.trim() || undefined,
                 gitCredentialId: form.gitCredentialId || undefined,
-                port,
+                port: form.deploymentType !== "cronjob" ? port : undefined,
                 canetteConfig: form.canetteConfig.trim() || undefined,
               }
             : {
@@ -177,9 +182,10 @@ export default function FromTemplatePage() {
                 slug: form.slug,
                 sourceType: "image" as const,
                 deploymentType: form.deploymentType,
+                schedule: form.deploymentType === "cronjob" ? form.schedule.trim() : undefined,
                 imageUrl: form.imageUrl.trim(),
                 imageTag: form.imageTag.trim() || "latest",
-                port,
+                port: form.deploymentType !== "cronjob" ? port : undefined,
                 canetteConfig: form.canetteConfig.trim() || undefined,
               }
 

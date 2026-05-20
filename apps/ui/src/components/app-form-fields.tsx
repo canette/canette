@@ -21,7 +21,8 @@ export type AppFormValue = {
   slug: string
   slugState: SlugState
   sourceType: "git" | "image"
-  deploymentType: "web" | "private"
+  deploymentType: "web" | "private" | "cronjob"
+  schedule: string
   gitUrl: string
   gitBranch: string
   appPath: string
@@ -40,6 +41,7 @@ export function defaultAppFormValue(): AppFormValue {
     slugState: "idle",
     sourceType: "git",
     deploymentType: "web",
+    schedule: "",
     gitUrl: "",
     gitBranch: "main",
     appPath: "",
@@ -238,7 +240,7 @@ export function AppFormFields({
 
       {/* Deployment type toggle */}
       <div className="flex flex-col gap-1.5">
-        <Label>Visibility</Label>
+        <Label>Type</Label>
         <div className="flex rounded-md border border-border overflow-hidden w-fit">
           <button
             type="button"
@@ -264,11 +266,54 @@ export function AppFormFields({
           >
             Private
           </button>
+          <button
+            type="button"
+            onClick={() => onChange({ deploymentType: "cronjob" })}
+            className={cn(
+              "px-4 py-1.5 text-sm transition-colors border-l border-border",
+              value.deploymentType === "cronjob"
+                ? "bg-foreground text-background font-medium"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
+            )}
+          >
+            Scheduled
+          </button>
         </div>
         {value.deploymentType === "private" && (
           <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
         )}
+        {value.deploymentType === "cronjob" && (
+          <p className="text-xs text-muted-foreground">Runs as a Kubernetes CronJob on the given schedule. No public URL.</p>
+        )}
       </div>
+
+      {/* Cron schedule (only for scheduled type) */}
+      {value.deploymentType === "cronjob" && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="schedule" className="flex items-center gap-1">
+            Schedule
+            <HelpTooltip>
+              <p className="mb-1.5">Standard cron expression with five fields: minute, hour, day-of-month, month, day-of-week.</p>
+              <p className="mb-1 font-medium">Examples:</p>
+              <ul className="space-y-0.5 text-muted-foreground font-mono text-xs">
+                <li>0 2 * * * — daily at 02:00</li>
+                <li>*/15 * * * * — every 15 minutes</li>
+                <li>0 9 * * 1 — every Monday at 09:00</li>
+                <li>@daily — shorthand for 0 0 * * *</li>
+                <li>@hourly — shorthand for 0 * * * *</li>
+              </ul>
+            </HelpTooltip>
+          </Label>
+          <Input
+            id="schedule"
+            placeholder="0 2 * * *"
+            value={value.schedule}
+            onChange={(e) => onChange({ schedule: e.target.value })}
+            className="font-mono w-48"
+            required
+          />
+        </div>
+      )}
 
       {/* Git fields */}
       {value.sourceType === "git" ? (
@@ -343,8 +388,8 @@ export function AppFormFields({
         </div>
       )}
 
-      {/* Port */}
-      <div className="flex flex-col gap-1.5">
+      {/* Port — hidden for CronJobs */}
+      {value.deploymentType !== "cronjob" && <div className="flex flex-col gap-1.5">
         <Label htmlFor="appPort" className="flex items-center gap-1">
           Port
           <HelpTooltip>
@@ -371,7 +416,7 @@ export function AppFormFields({
           onChange={(e) => onChange({ port: e.target.value })}
           className="w-32 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
-      </div>
+      </div>}
 
       {/* Environment & Secrets (collapsible) */}
       <Collapsible

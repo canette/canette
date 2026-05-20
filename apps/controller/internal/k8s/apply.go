@@ -11,11 +11,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+
+	libk8s "canette.dev/lib/k8s"
 )
 
 var (
@@ -24,6 +25,7 @@ var (
 	gvrDeployment = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 	gvrService    = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}
 	gvrHTTPRoute  = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}
+	gvrCronJob    = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}
 )
 
 const fieldManager = "can-controller"
@@ -53,7 +55,9 @@ func ApplyResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupV
 	return nil
 }
 
-// ApplyAll applies Namespace first, then Secrets (env + imagePull), then Deployment, Service, HTTPRoute.
+// ApplyAll applies Namespace first, then Secrets (env + imagePull), then app workload resources.
+// For CronJob deployments: applies CronJob only (no Deployment, Service, or HTTPRoute).
+// For web/private deployments: applies Deployment, Service, and optionally HTTPRoute.
 func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) error {
 	ns, _ := objectName(res.Namespace)
 	nsNamespace := "" // cluster-scoped
@@ -71,6 +75,12 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 			return fmt.Errorf("apply imagepullsecret: %w", err)
 		}
 	}
+	if res.CronJob != nil {
+		if err := ApplyResource(ctx, dyn, gvrCronJob, ns, res.CronJob); err != nil {
+			return fmt.Errorf("apply cronjob: %w", err)
+		}
+		return nil
+	}
 	if err := ApplyResource(ctx, dyn, gvrDeployment, ns, res.Deployment); err != nil {
 		return fmt.Errorf("apply deployment: %w", err)
 	}
@@ -80,6 +90,12 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 	if res.HTTPRoute != nil {
 		if err := ApplyResource(ctx, dyn, gvrHTTPRoute, ns, res.HTTPRoute); err != nil {
 			return fmt.Errorf("apply httproute: %w", err)
+		}
+	} else {
+		// Private deployment — delete any HTTPRoute left over from a previous web deployment.
+		appName, _ := objectName(res.Deployment)
+		if err := DeleteResource(ctx, dyn, gvrHTTPRoute, ns, appName); err != nil {
+			return fmt.Errorf("delete stale httproute: %w", err)
 		}
 	}
 	return nil
@@ -131,7 +147,7 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 
 func checkPodsForFailure(ctx context.Context, client kubernetes.Interface, namespace, appName string) (string, bool) {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{"canette.dev/app": appName}.String(),
+		LabelSelector: libk8s.AppLabelSelector(appName),
 	})
 	if err != nil {
 		return "", false
@@ -153,7 +169,7 @@ func checkPodsForFailure(ctx context.Context, client kubernetes.Interface, names
 // Returns nil lines (no error) if no running pod exists.
 func GetPodLogs(ctx context.Context, client kubernetes.Interface, namespace, appSlug string, sinceTime *metav1.Time, tailLines int64) ([]string, error) {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{"canette.dev/app": appSlug}.String(),
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list pods: %w", err)
@@ -219,11 +235,17 @@ func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug 
 	return nil
 }
 
+// TeardownCronJob deletes the app's CronJob.
+// The Namespace and Secret are left in place (cheap; reused on next deploy).
+func TeardownCronJob(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
+	return DeleteResource(ctx, dyn, gvrCronJob, namespace, appSlug)
+}
+
 // DeleteAllPodsForApp force-deletes all pods for an app. Used by teardown to
 // clear pods immediately rather than waiting for Deployment cascading deletion.
 func DeleteAllPodsForApp(ctx context.Context, client kubernetes.Interface, namespace, appSlug string) error {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{"canette.dev/app": appSlug}.String(),
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
 	})
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -246,7 +268,7 @@ func DeleteAllPodsForApp(ctx context.Context, client kubernetes.Interface, names
 // CrashLoopBackOff. Returns the number of pods deleted.
 func DeleteStuckPods(ctx context.Context, client kubernetes.Interface, namespace, appSlug string) (int, error) {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{"canette.dev/app": appSlug}.String(),
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
 	})
 	if err != nil {
 		if errors.IsNotFound(err) {

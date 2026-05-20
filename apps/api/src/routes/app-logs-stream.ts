@@ -19,7 +19,8 @@ appLogsStreamRouter.get("/apps/:id/logs/stream", async (c) => {
   if (!appNs) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
 
   const base = process.env.LOGSTREAMER_URL ?? "http://localhost:8080"
-  const url = `${base}/stream?namespace=${encodeURIComponent(appNs.namespace)}&app=${encodeURIComponent(appNs.appSlug)}`
+  const typeParam = appNs.deploymentType === "cronjob" ? "&type=cronjob" : ""
+  const url = `${base}/stream?project_id=${encodeURIComponent(appNs.projectId)}&project_slug=${encodeURIComponent(appNs.projectSlug)}&app=${encodeURIComponent(appNs.appSlug)}${typeParam}`
 
   const secret = process.env.LOGSTREAMER_SECRET ?? ""
   const upstream = await fetch(url, {

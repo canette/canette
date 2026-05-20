@@ -71,6 +71,7 @@ interface SnapshotAppRow {
   app_path: string
   git_credential_id: string | null
   port: number
+  schedule: string | null
   project_id: string
   project_slug: string
   project_owner: string
@@ -82,7 +83,7 @@ interface SnapshotAppRow {
 async function buildSnapshot(db: DB, appId: string): Promise<string> {
   const appRows = await sql<SnapshotAppRow>`
     SELECT a.id, a.slug, a.source_type, a.deployment_type, a.git_url, a.git_branch,
-           a.app_path, a.git_credential_id, a.port,
+           a.app_path, a.git_credential_id, a.port, a.schedule,
            p.id AS project_id, p.slug AS project_slug,
            COALESCE(p.created_by, '') AS project_owner
     FROM apps a
@@ -111,6 +112,7 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
       app_path: app.app_path,
       git_credential_id: app.git_credential_id ?? null,
       port: app.port,
+      schedule: app.schedule ?? null,
     },
     project: {
       id: app.project_id,

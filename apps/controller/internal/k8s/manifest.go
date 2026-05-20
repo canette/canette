@@ -17,9 +17,13 @@ func RenderManifest(res AppResources) (string, error) {
 	if res.Secret != nil {
 		objs = append(objs, redactSecret(res.Secret))
 	}
-	objs = append(objs, res.Deployment, res.Service)
-	if res.HTTPRoute != nil {
-		objs = append(objs, res.HTTPRoute)
+	if res.CronJob != nil {
+		objs = append(objs, res.CronJob)
+	} else {
+		objs = append(objs, res.Deployment, res.Service)
+		if res.HTTPRoute != nil {
+			objs = append(objs, res.HTTPRoute)
+		}
 	}
 
 	for _, obj := range objs {

@@ -19,6 +19,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
+
+	libk8s "canette.dev/lib/k8s"
 )
 
 // TrivyProvider runs a Trivy K8s Job and streams its output to get scan results.
@@ -173,10 +175,10 @@ func (p *TrivyProvider) buildJob(deploymentID, imageRef, jobName string) *batchv
 	backoff := int32(0)
 
 	jobLabels := map[string]string{
-		"app.kubernetes.io/managed-by": "canette",
-		"app.kubernetes.io/name":       "canette-builder",
-		"canette.dev/component":        "builder",
-		"canette.dev/deployment":       deploymentID,
+		libk8s.LabelManagedBy:          libk8s.LabelManagedByVal,
+		"app.kubernetes.io/name":        "canette-builder",
+		libk8s.LabelComponent:          "builder",
+		libk8s.LabelDeployment:         deploymentID,
 	}
 
 	volumeMounts := []corev1.VolumeMount{
@@ -209,7 +211,7 @@ func (p *TrivyProvider) buildJob(deploymentID, imageRef, jobName string) *batchv
 			Namespace: p.namespace,
 			Labels:    jobLabels,
 			Annotations: map[string]string{
-				"canette.dev/deployment-id": deploymentID,
+				libk8s.AnnotDeploymentID: deploymentID,
 			},
 		},
 		Spec: batchv1.JobSpec{

@@ -15,6 +15,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	libk8s "canette.dev/lib/k8s"
 )
 
 // BuildConfig holds operator-level configuration injected from environment variables.
@@ -74,8 +76,8 @@ func CreateRegistryAuthSecret(ctx context.Context, client kubernetes.Interface, 
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "canette",
-				"canette.dev/component":        "builder",
+				libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
+				libk8s.LabelComponent:  "builder",
 			},
 		},
 		Type: corev1.SecretTypeDockerConfigJson,
@@ -118,9 +120,9 @@ func BuildJob(
 	optional := true
 
 	labels := map[string]string{
-		"app.kubernetes.io/managed-by": "canette",
-		"canette.dev/component":        "builder",
-		"canette.dev/deployment":       deploymentID,
+		libk8s.LabelManagedBy:   libk8s.LabelManagedByVal,
+		libk8s.LabelComponent:   "builder",
+		libk8s.LabelDeployment:  deploymentID,
 	}
 
 	workspaceVolumeQuota := resource.MustParse("500Mi")
@@ -239,7 +241,7 @@ func BuildJob(
 			Namespace: cfg.Namespace,
 			Labels:    labels,
 			Annotations: map[string]string{
-				"canette.dev/deployment-id": deploymentID,
+				libk8s.AnnotDeploymentID: deploymentID,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -309,8 +311,8 @@ func CreateGitCredSecret(
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "canette",
-				"canette.dev/component":        "builder",
+				libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
+				libk8s.LabelComponent:  "builder",
 			},
 		},
 		Data: data,
