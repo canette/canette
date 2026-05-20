@@ -16,11 +16,11 @@
   "dependencies": {
     "@canette/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "better-auth": "^1.6.6",
+    "better-auth": "^1.6.11",
     "hono": "4.12.18",
     "jose": "^6.2.3",
     "js-yaml": "^4.1.1",
-    "kysely": "^0.28.17",
+    "kysely": "^0.29.0",
     "pg": "^8.13.0"
   },
   "devDependencies": {
@@ -31,7 +31,7 @@
     "eslint": "^10.3.0",
     "eslint-plugin-unused-imports": "^4.4.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.59.2",
-    "vitest": "^4.1.5"
+    "typescript-eslint": "^8.59.3",
+    "vitest": "^4.1.6"
   }
 }
