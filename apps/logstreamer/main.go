@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
-	"strings"
 	"os"
 	"os/signal"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,10 +19,12 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	libk8s "canette.dev/lib/k8s"
+	"canette.dev/lib/env"
 )
 
 func main() {
@@ -62,7 +67,7 @@ func run(log *zap.Logger) error {
 		return fmt.Errorf("LOGSTREAMER_SECRET environment variable is required")
 	}
 
-	addr := envOr("ADDR", ":8080")
+	addr := env.EnvOr("ADDR", ":8080")
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           newMux(log, k8sClient, secret),
@@ -105,16 +110,35 @@ func requireSecret(secret string, next http.Handler) http.Handler {
 	})
 }
 
+// runMeta is sent as the first SSE event for CronJob log streams.
+type runMeta struct {
+	Status     string `json:"status"`               // "succeeded" | "failed" | "no_runs"
+	StartedAt  string `json:"startedAt,omitempty"`  // RFC3339
+	FinishedAt string `json:"finishedAt,omitempty"` // RFC3339
+}
+
+var (
+	projectIDRe   = regexp.MustCompile(`^[0-9a-f-]{36}$`)
+	projectSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
+)
+
 func streamHandler(log *zap.Logger, client kubernetes.Interface) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ns := r.URL.Query().Get("namespace")
+		projectID := r.URL.Query().Get("project_id")
+		projectSlug := r.URL.Query().Get("project_slug")
 		app := r.URL.Query().Get("app")
-		if ns == "" || app == "" {
-			http.Error(w, "missing namespace or app", http.StatusBadRequest)
+		if projectID == "" || projectSlug == "" || app == "" {
+			http.Error(w, "missing project_id, project_slug or app", http.StatusBadRequest)
 			return
 		}
-		if !strings.HasPrefix(ns, "can-") {
-			http.Error(w, "invalid namespace", http.StatusBadRequest)
+		if !projectIDRe.MatchString(projectID) || !projectSlugRe.MatchString(projectSlug) {
+			http.Error(w, "invalid project_id or project_slug", http.StatusBadRequest)
+			return
+		}
+		ns := libk8s.AppNamespace(projectID, projectSlug)
+
+		if r.URL.Query().Get("type") == "cronjob" {
+			handleCronJobLogs(w, r, log, client, ns, app)
 			return
 		}
 
@@ -208,6 +232,111 @@ func streamHandler(log *zap.Logger, client kubernetes.Interface) http.Handler {
 	})
 }
 
+// handleCronJobLogs writes a one-shot SSE response: first a "meta" event with the
+// last run's status and timestamps, then "log" events for each line of pod output.
+// The connection closes after the full log is written (no follow).
+func handleCronJobLogs(w http.ResponseWriter, r *http.Request, log *zap.Logger, client kubernetes.Interface, ns, appSlug string) {
+	ctx := r.Context()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, canFlush := w.(http.Flusher)
+
+	pod, err := latestCompletedPod(ctx, client, ns, appSlug)
+	if err != nil {
+		// context cancelled — client disconnected
+		return
+	}
+
+	if pod == nil {
+		meta, _ := json.Marshal(runMeta{Status: "no_runs"})
+		fmt.Fprintf(w, "event: meta\ndata: %s\n\n", meta)
+		if canFlush {
+			flusher.Flush()
+		}
+		return
+	}
+
+	log.Info("cronjob logs requested", zap.String("namespace", ns), zap.String("pod", pod.Name))
+
+	meta := runMeta{Status: "succeeded"}
+	if pod.Status.Phase == corev1.PodFailed {
+		meta.Status = "failed"
+	}
+	if pod.Status.StartTime != nil {
+		meta.StartedAt = pod.Status.StartTime.UTC().Format(time.RFC3339)
+	}
+	if t := podFinishedAt(pod); !t.IsZero() {
+		meta.FinishedAt = t.UTC().Format(time.RFC3339)
+	}
+	metaJSON, _ := json.Marshal(meta)
+	fmt.Fprintf(w, "event: meta\ndata: %s\n\n", metaJSON)
+	if canFlush {
+		flusher.Flush()
+	}
+
+	req := client.CoreV1().Pods(ns).GetLogs(pod.Name, &corev1.PodLogOptions{Follow: false})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		log.Warn("open cronjob pod log stream failed", zap.Error(err), zap.String("pod", pod.Name))
+		return
+	}
+	defer stream.Close()
+
+	buf, err := io.ReadAll(stream)
+	if err != nil && ctx.Err() != nil {
+		return
+	}
+	if len(buf) > 0 {
+		_, _ = fmt.Fprint(w, formatLogEvent(buf))
+		if canFlush {
+			flusher.Flush()
+		}
+	}
+}
+
+// latestCompletedPod returns the most recently finished pod (Succeeded or Failed)
+// for the given app. Returns (nil, nil) when no completed pod exists.
+// Returns (nil, err) only on context cancellation.
+func latestCompletedPod(ctx context.Context, client kubernetes.Interface, ns, appSlug string) (*corev1.Pod, error) {
+	pods, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, nil
+	}
+
+	var latest *corev1.Pod
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			continue
+		}
+		if latest == nil || podFinishedAt(pod).After(podFinishedAt(latest)) {
+			latest = pod
+		}
+	}
+	return latest, nil
+}
+
+// podFinishedAt returns the finished-at timestamp from the first terminated container,
+// falling back to the zero time if no such status exists.
+func podFinishedAt(pod *corev1.Pod) time.Time {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Terminated != nil {
+			return cs.State.Terminated.FinishedAt.Time
+		}
+	}
+	return time.Time{}
+}
+
 // waitForRunningPod polls for up to 5 s for a Running pod with the given app label.
 // Returns ("", nil) when no pod is found after the deadline.
 // Returns ("", err) only on context cancellation.
@@ -216,7 +345,7 @@ func waitForRunningPod(ctx context.Context, client kubernetes.Interface, ns, app
 	const pollInterval = 500 * time.Millisecond
 
 	deadline := time.Now().Add(retryDuration)
-	selector := labels.Set{"canette.dev/app": appSlug}.String()
+	selector := libk8s.AppLabelSelector(appSlug)
 
 	for {
 		pods, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
@@ -267,13 +396,7 @@ func loadKubeConfig() (*rest.Config, error) {
 	if cfg, err := rest.InClusterConfig(); err == nil {
 		return cfg, nil
 	}
-	kubeconfig := envOr("KUBECONFIG", clientcmd.RecommendedHomeFile)
+	kubeconfig := env.EnvOr("KUBECONFIG", clientcmd.RecommendedHomeFile)
 	return clientcmd.BuildConfigFromFlags("", kubeconfig)
 }
 
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}

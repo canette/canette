@@ -108,6 +108,7 @@ export interface Database {
     image_tag: string
     port: number
     deployment_type: string
+    schedule: string | null
     live_url: string | null
     canette_config: string | null
     created_at: string
@@ -182,9 +183,10 @@ export interface Database {
     created_at: string
   }
 
-  pending_namespace_deletions: {
+  queued_namespace_cleanups: {
     id: string
-    namespace: string
+    project_id: string
+    project_slug: string
     created_at: string
   }
 

@@ -67,3 +67,39 @@ func TestAppNamespaceTruncatedProjectSlug(t *testing.T) {
 		t.Errorf("AppNamespace() = %q, wanted format %q", got, expected)
 	}
 }
+
+func TestBuildResources_CronJobNoDeploymentOrService(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.IsCronJob = true
+	cfg.Schedule = "0 2 * * *"
+	res := BuildResources(cfg)
+	if res.CronJob == nil {
+		t.Error("expected CronJob to be set for cronjob deployment, got nil")
+	}
+	if res.Deployment != nil {
+		t.Error("expected Deployment to be nil for cronjob deployment, got non-nil")
+	}
+	if res.Service != nil {
+		t.Error("expected Service to be nil for cronjob deployment, got nil")
+	}
+	if res.HTTPRoute != nil {
+		t.Error("expected HTTPRoute to be nil for cronjob deployment, got non-nil")
+	}
+}
+
+func TestBuildResources_CronJobSchedule(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.IsCronJob = true
+	cfg.Schedule = "@daily"
+	res := BuildResources(cfg)
+	spec, ok := res.CronJob["spec"].(map[string]interface{})
+	if !ok {
+		t.Fatal("CronJob spec is not a map")
+	}
+	if got := spec["schedule"]; got != "@daily" {
+		t.Errorf("CronJob schedule = %q, want %q", got, "@daily")
+	}
+	if got := spec["concurrencyPolicy"]; got != "Forbid" {
+		t.Errorf("CronJob concurrencyPolicy = %q, want %q", got, "Forbid")
+	}
+}

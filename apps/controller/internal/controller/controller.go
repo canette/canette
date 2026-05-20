@@ -118,16 +118,17 @@ func (c *Controller) processPending(ctx context.Context) error {
 	} else {
 		for _, nd := range nsDels {
 			go func(d store.PendingNamespaceDeletion) {
-				if err := k8sres.DeleteNamespace(ctx, c.dynClient, d.Namespace); err != nil {
+				ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
+				if err := k8sres.DeleteNamespace(ctx, c.dynClient, ns); err != nil {
 					c.log.Warn("namespace deletion error",
-						zap.String("namespace", d.Namespace),
+						zap.String("namespace", ns),
 						zap.Error(err))
 					return // will retry next poll
 				}
 				if err := c.store.MarkNamespaceDeleted(ctx, d.ID); err != nil {
 					c.log.Warn("mark namespace deleted error", zap.Error(err))
 				}
-				c.log.Info("namespace deleted", zap.String("namespace", d.Namespace))
+				c.log.Info("namespace deleted", zap.String("namespace", ns))
 			}(nd)
 		}
 	}
@@ -156,6 +157,7 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		ProjectOwner:        cfg.ProjectOwner,
 		AppSlug:             cfg.AppSlug,
 		ImageRef:            imageRef,
+		Command:             cfg.Command,
 		Port:                cfg.Port,
 		Replicas:            cfg.Replicas,
 		Resources: k8sres.Resources{
@@ -170,6 +172,8 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		GatewayNamespace:    c.cfg.GatewayNamespace,
 		ClusterDomain:       c.cfg.ClusterDomain,
 		SkipHTTPRoute:       skipHTTPRoute,
+		IsCronJob:           cfg.DeploymentType == "cronjob",
+		Schedule:            cfg.Schedule,
 		ImagePullSecretName: imagePullSecretName,
 		ImagePullSecretData: imagePullSecretData,
 	}

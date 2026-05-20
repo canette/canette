@@ -3,6 +3,7 @@ module canette.dev/builder
 go 1.26.0
 
 require (
+	canette.dev/lib v0.0.0
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.57.2
@@ -69,3 +70,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace canette.dev/lib => ../../packages/golib

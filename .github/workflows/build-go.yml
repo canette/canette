@@ -8,6 +8,7 @@ on:
       - apps/builder/**
       - apps/controller/**
       - apps/logstreamer/**
+      - packages/golib/**
   workflow_dispatch: 
 
 permissions:

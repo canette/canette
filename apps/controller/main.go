@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -21,8 +19,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"canette.dev/controller/internal/controller"
-	"canette.dev/controller/internal/crypto"
 	"canette.dev/controller/internal/store"
+	"canette.dev/lib/crypto"
+	"canette.dev/lib/env"
+	"canette.dev/lib/health"
 )
 
 func main() {
@@ -46,7 +46,7 @@ func run(log *zap.Logger) error {
 	defer cancel()
 
 	// ── Encryption key ────────────────────────────────────────────────────────
-	encKeyHex, err := requireEnv("ENCRYPTION_KEY")
+	encKeyHex, err := env.RequireEnv("ENCRYPTION_KEY")
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func run(log *zap.Logger) error {
 	}
 
 	// ── Database ──────────────────────────────────────────────────────────────
-	dbURL := envOr("DATABASE_URL", "postgresql://canette:canette@localhost:5432/canette")
+	dbURL := env.EnvOr("DATABASE_URL", "postgresql://canette:canette@localhost:5432/canette")
 	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -90,7 +90,7 @@ func run(log *zap.Logger) error {
 	}
 
 	// ── Controller config ─────────────────────────────────────────────────────
-	pollInterval, err := time.ParseDuration(envOr("POLL_INTERVAL", "5s"))
+	pollInterval, err := time.ParseDuration(env.EnvOr("POLL_INTERVAL", "5s"))
 	if err != nil {
 		return fmt.Errorf("invalid POLL_INTERVAL: %w", err)
 	}
@@ -101,13 +101,13 @@ func run(log *zap.Logger) error {
 		}
 	}
 
-	pullRepo, err := requireEnv("PULL_REPO")
+	pullRepo, err := env.RequireEnv("PULL_REPO")
 	if err != nil {
 		return err
 	}
 	pullRepo = strings.TrimSuffix(pullRepo, "/") + "/"
 
-	clusterDomain, err := requireEnv("CLUSTER_DOMAIN")
+	clusterDomain, err := env.RequireEnv("CLUSTER_DOMAIN")
 	if err != nil {
 		return err
 	}
@@ -119,15 +119,15 @@ func run(log *zap.Logger) error {
 		registryHost = registryHost[:idx]
 	}
 
-	imagePullSecretsEnabled := envOr("IMAGE_PULL_SECRETS_ENABLED", "true") == "true"
-	registryAuthConfigFile := envOr("REGISTRY_AUTH_CONFIG_FILE", "")
+	imagePullSecretsEnabled := env.EnvOr("IMAGE_PULL_SECRETS_ENABLED", "true") == "true"
+	registryAuthConfigFile := env.EnvOr("REGISTRY_AUTH_CONFIG_FILE", "")
 
 	cfg := controller.Config{
 		PullRepo:                pullRepo,
-		GatewayName:             envOr("GATEWAY_NAME", "can-gateway"),
-		GatewayNamespace:        envOr("GATEWAY_NAMESPACE", "kube-system"),
+		GatewayName:             env.EnvOr("GATEWAY_NAME", "can-gateway"),
+		GatewayNamespace:        env.EnvOr("GATEWAY_NAMESPACE", "kube-system"),
 		ClusterDomain:           clusterDomain,
-		Namespace:               envOr("BUILDER_NAMESPACE", "canette-build"),
+		Namespace:               env.EnvOr("BUILDER_NAMESPACE", "canette-build"),
 		PollInterval:            pollInterval,
 		MaxConcurrent:           maxConcurrent,
 		ImagePullSecretsEnabled: imagePullSecretsEnabled,
@@ -136,66 +136,15 @@ func run(log *zap.Logger) error {
 	}
 
 	// ── Run ───────────────────────────────────────────────────────────────────
-	startHealthServer(ctx, log, envOr("HEALTH_ADDR", ":8082"))
+	health.StartServer(ctx, log, env.EnvOr("HEALTH_ADDR", ":8082"))
 	ctrl := controller.New(s, k8sClient, dynClient, cfg, cryptoKey, log)
 	return ctrl.Run(ctx)
 }
 
-func startHealthServer(ctx context.Context, log *zap.Logger, addr string) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutCtx)
-	}()
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("health server error", zap.Error(err))
-		}
-	}()
-}
-
 func loadKubeConfig() (*rest.Config, error) {
-	// In-cluster config takes precedence.
 	if cfg, err := rest.InClusterConfig(); err == nil {
 		return cfg, nil
 	}
-	kubeconfig := envOr("KUBECONFIG", clientcmd.RecommendedHomeFile)
+	kubeconfig := env.EnvOr("KUBECONFIG", clientcmd.RecommendedHomeFile)
 	return clientcmd.BuildConfigFromFlags("", kubeconfig)
-}
-
-func requireEnv(key string) (string, error) {
-	v := readSecretOrEnv(key)
-	if v == "" {
-		return "", fmt.Errorf("%s environment variable is required", key)
-	}
-	return v, nil
-}
-
-// readSecretOrEnv reads a secret value from a file if <KEY>_FILE is set,
-// falling back to the plain environment variable. This supports both the
-// Kubernetes file-mount pattern (production) and plain env vars (local dev).
-func readSecretOrEnv(key string) string {
-	if path := os.Getenv(key + "_FILE"); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			return strings.TrimRight(string(data), "\n")
-		}
-	}
-	return os.Getenv(key)
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }

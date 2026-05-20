@@ -3,6 +3,7 @@ module canette.dev/logstreamer
 go 1.26.0
 
 require (
+	canette.dev/lib v0.0.0
 	github.com/joho/godotenv v1.5.1
 	go.uber.org/zap v1.28.0
 	k8s.io/api v0.36.0
@@ -49,3 +50,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace canette.dev/lib => ../../packages/golib

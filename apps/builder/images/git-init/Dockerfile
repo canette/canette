@@ -1,10 +1,13 @@
 FROM golang:1.26.2-alpine AS builder
 
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /git-init ./cmd/git-init/
+COPY apps/builder/go.mod apps/builder/go.sum ./apps/builder/
+COPY packages/golib/go.mod packages/golib/go.sum ./packages/golib/
+RUN cd apps/builder && go mod download
+
+COPY apps/builder/ ./apps/builder/
+COPY packages/golib/ ./packages/golib/
+RUN cd apps/builder && CGO_ENABLED=0 GOOS=linux go build -o /git-init ./cmd/git-init/
 
 FROM alpine/git:2.47.2
 

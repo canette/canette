@@ -10,9 +10,9 @@ import (
 	"go.uber.org/zap"
 
 	"canette.dev/controller/internal/config"
-	"canette.dev/controller/internal/crypto"
 	k8sres "canette.dev/controller/internal/k8s"
 	"canette.dev/controller/internal/store"
+	"canette.dev/lib/crypto"
 )
 
 func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeployment) {
@@ -88,10 +88,13 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	}
 
 	// 4. Build K8s resources.
+	isCronJob := appCfg.DeploymentType == "cronjob"
 	skipHTTPRoute := appCfg.DeploymentType == "private"
-	if runtimeCfg, err2 := config.ParseRuntimeConfig(dep.CanetteConfig); err2 == nil {
-		if runtimeCfg.Ingress.Enabled != nil && !*runtimeCfg.Ingress.Enabled {
-			skipHTTPRoute = true
+	if !isCronJob {
+		if runtimeCfg, err2 := config.ParseRuntimeConfig(dep.CanetteConfig); err2 == nil {
+			if runtimeCfg.Ingress.Enabled != nil && !*runtimeCfg.Ingress.Enabled {
+				skipHTTPRoute = true
+			}
 		}
 	}
 	deployCfg := c.buildDeployConfig(appCfg, secretData, imagePullSecretName, imagePullSecretData, skipHTTPRoute)
@@ -125,37 +128,40 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	}
 	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
 
-	// 7. Watch rollout (poll every 3s, timeout 12min).
-	// K8s progressDeadlineSeconds defaults to 600s (10min); our timeout must exceed that
-	// so we see the real ProgressDeadlineExceeded condition rather than timing out first.
-	deadline := time.Now().Add(12 * time.Minute)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			lastErr = ctx.Err()
-			return
-		default:
-		}
-
-		status, err := k8sres.CheckRollout(ctx, c.client, appNS, dep.AppSlug)
-		if err != nil {
-			log.Warn("check rollout error", zap.Error(err))
-		} else {
-			c.appendLog(ctx, log, dep.ID, "controller", status.Message)
-			if status.Done {
-				if status.Succeeded {
-					break
-				}
-				lastErr = fmt.Errorf("rollout failed: %s", status.Message)
+	// 7. Watch rollout — skipped for CronJobs (no Deployment to roll out).
+	if !isCronJob {
+		// Poll every 3s, timeout 12min.
+		// K8s progressDeadlineSeconds defaults to 600s (10min); our timeout must exceed that
+		// so we see the real ProgressDeadlineExceeded condition rather than timing out first.
+		deadline := time.Now().Add(12 * time.Minute)
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				lastErr = ctx.Err()
 				return
+			default:
 			}
-		}
-		time.Sleep(3 * time.Second)
-	}
 
-	if time.Now().After(deadline) {
-		lastErr = fmt.Errorf("rollout timed out after 12 minutes")
-		return
+			status, err := k8sres.CheckRollout(ctx, c.client, appNS, dep.AppSlug)
+			if err != nil {
+				log.Warn("check rollout error", zap.Error(err))
+			} else {
+				c.appendLog(ctx, log, dep.ID, "controller", status.Message)
+				if status.Done {
+					if status.Succeeded {
+						break
+					}
+					lastErr = fmt.Errorf("rollout failed: %s", status.Message)
+					return
+				}
+			}
+			time.Sleep(3 * time.Second)
+		}
+
+		if time.Now().After(deadline) {
+			lastErr = fmt.Errorf("rollout timed out after 12 minutes")
+			return
+		}
 	}
 
 	// 8. Mark live and set URL.
@@ -164,7 +170,13 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		return
 	}
 
-	if deployCfg.SkipHTTPRoute {
+	if isCronJob {
+		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("CronJob scheduled with expression: %s", deployCfg.Schedule))
+		log.Info("cronjob deployment live", zap.String("schedule", deployCfg.Schedule))
+	} else if deployCfg.SkipHTTPRoute {
+		if err := c.store.ClearAppLiveURL(ctx, dep.AppID); err != nil {
+			log.Warn("failed to clear live url", zap.Error(err))
+		}
 		clusterDNS := fmt.Sprintf("%s.%s.svc.cluster.local", dep.AppSlug, appNS)
 		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("Private deployment live. Reachable at %s", clusterDNS))
 		log.Info("deployment live (private)", zap.String("cluster_dns", clusterDNS))

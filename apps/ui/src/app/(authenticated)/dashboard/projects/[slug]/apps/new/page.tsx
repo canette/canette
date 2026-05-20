@@ -45,20 +45,22 @@ export default function NewAppPage() {
               slug: form.slug,
               sourceType: "git" as const,
               deploymentType: form.deploymentType,
+              schedule: form.deploymentType === "cronjob" ? form.schedule.trim() : undefined,
               gitUrl: form.gitUrl.trim(),
               gitBranch: form.gitBranch.trim() || "main",
               appPath: form.appPath.trim() || undefined,
               gitCredentialId: form.gitCredentialId || undefined,
-              port,
+              port: form.deploymentType !== "cronjob" ? port : undefined,
             }
           : {
               name: form.name.trim(),
               slug: form.slug,
               sourceType: "image" as const,
               deploymentType: form.deploymentType,
+              schedule: form.deploymentType === "cronjob" ? form.schedule.trim() : undefined,
               imageUrl: form.imageUrl.trim(),
               imageTag: form.imageTag.trim() || "latest",
-              port,
+              port: form.deploymentType !== "cronjob" ? port : undefined,
             }
 
       const res = await fetch(`/api/v1/projects/${project.id}/apps`, {

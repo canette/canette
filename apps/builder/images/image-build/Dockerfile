@@ -1,11 +1,14 @@
 FROM golang:1.26.2-alpine AS canette-bins
 
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /canette-config ./cmd/canette-config/
-RUN CGO_ENABLED=0 GOOS=linux go build -o /canette-build ./cmd/canette-build/
+COPY apps/builder/go.mod apps/builder/go.sum ./apps/builder/
+COPY packages/golib/go.mod packages/golib/go.sum ./packages/golib/
+RUN cd apps/builder && go mod download
+
+COPY apps/builder/ ./apps/builder/
+COPY packages/golib/ ./packages/golib/
+RUN cd apps/builder && CGO_ENABLED=0 GOOS=linux go build -o /canette-config ./cmd/canette-config/
+RUN cd apps/builder && CGO_ENABLED=0 GOOS=linux go build -o /canette-build ./cmd/canette-build/
 
 FROM ubuntu:24.04
 

@@ -3,6 +3,8 @@ package k8s
 
 import (
 	"fmt"
+
+	libk8s "canette.dev/lib/k8s"
 )
 
 // AppResources holds all K8s objects needed to deploy one app.
@@ -10,9 +12,10 @@ type AppResources struct {
 	Namespace       map[string]interface{}
 	Secret          map[string]interface{} // nil when no secrets
 	ImagePullSecret map[string]interface{} // nil when imagePullSecrets not enabled
-	Deployment      map[string]interface{}
-	Service         map[string]interface{}
-	HTTPRoute       map[string]interface{}
+	Deployment      map[string]interface{} // nil when IsCronJob
+	Service         map[string]interface{} // nil when IsCronJob
+	HTTPRoute       map[string]interface{} // nil when SkipHTTPRoute or IsCronJob
+	CronJob         map[string]interface{} // nil unless IsCronJob
 }
 
 // Resources holds resolved Kubernetes resource requests and limits.
@@ -38,23 +41,16 @@ type DeployConfig struct {
 	GatewayName         string
 	GatewayNamespace    string
 	ClusterDomain       string
+	Command             []string // optional command override (canette.yaml runtime.command)
 	SkipHTTPRoute       bool   // true when deployment_type == "private" or ingress.enabled == false
+	IsCronJob           bool   // true when deployment_type == "cronjob"
+	Schedule            string // cron expression, only used when IsCronJob
 	ImagePullSecretName string // Name of the imagePullSecret to reference in pod spec
 	ImagePullSecretData []byte // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
 }
 
 // AppNamespace returns the K8s namespace for a project: can-{id[:8]}-{slug[:50]}.
-func AppNamespace(projectID, projectSlug string) string {
-	idPart := projectID
-	if len(idPart) > 8 {
-		idPart = idPart[:8]
-	}
-	slug := projectSlug
-	if len(slug) > 50 {
-		slug = slug[:50]
-	}
-	return "can-" + idPart + "-" + slug
-}
+var AppNamespace = libk8s.AppNamespace
 
 func secretName(appSlug string) string {
 	return appSlug + "-secrets"
@@ -64,19 +60,19 @@ func secretName(appSlug string) string {
 func BuildResources(cfg DeployConfig) AppResources {
 	ns := AppNamespace(cfg.ProjectID, cfg.ProjectSlug)
 	labels := map[string]interface{}{
-		"app.kubernetes.io/managed-by": "canette",
-		"canette.dev/project":          cfg.ProjectSlug,
-		"canette.dev/project-id":       cfg.ProjectID,
-		"canette.dev/app":              cfg.AppSlug,
+		libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
+		libk8s.LabelProject:    cfg.ProjectSlug,
+		libk8s.LabelProjectID:  cfg.ProjectID,
+		libk8s.LabelApp:        cfg.AppSlug,
 	}
 
 	nsLabels := map[string]interface{}{
-		"app.kubernetes.io/managed-by": "canette",
-		"canette.dev/project":          cfg.ProjectSlug,
-		"canette.dev/project-id":       cfg.ProjectID,
+		libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
+		libk8s.LabelProject:    cfg.ProjectSlug,
+		libk8s.LabelProjectID:  cfg.ProjectID,
 	}
 	if cfg.ProjectOwner != "" {
-		nsLabels["canette.dev/owner"] = cfg.ProjectOwner
+		nsLabels[libk8s.LabelOwner] = cfg.ProjectOwner
 	}
 
 	namespace := map[string]interface{}{
@@ -129,11 +125,11 @@ func BuildResources(cfg DeployConfig) AppResources {
 		port = 3000
 	}
 
-	// Inject PORT as the first env var so railpack-built apps bind to the
-	// configured port. User-defined env vars follow, so an explicit PORT in
-	// the app's env vars will override this value (last entry wins in K8s).
-	envList := []interface{}{
-		map[string]interface{}{"name": "PORT", "value": fmt.Sprintf("%d", port)},
+	// Build the env list. For non-CronJob apps, inject PORT first so railpack-built
+	// apps bind to the configured port. CronJobs typically don't listen on a port.
+	var envList []interface{}
+	if !cfg.IsCronJob {
+		envList = append(envList, map[string]interface{}{"name": "PORT", "value": fmt.Sprintf("%d", port)})
 	}
 	for k, v := range cfg.EnvVars {
 		envList = append(envList, map[string]interface{}{
@@ -142,127 +138,156 @@ func BuildResources(cfg DeployConfig) AppResources {
 		})
 	}
 
-	podSpec := map[string]interface{}{
-		"containers": []interface{}{
-			map[string]interface{}{
-				"name":  cfg.AppSlug,
-				"image": cfg.ImageRef,
-				"ports": []interface{}{
-					map[string]interface{}{"containerPort": port, "protocol": "TCP"},
-				},
-				"env": envList,
-				"resources": map[string]interface{}{
-					"requests": map[string]interface{}{
-						"cpu":    cfg.Resources.CPURequest,
-						"memory": cfg.Resources.MemoryRequest,
-					},
-					"limits": map[string]interface{}{
-						"cpu":    cfg.Resources.CPULimit,
-						"memory": cfg.Resources.MemoryLimit,
-					},
-				},
-			},
+	resourceSpec := map[string]interface{}{
+		"requests": map[string]interface{}{
+			"cpu":    cfg.Resources.CPURequest,
+			"memory": cfg.Resources.MemoryRequest,
+		},
+		"limits": map[string]interface{}{
+			"cpu":    cfg.Resources.CPULimit,
+			"memory": cfg.Resources.MemoryLimit,
 		},
 	}
 
+	containerSpec := map[string]interface{}{
+		"name":      cfg.AppSlug,
+		"image":     cfg.ImageRef,
+		"env":       envList,
+		"resources": resourceSpec,
+	}
+	if len(cfg.Command) > 0 {
+		containerSpec["command"] = cfg.Command
+	}
+	if !cfg.IsCronJob {
+		containerSpec["ports"] = []interface{}{
+			map[string]interface{}{"containerPort": port, "protocol": "TCP"},
+		}
+	}
 	if len(cfg.SecretData) > 0 {
-		container := podSpec["containers"].([]interface{})[0].(map[string]interface{})
-		container["envFrom"] = []interface{}{
+		containerSpec["envFrom"] = []interface{}{
 			map[string]interface{}{
-				"secretRef": map[string]interface{}{
-					"name": secretName(cfg.AppSlug),
-				},
+				"secretRef": map[string]interface{}{"name": secretName(cfg.AppSlug)},
 			},
 		}
 	}
 
-	// Add imagePullSecrets if configured
+	podSpec := map[string]interface{}{
+		"containers": []interface{}{containerSpec},
+	}
 	if cfg.ImagePullSecretName != "" {
 		podSpec["imagePullSecrets"] = []interface{}{
 			map[string]interface{}{"name": cfg.ImagePullSecretName},
 		}
 	}
 
-	deployment := map[string]interface{}{
-		"apiVersion": "apps/v1",
-		"kind":       "Deployment",
-		"metadata": map[string]interface{}{
-			"name":      cfg.AppSlug,
-			"namespace": ns,
-			"labels":    labels,
-		},
-		"spec": map[string]interface{}{
-			"replicas": cfg.Replicas,
-			"selector": map[string]interface{}{
-				"matchLabels": labels,
-			},
-			"template": map[string]interface{}{
-				"metadata": map[string]interface{}{"labels": labels},
-				"spec":     podSpec,
-			},
-		},
-	}
+	var deployment, service, httpRoute, cronJob map[string]interface{}
 
-	service := map[string]interface{}{
-		"apiVersion": "v1",
-		"kind":       "Service",
-		"metadata": map[string]interface{}{
-			"name":      cfg.AppSlug,
-			"namespace": ns,
-			"labels":    labels,
-		},
-		"spec": map[string]interface{}{
-			"selector": labels,
-			"ports": []interface{}{
-				map[string]interface{}{
-					"port":       port,
-					"targetPort": port,
-					"protocol":   "TCP",
-				},
-			},
-		},
-	}
-
-	var httpRoute map[string]interface{}
-	if !cfg.SkipHTTPRoute {
-		hostname := fmt.Sprintf("%s-%s.%s", cfg.AppSlug, cfg.ProjectSlug, cfg.ClusterDomain)
-		httpRoute = map[string]interface{}{
-			"apiVersion": "gateway.networking.k8s.io/v1",
-			"kind":       "HTTPRoute",
+	if cfg.IsCronJob {
+		podSpec["restartPolicy"] = "OnFailure"
+		cronJob = map[string]interface{}{
+			"apiVersion": "batch/v1",
+			"kind":       "CronJob",
 			"metadata": map[string]interface{}{
 				"name":      cfg.AppSlug,
 				"namespace": ns,
 				"labels":    labels,
 			},
 			"spec": map[string]interface{}{
-				"parentRefs": []interface{}{
-					map[string]interface{}{
-						"group":     "gateway.networking.k8s.io",
-						"kind":      "Gateway",
-						"name":      cfg.GatewayName,
-						"namespace": cfg.GatewayNamespace,
-					},
-				},
-				"hostnames": []interface{}{hostname},
-				"rules": []interface{}{
-					map[string]interface{}{
-						"matches": []interface{}{
-							map[string]interface{}{
-								"path": map[string]interface{}{
-									"type":  "PathPrefix",
-									"value": "/",
-								},
-							},
-						},
-						"backendRefs": []interface{}{
-							map[string]interface{}{
-								"name": cfg.AppSlug,
-								"port": port,
-							},
+				"schedule":                    cfg.Schedule,
+				"concurrencyPolicy":           "Forbid",
+				"failedJobsHistoryLimit":      3,
+				"successfulJobsHistoryLimit":  3,
+				"jobTemplate": map[string]interface{}{
+					"spec": map[string]interface{}{
+						"template": map[string]interface{}{
+							"metadata": map[string]interface{}{"labels": labels},
+							"spec":     podSpec,
 						},
 					},
 				},
 			},
+		}
+	} else {
+		deployment = map[string]interface{}{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]interface{}{
+				"name":      cfg.AppSlug,
+				"namespace": ns,
+				"labels":    labels,
+			},
+			"spec": map[string]interface{}{
+				"replicas": cfg.Replicas,
+				"selector": map[string]interface{}{
+					"matchLabels": labels,
+				},
+				"template": map[string]interface{}{
+					"metadata": map[string]interface{}{"labels": labels},
+					"spec":     podSpec,
+				},
+			},
+		}
+
+		service = map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      cfg.AppSlug,
+				"namespace": ns,
+				"labels":    labels,
+			},
+			"spec": map[string]interface{}{
+				"selector": labels,
+				"ports": []interface{}{
+					map[string]interface{}{
+						"port":       port,
+						"targetPort": port,
+						"protocol":   "TCP",
+					},
+				},
+			},
+		}
+
+		if !cfg.SkipHTTPRoute {
+			hostname := fmt.Sprintf("%s-%s.%s", cfg.AppSlug, cfg.ProjectSlug, cfg.ClusterDomain)
+			httpRoute = map[string]interface{}{
+				"apiVersion": "gateway.networking.k8s.io/v1",
+				"kind":       "HTTPRoute",
+				"metadata": map[string]interface{}{
+					"name":      cfg.AppSlug,
+					"namespace": ns,
+					"labels":    labels,
+				},
+				"spec": map[string]interface{}{
+					"parentRefs": []interface{}{
+						map[string]interface{}{
+							"group":     "gateway.networking.k8s.io",
+							"kind":      "Gateway",
+							"name":      cfg.GatewayName,
+							"namespace": cfg.GatewayNamespace,
+						},
+					},
+					"hostnames": []interface{}{hostname},
+					"rules": []interface{}{
+						map[string]interface{}{
+							"matches": []interface{}{
+								map[string]interface{}{
+									"path": map[string]interface{}{
+										"type":  "PathPrefix",
+										"value": "/",
+									},
+								},
+							},
+							"backendRefs": []interface{}{
+								map[string]interface{}{
+									"name": cfg.AppSlug,
+									"port": port,
+								},
+							},
+						},
+					},
+				},
+			}
 		}
 	}
 
@@ -273,5 +298,6 @@ func BuildResources(cfg DeployConfig) AppResources {
 		Deployment:      deployment,
 		Service:         service,
 		HTTPRoute:       httpRoute,
+		CronJob:         cronJob,
 	}
 }

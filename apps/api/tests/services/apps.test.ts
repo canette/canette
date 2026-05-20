@@ -213,6 +213,111 @@ describe("services/apps", () => {
     })
   })
 
+  describe("cronjob deploymentType", () => {
+    it("createApp: stores 'cronjob' with valid schedule", async () => {
+      const result = await createApp(db, "projectId", "userId", {
+        name: "CronJob App",
+        slug: "dt-cronjob",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+        deploymentType: "cronjob",
+        schedule: "0 2 * * *",
+      })
+      expect(result.deploymentType).toBe("cronjob")
+      expect(result.schedule).toBe("0 2 * * *")
+    })
+
+    it("createApp: accepts @daily shorthand", async () => {
+      const result = await createApp(db, "projectId", "userId", {
+        name: "CronJob Daily",
+        slug: "dt-cronjob-daily",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+        deploymentType: "cronjob",
+        schedule: "@daily",
+      })
+      expect(result.schedule).toBe("@daily")
+    })
+
+    it("createApp: rejects cronjob without schedule", async () => {
+      await expect(
+        createApp(db, "projectId", "userId", {
+          name: "Bad CronJob",
+          slug: "dt-cronjob-bad",
+          sourceType: "git",
+          gitUrl: "https://github.com/canette/canette",
+          deploymentType: "cronjob",
+        })
+      ).rejects.toThrow(ServiceError)
+    })
+
+    it("createApp: rejects invalid cron expression", async () => {
+      await expect(
+        createApp(db, "projectId", "userId", {
+          name: "Bad Schedule",
+          slug: "dt-cronjob-bad-schedule",
+          sourceType: "git",
+          gitUrl: "https://github.com/canette/canette",
+          deploymentType: "cronjob",
+          schedule: "not-a-cron",
+        })
+      ).rejects.toThrow(ServiceError)
+    })
+
+    it("updateApp: can update schedule for cronjob", async () => {
+      const created = await createApp(db, "projectId", "userId", {
+        name: "CronJob Update",
+        slug: "dt-cronjob-update",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+        deploymentType: "cronjob",
+        schedule: "0 2 * * *",
+      })
+      const updated = await updateApp(db, created.id, "userId", { schedule: "0 3 * * *" })
+      expect(updated?.schedule).toBe("0 3 * * *")
+    })
+
+    it("updateApp: rejects clearing schedule on a cronjob", async () => {
+      const created = await createApp(db, "projectId", "userId", {
+        name: "CronJob No Clear",
+        slug: "dt-cronjob-noclear",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+        deploymentType: "cronjob",
+        schedule: "0 2 * * *",
+      })
+      await expect(
+        updateApp(db, created.id, "userId", { schedule: null })
+      ).rejects.toThrow(ServiceError)
+    })
+
+    it("updateApp: rejects changing cronjob to web", async () => {
+      const created = await createApp(db, "projectId", "userId", {
+        name: "CronJob Lock",
+        slug: "dt-cronjob-lock",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+        deploymentType: "cronjob",
+        schedule: "0 2 * * *",
+      })
+      await expect(
+        updateApp(db, created.id, "userId", { deploymentType: "web" })
+      ).rejects.toThrow(ServiceError)
+    })
+
+    it("updateApp: rejects changing web to cronjob", async () => {
+      const created = await createApp(db, "projectId", "userId", {
+        name: "Web Lock",
+        slug: "dt-web-lock",
+        sourceType: "git",
+        gitUrl: "https://github.com/canette/canette",
+      })
+      await expect(
+        updateApp(db, created.id, "userId", { deploymentType: "cronjob", schedule: "0 2 * * *" })
+      ).rejects.toThrow(ServiceError)
+    })
+  })
+
   describe("updateApp", () => {
     it("accepts credential belonging to the same team", async () => {
       const result = await updateApp(db, "existingAppId", "userId", {
