@@ -6,9 +6,9 @@ require (
 	canette.dev/lib v0.0.0
 	github.com/joho/godotenv v1.5.1
 	go.uber.org/zap v1.28.0
-	k8s.io/api v0.36.0
-	k8s.io/apimachinery v0.36.0
-	k8s.io/client-go v0.36.0
+	k8s.io/api v0.36.1
+	k8s.io/apimachinery v0.36.1
+	k8s.io/client-go v0.36.1
 )
 
 require (
