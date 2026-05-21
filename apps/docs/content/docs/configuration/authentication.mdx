@@ -144,10 +144,14 @@ auth:
     enforce: true
 ```
 
-When enforcement is on, the GitHub OAuth, Google OAuth, and magic-link buttons are hidden from the login page and their corresponding better-auth providers are not registered — preventing access even via direct API calls.
+When enforcement is on:
 
-<Callout type="info">
-  Enforcement applies to **all** users, including admins. If you need emergency access after an IdP outage, set `auth.oidc.enforce: false` and run `helm upgrade`. Email/password login remains available regardless of enforcement mode.
+- GitHub OAuth, Google OAuth, and magic-link buttons are hidden from the login page
+- The `/login/email` route redirects back to `/login`
+- Email/password, magic-link, and social OAuth providers are not registered in the auth backend — preventing access even via direct API calls
+
+<Callout type="warn">
+  Enforcement applies to **all** users, including admins. If you need emergency access after an IdP outage, set `auth.oidc.enforce: false` and run `helm upgrade` to restore email/password login.
 </Callout>
 
 ---

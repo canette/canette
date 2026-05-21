@@ -53,7 +53,7 @@ export const coreAuthOptions = {
     ...(oidcPlugin ? [oidcPlugin] : []),
   ],
   emailAndPassword: {
-    enabled: true,
+    enabled: !oidcEnforce,
     ...(emailProvider
       ? {
           sendResetPassword: async ({ user, url }: { user: { email: string }; url: string }) => {

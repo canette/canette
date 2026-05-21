@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { CanetteLogo } from "@/components/canette-logo"
 import { EmailForm } from "./email-form"
@@ -10,6 +11,10 @@ export default async function EmailLoginPage({
 }: {
   searchParams: Promise<Record<string, string>>
 }) {
+  if (process.env.OIDC_ENFORCE_ENABLED === "true") {
+    redirect("/login")
+  }
+
   const [{ callbackURL, reset, signup }, initialSettings] = await Promise.all([
     searchParams,
     fetchSignupSettings(),
