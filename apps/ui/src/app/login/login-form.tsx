@@ -2,9 +2,9 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { signIn } from "@/lib/auth-client"
+import { authClient, signIn } from "@/lib/auth-client"
 import { Button } from "@/components/ui/button"
-import { Loader2 } from "lucide-react"
+import { KeyRound, Loader2 } from "lucide-react"
 import { GitHubIcon } from "@/components/icons/github-icon"
 import { GoogleIcon } from "@/components/icons/google-icon"
 
@@ -12,19 +12,30 @@ export function LoginForm({
   githubEnabled,
   googleEnabled,
   emailEnabled,
+  oidcEnabled,
+  oidcDisplayName,
+  oidcEnforced,
   signupEnabled,
   callbackURL,
 }: {
   githubEnabled: boolean
   googleEnabled: boolean
   emailEnabled: boolean
+  oidcEnabled: boolean
+  oidcDisplayName: string
+  oidcEnforced: boolean
   signupEnabled?: boolean
   callbackURL?: string
 }) {
   const [githubLoading, setGithubLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
-  const hasSocialProviders = githubEnabled || googleEnabled
-  const showDivider = hasSocialProviders && emailEnabled
+  const [oidcLoading, setOidcLoading] = useState(false)
+
+  const showGithub = githubEnabled && !oidcEnforced
+  const showGoogle = googleEnabled && !oidcEnforced
+  const showEmail = emailEnabled && !oidcEnforced
+  const hasSocialProviders = showGithub || showGoogle || oidcEnabled
+  const showDivider = hasSocialProviders && showEmail
   // Reject non-relative callbackURLs to prevent open redirect attacks.
   const dest = callbackURL?.startsWith("/") ? callbackURL : "/dashboard"
   const emailHref = callbackURL
@@ -33,7 +44,22 @@ export function LoginForm({
 
   return (
     <div className="flex flex-col gap-3">
-      {githubEnabled && (
+      {oidcEnabled && (
+        <Button
+          variant="outline"
+          className="w-full gap-3"
+          disabled={oidcLoading}
+          onClick={() => {
+            setOidcLoading(true)
+            authClient.signIn.oauth2({ providerId: "oidc", callbackURL: dest })
+          }}
+        >
+          {oidcLoading ? <Loader2 className="size-4 animate-spin" /> : <KeyRound size={18} />}
+          Continue with {oidcDisplayName}
+        </Button>
+      )}
+
+      {showGithub && (
         <Button
           className="w-full gap-3 bg-[#24292f] hover:bg-[#2f3439] text-white border border-white/10"
           disabled={githubLoading}
@@ -47,7 +73,7 @@ export function LoginForm({
         </Button>
       )}
 
-      {googleEnabled && (
+      {showGoogle && (
         <Button
           variant="outline"
           className="w-full gap-3"
@@ -73,13 +99,13 @@ export function LoginForm({
         </div>
       )}
 
-      {emailEnabled && (
+      {showEmail && (
         <Button asChild variant="outline" className="w-full">
           <Link href={emailHref}>Sign in with email</Link>
         </Button>
       )}
 
-      {emailEnabled && signupEnabled && (
+      {showEmail && signupEnabled && (
         <p className="text-center text-sm text-muted-foreground">
           No account?{" "}
           <Link

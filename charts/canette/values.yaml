@@ -294,6 +294,33 @@ security:
     sbomEnabled: false
 
 # ---------------------------------------------------------------------------
+# Authentication providers
+# ---------------------------------------------------------------------------
+auth:
+  oidc:
+    # Generic OIDC provider — covers Okta, Auth0, Keycloak, Azure AD, and any
+    # OIDC-compliant IdP. Leave clientId empty to disable OIDC login.
+    clientId: ""
+    clientSecret: ""
+    # Optional: read the OIDC client secret from a pre-existing Kubernetes Secret
+    # instead of a plain value. The secret must exist in the system namespace
+    # before helm install/upgrade.
+    clientSecretRef:
+      name: ""
+      key: "oidc-client-secret"
+    # Base issuer URL as returned in the `iss` OIDC claim.
+    # e.g. https://login.okta.com/oauth2/default
+    # The discovery document is fetched from <issuerUrl>/.well-known/openid-configuration.
+    issuerUrl: ""
+    # Label shown on the login button. Defaults to "SSO".
+    # Example: "Okta", "Azure AD", "Acme SSO"
+    displayName: "SSO"
+    # When true, disables all non-OIDC authentication methods (magic-link,
+    # GitHub OAuth, Google OAuth) for all users. Set to true for SSO-only
+    # deployments where user lifecycle must be managed centrally.
+    enforce: false
+
+# ---------------------------------------------------------------------------
 # API service (Bun + Hono)
 # ---------------------------------------------------------------------------
 api:

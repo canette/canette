@@ -90,6 +90,32 @@ spec:
                   key: google-client-secret
                   {{- end }}
             {{- end }}
+            {{- if .Values.auth.oidc.clientId }}
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: canette-api-secrets
+                  key: oidc-client-id
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if ((.Values.auth.oidc.clientSecretRef).name) }}
+                  name: {{ .Values.auth.oidc.clientSecretRef.name }}
+                  key: {{ .Values.auth.oidc.clientSecretRef.key }}
+                  {{- else }}
+                  name: canette-api-secrets
+                  key: oidc-client-secret
+                  {{- end }}
+            - name: OIDC_ISSUER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: canette-api-secrets
+                  key: oidc-issuer-url
+            {{- end }}
+            {{- if .Values.auth.oidc.enforce }}
+            - name: OIDC_ENFORCE
+              value: "true"
+            {{- end }}
             {{- if .Values.api.githubApp.appId }}
             - name: GITHUB_APP_ID
               valueFrom:
