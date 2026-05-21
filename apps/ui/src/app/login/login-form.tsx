@@ -11,15 +11,18 @@ import { GoogleIcon } from "@/components/icons/google-icon"
 export function LoginForm({
   githubEnabled,
   googleEnabled,
+  emailEnabled,
   callbackURL,
 }: {
   githubEnabled: boolean
   googleEnabled: boolean
+  emailEnabled: boolean
   callbackURL?: string
 }) {
   const [githubLoading, setGithubLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const hasSocialProviders = githubEnabled || googleEnabled
+  const showDivider = hasSocialProviders && emailEnabled
   // Reject non-relative callbackURLs to prevent open redirect attacks.
   const dest = callbackURL?.startsWith("/") ? callbackURL : "/dashboard"
   const emailHref = callbackURL
@@ -57,7 +60,7 @@ export function LoginForm({
         </Button>
       )}
 
-      {hasSocialProviders && (
+      {showDivider && (
         <div className="flex items-center gap-3">
           <div className="flex-1 border-t border-border" />
           <span className="text-xs text-muted-foreground">or</span>
@@ -65,9 +68,11 @@ export function LoginForm({
         </div>
       )}
 
-      <Button asChild variant="outline" className="w-full">
-        <Link href={emailHref}>Sign in with email</Link>
-      </Button>
+      {emailEnabled && (
+        <Button asChild variant="outline" className="w-full">
+          <Link href={emailHref}>Sign in with email</Link>
+        </Button>
+      )}
     </div>
   )
 }

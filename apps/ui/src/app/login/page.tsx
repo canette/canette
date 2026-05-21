@@ -11,6 +11,7 @@ export default async function LoginPage({
 }) {
   const githubEnabled = !!process.env.GITHUB_LOGIN_ENABLED && process.env.GITHUB_LOGIN_ENABLED !== "false"
   const googleEnabled = !!process.env.GOOGLE_LOGIN_ENABLED && process.env.GOOGLE_LOGIN_ENABLED !== "false"
+  const emailEnabled = process.env.EMAIL_LOGIN_ENABLED !== "false"
   const { callbackURL } = await searchParams
 
   return (
@@ -24,7 +25,7 @@ export default async function LoginPage({
           <CardDescription>Kubernetes Push-to-deploy Platform</CardDescription>
         </CardHeader>
         <CardContent>
-          <LoginForm githubEnabled={githubEnabled} googleEnabled={googleEnabled} callbackURL={callbackURL} />
+          <LoginForm githubEnabled={githubEnabled} googleEnabled={googleEnabled} emailEnabled={emailEnabled} callbackURL={callbackURL} />
         </CardContent>
       </Card>
     </main>

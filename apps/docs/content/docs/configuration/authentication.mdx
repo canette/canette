@@ -110,6 +110,13 @@ Magic link login lets users sign in without a password by receiving a one-time l
 
 When enabled, a **Sign in with magic link** button appears below the password form on the email login page. Magic links are for existing users only — they do not create new accounts. Users must first register via email/password, after which they can sign in with either method.
 
+#### Password reset
+
+A **Forgot password?** link is always shown on the email sign-in page. What happens when a user clicks it depends on whether an email provider is configured:
+
+- **With an email provider** — the user enters their email and receives a reset link. The link expires after 1 hour.
+- **Without an email provider** — the page displays a message directing the user to contact an administrator. Admins can reset any user's password from **Admin → Users → Reset password**, which generates a temporary password shown once.
+
 #### Configuring Resend
 
 [Resend](https://resend.com) is the first supported email provider and has a generous free tier.

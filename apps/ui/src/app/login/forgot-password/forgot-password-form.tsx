@@ -39,7 +39,7 @@ export function ForgotPasswordForm({ emailEnabled }: { emailEnabled: boolean }) 
     return (
       <>
         <p className="text-sm text-muted-foreground text-center">
-          No email provider is configured on this instance. Contact your administrator to reset your password.
+          Contact your administrator to reset your password.
         </p>
         <p className="text-center text-sm text-muted-foreground">
           <Link href="/login/email" className="underline hover:text-foreground">← Back to sign in</Link>

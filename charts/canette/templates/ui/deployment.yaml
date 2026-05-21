@@ -43,6 +43,8 @@ spec:
               value: {{ if .Values.api.githubApp.appId }}"true"{{ else }}"false"{{ end }}
             - name: GOOGLE_LOGIN_ENABLED
               value: {{ if .Values.api.googleClientId }}"true"{{ else }}"false"{{ end }}
+            - name: EMAIL_LOGIN_ENABLED
+              value: {{ if .Values.api.disableEmailSignup }}"false"{{ else }}"true"{{ end }}
           readinessProbe:
             httpGet:
               path: /healthz
