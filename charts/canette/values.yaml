@@ -359,10 +359,26 @@ api:
   # Leave empty to use the UI hostname. Set this if your API is accessible at a different
   # hostname than the UI (e.g. when only the API is publicly exposed).
   webhookBaseUrl: ""
-  # Disable email/password sign-up. Existing users can still sign in with email.
-  # Set to true on closed-access deployments where user accounts are created by an admin.
-  # Defaults to false (sign-up is open).
+  # Hard global disable for email/password sign-up.
+  # Overrides the admin UI signup mode setting — use for deployments where email
+  # accounts are undesirable entirely (e.g. SSO-only). Existing users can still
+  # sign in with email when this is false; the fine-grained mode (open/disabled/invite)
+  # is managed via the admin settings UI and stored in the database.
   disableEmailSignup: false
+
+  # Email provider for magic-link login. Leave provider empty to disable magic links.
+  # Supported providers: resend
+  email:
+    provider: ""
+    # Resend API key. Can also be supplied via a pre-existing secret with resendApiKeyRef.
+    resendApiKey: ""
+    resendApiKeyRef:
+      # name: my-secret
+      # key: resend-api-key
+      name: ""
+      key: ""
+    # From address used in outgoing emails.
+    from: "canette <noreply@example.com>"
   resources:
     requests:
       cpu: 100m

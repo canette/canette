@@ -1,6 +1,6 @@
 ---
 title: Authentication providers
-description: Configure GitHub OAuth, Google OAuth, and email login options.
+description: Configure GitHub OAuth, Google OAuth, email login, magic link, and signup access control.
 ---
 
 import { Callout } from "fumadocs-ui/components/callout"
@@ -77,19 +77,67 @@ Once configured, a **Continue with Google** button appears on the login page.
 
 ## Email login
 
-Email/password login is always available unless explicitly disabled. Users sign in with their email address and password.
+Email/password login is always available. Users sign in with their email address and a password that meets the minimum policy (12+ characters, at least one uppercase, lowercase, and digit).
 
-### Disabling new sign-ups
+### Signup mode
 
-To prevent new users from creating accounts via email (while still allowing existing users to sign in), set:
+The signup mode controls how new users can register via email. It is configured in the admin UI under **Admin → Settings → Signup** and takes effect immediately — no restart or Helm upgrade required.
+
+| Mode | Behaviour |
+|------|-----------|
+| **Open** (default) | Anyone can create an account |
+| **Disabled** | No new registrations. Existing users can still sign in. |
+| **Invite code** | New users must supply a single static code at signup. Set the code (min. 8 characters) in the admin UI. |
+
+<Callout type="info">
+  Signup mode only applies to email registration. Social provider sign-ins (GitHub, Google) are not affected — a user signing in via OAuth for the first time will still have an account created regardless of the signup mode.
+</Callout>
+
+#### Hard disable via Helm
+
+For deployments where email signup should be permanently locked at the infrastructure level — regardless of what any admin sets in the UI — use the Helm override:
 
 ```yaml
 api:
   disableEmailSignup: true
 ```
 
-<Callout type="info">
-  This only blocks *new* registrations via email. Users who already have an account can still sign in. Social provider sign-ins are not affected — a user signing in with GitHub or Google for the first time will still have an account created automatically.
-</Callout>
+When this is set, the admin UI shows a notice that signup is globally disabled via Helm and the mode selector is locked. This is useful for SSO-only deployments or when you want ops to enforce the policy rather than trusting admin UI access.
 
-This is useful for closed-access deployments where user accounts are provisioned by an admin.
+### Magic link login
+
+Magic link login lets users sign in without a password by receiving a one-time link via email. It requires an email provider to be configured.
+
+When enabled, a **Sign in with magic link** button appears below the password form on the email login page. Magic links are for existing users only — they do not create new accounts. Users must first register via email/password, after which they can sign in with either method.
+
+#### Configuring Resend
+
+[Resend](https://resend.com) is the first supported email provider and has a generous free tier.
+
+1. Create an account at [resend.com](https://resend.com) and obtain an API key
+2. Verify your sending domain in the Resend dashboard
+3. Configure canette:
+
+```yaml
+api:
+  email:
+    provider: resend
+    resendApiKey: "<your-resend-api-key>"
+    from: "canette <noreply@yourdomain.com>"
+```
+
+Or reference a pre-existing Kubernetes Secret for the API key:
+
+```yaml
+api:
+  email:
+    provider: resend
+    from: "canette <noreply@yourdomain.com>"
+    resendApiKeyRef:
+      name: my-resend-secret
+      key: api-key
+```
+
+<Callout type="info">
+  Leave `api.email.provider` empty (the default) to disable magic link login entirely. Magic links require email delivery — without a configured provider, the button is not shown on the login page.
+</Callout>

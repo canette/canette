@@ -146,6 +146,22 @@ spec:
               value: {{ .Chart.AppVersion | quote }}
             - name: DISABLE_EMAIL_SIGNUP
               value: {{ if .Values.api.disableEmailSignup }}"true"{{ else }}"false"{{ end }}
+            - name: EMAIL_PROVIDER
+              value: {{ .Values.api.email.provider | quote }}
+            - name: EMAIL_FROM
+              value: {{ .Values.api.email.from | quote }}
+            {{- if .Values.api.email.provider }}
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if ((.Values.api.email.resendApiKeyRef).name) }}
+                  name: {{ .Values.api.email.resendApiKeyRef.name }}
+                  key: {{ .Values.api.email.resendApiKeyRef.key }}
+                  {{- else }}
+                  name: canette-api-secrets
+                  key: resend-api-key
+                  {{- end }}
+            {{- end }}
             - name: MCP_JWT_SECRET
               valueFrom:
                 secretKeyRef:

@@ -1,9 +1,27 @@
 import { betterAuth } from "better-auth"
-import { admin } from "better-auth/plugins"
+import { admin, magicLink } from "better-auth/plugins"
 import { Pool } from "pg"
 import { passwordPolicyPlugin } from "./password"
+import { createEmailProvider } from "./email"
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+
+const emailProvider = createEmailProvider()
+export const emailProviderConfigured = emailProvider !== null
+
+const magicLinkPlugin = emailProvider
+  ? magicLink({
+      disableSignUp: true,
+      sendMagicLink: async ({ email, url }) => {
+        await emailProvider.send({
+          to: email,
+          subject: "Your canette sign-in link",
+          html: `<p>Click the link below to sign in to canette. The link expires in 15 minutes.</p><p><a href="${url}">${url}</a></p>`,
+          text: `Sign in to canette: ${url}\n\nThis link expires in 15 minutes.`,
+        })
+      },
+    })
+  : null
 
 export const coreAuthOptions = {
   advanced: {
@@ -11,9 +29,25 @@ export const coreAuthOptions = {
       generateId: () => crypto.randomUUID(),
     },
   },
-  plugins: [passwordPolicyPlugin(), admin({ adminRole: "admin", defaultRole: "developer" })],
+  plugins: [
+    passwordPolicyPlugin(),
+    admin({ adminRole: "admin", defaultRole: "developer" }),
+    ...(magicLinkPlugin ? [magicLinkPlugin] : []),
+  ],
   emailAndPassword: {
     enabled: true,
+    ...(emailProvider
+      ? {
+          sendResetPassword: async ({ user, url }: { user: { email: string }; url: string }) => {
+            await emailProvider.send({
+              to: user.email,
+              subject: "Reset your canette password",
+              html: `<p>Click the link below to reset your canette password. The link expires in 1 hour.</p><p><a href="${url}">${url}</a></p><p>If you did not request a password reset, you can ignore this email.</p>`,
+              text: `Reset your canette password: ${url}\n\nThis link expires in 1 hour. If you did not request a password reset, ignore this email.`,
+            })
+          },
+        }
+      : {}),
   },
   user: {
     additionalFields: {

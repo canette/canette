@@ -1,6 +1,6 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { CanetteLogo } from "@/components/canette-logo"
-import { EmailForm } from "./email-form"
+import { ForgotPasswordForm } from "./forgot-password-form"
 import type { SignupSettings } from "@canette/types"
 
 export const dynamic = "force-dynamic"
@@ -16,15 +16,9 @@ async function fetchSignupSettings(): Promise<SignupSettings | undefined> {
   }
 }
 
-export default async function EmailLoginPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string>>
-}) {
-  const [{ callbackURL, reset }, initialSettings] = await Promise.all([
-    searchParams,
-    fetchSignupSettings(),
-  ])
+export default async function ForgotPasswordPage() {
+  const settings = await fetchSignupSettings()
+  const emailEnabled = settings?.magicLinkEnabled ?? false
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
@@ -33,16 +27,15 @@ export default async function EmailLoginPage({
           <div className="flex justify-center mb-2">
             <CanetteLogo className="size-16 p-1" />
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight">canette</CardTitle>
-          <CardDescription>Sign in with your email</CardDescription>
+          <CardTitle className="text-2xl font-bold tracking-tight">Reset password</CardTitle>
+          <CardDescription>
+            {emailEnabled
+              ? "Enter your email and we'll send you a reset link."
+              : "Password resets require administrator assistance."}
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          {reset && (
-            <p className="text-sm text-center text-muted-foreground rounded-md border border-border px-3 py-2">
-              Password updated — sign in with your new password.
-            </p>
-          )}
-          <EmailForm callbackURL={callbackURL} initialSettings={initialSettings} forceSignIn={!!reset} />
+          <ForgotPasswordForm emailEnabled={emailEnabled} />
         </CardContent>
       </Card>
     </main>

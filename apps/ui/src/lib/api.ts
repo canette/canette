@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminTeamOverview, App, AppSecret, AppTemplate, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppSecret, AppTemplate, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -171,8 +171,18 @@ export const admin = {
   getSecurityInfo: () => request<ScanInfo>("/admin/settings/security"),
   getWebhookSettings: () => request<WebhookSettings>("/admin/settings/webhooks"),
   getResourceDefaults: () => request<ResourceDefaults>("/admin/settings/resources"),
+  getSignupSettings: () => request<AdminSignupSettings>("/admin/settings/signup"),
+  updateSignupSettings: (mode: string) =>
+    request<AdminSignupSettings>("/admin/settings/signup", { method: "PUT", body: JSON.stringify({ mode }) }),
   resetUserPassword: (id: string) =>
     request<{ password: string }>(`/admin/users/${id}/reset-password`, { method: "POST" }),
+}
+
+// Public signup settings — no auth required, used by the login/signup page
+export async function getSignupSettings(): Promise<SignupSettings> {
+  const res = await fetch(`${base}/signup-settings`)
+  if (!res.ok) return { mode: "open", magicLinkEnabled: false }
+  return res.json()
 }
 
 // Templates

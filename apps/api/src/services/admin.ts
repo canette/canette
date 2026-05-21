@@ -418,6 +418,28 @@ export function getWebhookSettings(): WebhookSettings {
   return { baseUrl: process.env.WEBHOOK_BASE_URL ?? "" }
 }
 
+// ── Signup mode ───────────────────────────────────────────────────────────────
+
+export async function getSignupMode(db: DB): Promise<string> {
+  const row = await db
+    .selectFrom("admin_settings")
+    .select("value")
+    .where("key", "=", "signup.mode")
+    .executeTakeFirst()
+  return row?.value ?? "open"
+}
+
+export async function setSignupMode(db: DB, mode: string): Promise<void> {
+  if (mode !== "open" && mode !== "disabled" && mode.length < 8) {
+    throw new ServiceError("Invite code must be at least 8 characters", "VALIDATION_ERROR", 400)
+  }
+  await db
+    .updateTable("admin_settings")
+    .set({ value: mode, updated_at: new Date().toISOString() })
+    .where("key", "=", "signup.mode")
+    .execute()
+}
+
 // ── Reset stuck builds ────────────────────────────────────────────────────────
 
 export async function resetStuckBuilds(db: DB): Promise<SyncResult> {
