@@ -421,6 +421,7 @@ export function getWebhookSettings(): WebhookSettings {
 // ── Signup mode ───────────────────────────────────────────────────────────────
 
 export async function getSignupMode(db: DB): Promise<string> {
+  if (process.env.DISABLE_EMAIL_SIGNUP === "true") return "disabled"
   const row = await db
     .selectFrom("admin_settings")
     .select("value")

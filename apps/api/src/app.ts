@@ -49,17 +49,16 @@ export function createApp() {
 
     // Public: what signup mode is active and whether magic link is available.
     // Must be before auth middleware so the login page can read it unauthenticated.
+    // getSignupMode already folds in the DISABLE_EMAIL_SIGNUP Helm override.
     app.get("/api/v1/signup-settings", async (c) => {
-      if (process.env.DISABLE_EMAIL_SIGNUP === "true") {
-        return c.json({ mode: "disabled", magicLinkEnabled: emailProviderConfigured })
-      }
       const raw = await getSignupMode(db)
       const mode = raw === "open" || raw === "disabled" ? raw : "invite_code"
       return c.json({ mode, magicLinkEnabled: emailProviderConfigured })
     })
 
     // Signup interceptor — always registered before better-auth's catch-all.
-    // DISABLE_EMAIL_SIGNUP (Helm) is a hard override that cannot be changed at runtime.
+    // getSignupMode folds in the DISABLE_EMAIL_SIGNUP Helm override so callers
+    // only need to check the returned mode.
     //
     // The body is buffered immediately before any await. In Bun, the request body
     // stream is tied to the active read; awaiting an async operation (e.g. a DB call)
@@ -68,10 +67,6 @@ export function createApp() {
     // lets better-auth read the body normally.
     app.post("/api/auth/sign-up/email", async (c) => {
       const bodyText = await c.req.raw.text().catch(() => "")
-
-      if (process.env.DISABLE_EMAIL_SIGNUP === "true") {
-        return c.json({ error: "Sign-up is disabled on this instance", code: "SIGNUP_DISABLED" }, 403)
-      }
       const mode = await getSignupMode(db)
       if (mode === "disabled") {
         return c.json({ error: "Sign-up is disabled on this instance", code: "SIGNUP_DISABLED" }, 403)
