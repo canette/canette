@@ -33,9 +33,9 @@ export function EmailForm({ callbackURL, initialSettings, forceSignIn }: { callb
     if (initialSettings) return
     getSignupSettings().then(s => {
       setSettings(s)
-      if (s.magicLinkEnabled) setFormMode("magic_link")
+      if (s.magicLinkEnabled && !forceSignIn) setFormMode("magic_link")
     }).catch(() => setSettings({ mode: "open", magicLinkEnabled: false }))
-  }, [])
+  }, [initialSettings, forceSignIn])
 
   const signupEnabled = settings !== null && settings.mode !== "disabled"
 
