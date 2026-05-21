@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useTheme } from "next-themes"
+import { Monitor, Sun, Moon } from "lucide-react"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,9 +16,16 @@ import type { User } from "@canette/types"
 import { PasswordRequirements } from "@/components/ui/password-requirements"
 import { validatePassword } from "@/lib/password"
 
+const THEMES = [
+  { value: "system", label: "System", icon: Monitor },
+  { value: "light",  label: "Light",  icon: Sun },
+  { value: "dark",   label: "Dark",   icon: Moon },
+] as const
+
 // Header and layout are provided by settings/layout.tsx
 
 export default function ProfilePage() {
+  const { theme, setTheme } = useTheme()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -142,6 +151,34 @@ export default function ProfilePage() {
                     </Button>
                   </div>
                 </form>
+              </CardContent>
+            </Card>
+
+            {/* Appearance */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Appearance</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Theme</Label>
+                  <div className="flex gap-2 mt-1">
+                    {THEMES.map(({ value, label, icon: Icon }) => (
+                      <button
+                        key={value}
+                        onClick={() => setTheme(value)}
+                        className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
+                          theme === value
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+                        }`}
+                      >
+                        <Icon size={14} />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
