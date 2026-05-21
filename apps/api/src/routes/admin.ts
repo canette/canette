@@ -12,13 +12,16 @@ import {
   getProjectsOverview,
   getResourceDefaults,
   getSecurityInfo,
+  getSignupMode,
   getTeamMembersForAdmin,
   getUserDeletionImpact,
   getWebhookSettings,
   listUsers,
   resetStuckBuilds,
+  setSignupMode,
   updateUserRole,
 } from "../services/admin"
+import { emailProviderConfigured } from "../auth/auth"
 import { listTeamsOverview, renameTeam, createTeam, deleteTeam, addMember, removeMember, findUserByEmail } from "../services/teams"
 import type { UserRole } from "@canette/types"
 
@@ -235,4 +238,27 @@ adminRouter.get("/settings/resources", (c) => {
 // GET /api/v1/admin/settings/webhooks
 adminRouter.get("/settings/webhooks", (c) => {
   return c.json(getWebhookSettings())
+})
+
+// Get signup mode (admin sees the actual invite code value)
+// GET /api/v1/admin/settings/signup
+adminRouter.get("/settings/signup", async (c) => {
+  const mode = await getSignupMode(db)
+  const helmDisabled = process.env.DISABLE_EMAIL_SIGNUP === "true"
+  return c.json({ mode, emailProviderConfigured, helmDisabled })
+})
+
+// Set signup mode
+// PUT /api/v1/admin/settings/signup
+adminRouter.put("/settings/signup", async (c) => {
+  const body = await c.req.json<{ mode: string }>()
+  try {
+    await setSignupMode(db, body.mode)
+    const mode = await getSignupMode(db)
+    const helmDisabled = process.env.DISABLE_EMAIL_SIGNUP === "true"
+    return c.json({ mode, emailProviderConfigured, helmDisabled })
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
 })

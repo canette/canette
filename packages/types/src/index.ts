@@ -204,6 +204,17 @@ export interface ResourceDefaults {
   memoryLimit: string
 }
 
+export interface SignupSettings {
+  mode: "open" | "disabled" | "invite_code"
+  magicLinkEnabled: boolean
+}
+
+export interface AdminSignupSettings {
+  mode: string
+  emailProviderConfigured: boolean
+  helmDisabled: boolean
+}
+
 export interface SyncResult {
   synced: number
   message: string

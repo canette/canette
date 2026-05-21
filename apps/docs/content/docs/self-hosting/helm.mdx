@@ -115,7 +115,10 @@ All service images default to `{image.repo}/{serviceName}:{image.tag}`, where `i
 | `api.defaultResources.cpuLimit` | `500m` | Default CPU limit for every app deployment |
 | `api.defaultResources.memoryLimit` | `512Mi` | Default memory limit for every app deployment |
 | `api.webhookBaseUrl` | `""` | Public base URL used when constructing webhook URLs registered with git providers. Leave empty to use the UI hostname. Set this if your API is accessible at a different hostname than the UI. |
-| `api.disableEmailSignup` | `false` | Disable new user sign-up via email. Existing users can still sign in. Set to `true` on closed-access deployments where accounts are created by an admin. |
+| `api.disableEmailSignup` | `false` | Hard global disable for email sign-up. Overrides the admin UI signup mode setting. Use for deployments where email accounts should be permanently locked at the infrastructure level. See [Authentication — Hard disable via Helm](/docs/configuration/authentication#hard-disable-via-helm). |
+| `api.email.provider` | `""` | Email provider for magic-link login. Supported values: `resend`. Leave empty to disable magic links. |
+| `api.email.resendApiKey` | `""` | Resend API key. Used when `api.email.provider=resend`. Use `api.email.resendApiKeyRef` to reference an existing Secret. |
+| `api.email.from` | `"canette <noreply@example.com>"` | From address for outgoing emails. Must match a verified sending domain in your email provider. |
 
 Resource values use standard Kubernetes quantity notation: `100m` (millicores), `256Mi` (mebibytes), `1` (full core or gigabyte).
 

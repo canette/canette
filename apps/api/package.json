@@ -21,7 +21,8 @@
     "jose": "^6.2.3",
     "js-yaml": "^4.1.1",
     "kysely": "^0.29.0",
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "resend": "^6.12.3"
   },
   "devDependencies": {
     "@types/bun": "latest",

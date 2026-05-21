@@ -11,15 +11,20 @@ import { GoogleIcon } from "@/components/icons/google-icon"
 export function LoginForm({
   githubEnabled,
   googleEnabled,
+  emailEnabled,
+  signupEnabled,
   callbackURL,
 }: {
   githubEnabled: boolean
   googleEnabled: boolean
+  emailEnabled: boolean
+  signupEnabled?: boolean
   callbackURL?: string
 }) {
   const [githubLoading, setGithubLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const hasSocialProviders = githubEnabled || googleEnabled
+  const showDivider = hasSocialProviders && emailEnabled
   // Reject non-relative callbackURLs to prevent open redirect attacks.
   const dest = callbackURL?.startsWith("/") ? callbackURL : "/dashboard"
   const emailHref = callbackURL
@@ -57,17 +62,34 @@ export function LoginForm({
         </Button>
       )}
 
-      {hasSocialProviders && (
-        <div className="flex items-center gap-3">
-          <div className="flex-1 border-t border-border" />
-          <span className="text-xs text-muted-foreground">or</span>
-          <div className="flex-1 border-t border-border" />
+      {showDivider && (
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-border" />
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-card px-2 text-muted-foreground">or</span>
+          </div>
         </div>
       )}
 
-      <Button asChild variant="outline" className="w-full">
-        <Link href={emailHref}>Sign in with email</Link>
-      </Button>
+      {emailEnabled && (
+        <Button asChild variant="outline" className="w-full">
+          <Link href={emailHref}>Sign in with email</Link>
+        </Button>
+      )}
+
+      {emailEnabled && signupEnabled && (
+        <p className="text-center text-sm text-muted-foreground">
+          No account?{" "}
+          <Link
+            href={callbackURL ? `/login/email?signup=1&callbackURL=${encodeURIComponent(callbackURL)}` : "/login/email?signup=1"}
+            className="underline hover:text-foreground"
+          >
+            Sign up
+          </Link>
+        </p>
+      )}
     </div>
   )
 }

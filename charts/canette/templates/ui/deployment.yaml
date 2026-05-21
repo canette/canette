@@ -35,13 +35,15 @@ spec:
               value: "3000"
             - name: API_URL
               value: {{ include "canette.apiURL" . | quote }}
+            - name: API_INTERNAL_URL
+              value: {{ include "canette.apiURL" . | quote }}
             - name: GITHUB_LOGIN_ENABLED
               value: {{ if .Values.api.githubClientId }}"true"{{ else }}"false"{{ end }}
             - name: GITHUB_APP_ENABLED
               value: {{ if .Values.api.githubApp.appId }}"true"{{ else }}"false"{{ end }}
             - name: GOOGLE_LOGIN_ENABLED
               value: {{ if .Values.api.googleClientId }}"true"{{ else }}"false"{{ end }}
-            - name: EMAIL_SIGNUP_ENABLED
+            - name: EMAIL_LOGIN_ENABLED
               value: {{ if .Values.api.disableEmailSignup }}"false"{{ else }}"true"{{ end }}
           readinessProbe:
             httpGet:
