@@ -13,9 +13,12 @@ export default async function LoginPage({
   const githubEnabled = !!process.env.GITHUB_LOGIN_ENABLED && process.env.GITHUB_LOGIN_ENABLED !== "false"
   const googleEnabled = !!process.env.GOOGLE_LOGIN_ENABLED && process.env.GOOGLE_LOGIN_ENABLED !== "false"
   const emailEnabled = process.env.EMAIL_LOGIN_ENABLED !== "false"
+  const oidcEnabled = process.env.OIDC_LOGIN_ENABLED === "true"
+  const oidcDisplayName = process.env.OIDC_DISPLAY_NAME ?? "SSO"
+  const oidcEnforced = process.env.OIDC_ENFORCE_ENABLED === "true"
   const [{ callbackURL }, signupSettings] = await Promise.all([
     searchParams,
-    emailEnabled ? fetchSignupSettings() : Promise.resolve(undefined),
+    emailEnabled && !oidcEnforced ? fetchSignupSettings() : Promise.resolve(undefined),
   ])
   const signupEnabled = signupSettings?.mode !== "disabled"
 
@@ -30,7 +33,16 @@ export default async function LoginPage({
           <CardDescription>Kubernetes Push-to-deploy Platform</CardDescription>
         </CardHeader>
         <CardContent>
-          <LoginForm githubEnabled={githubEnabled} googleEnabled={googleEnabled} emailEnabled={emailEnabled} signupEnabled={signupEnabled} callbackURL={callbackURL} />
+          <LoginForm
+            githubEnabled={githubEnabled}
+            googleEnabled={googleEnabled}
+            emailEnabled={emailEnabled}
+            oidcEnabled={oidcEnabled}
+            oidcDisplayName={oidcDisplayName}
+            oidcEnforced={oidcEnforced}
+            signupEnabled={signupEnabled}
+            callbackURL={callbackURL}
+          />
         </CardContent>
       </Card>
     </main>

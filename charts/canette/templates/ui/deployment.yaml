@@ -45,6 +45,12 @@ spec:
               value: {{ if .Values.api.googleClientId }}"true"{{ else }}"false"{{ end }}
             - name: EMAIL_LOGIN_ENABLED
               value: {{ if .Values.api.disableEmailSignup }}"false"{{ else }}"true"{{ end }}
+            - name: OIDC_LOGIN_ENABLED
+              value: {{ if .Values.auth.oidc.clientId }}"true"{{ else }}"false"{{ end }}
+            - name: OIDC_DISPLAY_NAME
+              value: {{ .Values.auth.oidc.displayName | default "SSO" | quote }}
+            - name: OIDC_ENFORCE_ENABLED
+              value: {{ if .Values.auth.oidc.enforce }}"true"{{ else }}"false"{{ end }}
           readinessProbe:
             httpGet:
               path: /healthz

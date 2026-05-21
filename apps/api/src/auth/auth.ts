@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth"
-import { admin, magicLink } from "better-auth/plugins"
+import { admin, magicLink, genericOAuth } from "better-auth/plugins"
 import { Pool } from "pg"
 import { passwordPolicyPlugin } from "./password"
 import { createEmailProvider } from "./email"
@@ -9,7 +9,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 const emailProvider = createEmailProvider()
 export const emailProviderConfigured = emailProvider !== null
 
-const magicLinkPlugin = emailProvider
+const oidcEnforce = process.env.OIDC_ENFORCE === "true"
+
+const magicLinkPlugin = emailProvider && !oidcEnforce
   ? magicLink({
       disableSignUp: true,
       sendMagicLink: async ({ email, url }) => {
@@ -23,6 +25,21 @@ const magicLinkPlugin = emailProvider
     })
   : null
 
+const oidcPlugin = process.env.OIDC_CLIENT_ID
+  ? genericOAuth({
+      config: [
+        {
+          providerId: "oidc",
+          clientId: process.env.OIDC_CLIENT_ID,
+          clientSecret: process.env.OIDC_CLIENT_SECRET!,
+          discoveryUrl: `${process.env.OIDC_ISSUER_URL}/.well-known/openid-configuration`,
+          scopes: ["openid", "profile", "email"],
+          pkce: true,
+        },
+      ],
+    })
+  : null
+
 export const coreAuthOptions = {
   advanced: {
     database: {
@@ -33,9 +50,10 @@ export const coreAuthOptions = {
     passwordPolicyPlugin(),
     admin({ adminRole: "admin", defaultRole: "developer" }),
     ...(magicLinkPlugin ? [magicLinkPlugin] : []),
+    ...(oidcPlugin ? [oidcPlugin] : []),
   ],
   emailAndPassword: {
-    enabled: true,
+    enabled: !oidcEnforce,
     ...(emailProvider
       ? {
           sendResetPassword: async ({ user, url }: { user: { email: string }; url: string }) => {
@@ -66,7 +84,7 @@ export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins: [process.env.UI_URL ?? "http://localhost:3000"],
   socialProviders: {
-    ...(process.env.GITHUB_CLIENT_ID
+    ...(process.env.GITHUB_CLIENT_ID && !oidcEnforce
       ? {
           github: {
             clientId: process.env.GITHUB_CLIENT_ID,
@@ -74,7 +92,7 @@ export const auth = betterAuth({
           },
         }
       : {}),
-    ...(process.env.GOOGLE_CLIENT_ID
+    ...(process.env.GOOGLE_CLIENT_ID && !oidcEnforce
       ? {
           google: {
             clientId: process.env.GOOGLE_CLIENT_ID,

@@ -1,11 +1,11 @@
 ---
 title: Authentication providers
-description: Configure GitHub OAuth, Google OAuth, email login, magic link, and signup access control.
+description: Configure GitHub OAuth, Google OAuth, generic OIDC (SSO), email login, magic link, and signup access control.
 ---
 
 import { Callout } from "fumadocs-ui/components/callout"
 
-canette supports three login methods: **GitHub OAuth**, **Google OAuth**, and **email/password**. All three can be active simultaneously. Social providers are hidden from the login page when not configured.
+canette supports four login methods: **GitHub OAuth**, **Google OAuth**, **generic OIDC (SSO)**, and **email/password**. All four can be active simultaneously. Social providers are hidden from the login page when not configured.
 
 ## GitHub OAuth
 
@@ -72,6 +72,87 @@ api:
 ```
 
 Once configured, a **Continue with Google** button appears on the login page.
+
+---
+
+## Generic OIDC (SSO)
+
+Generic OIDC lets users log in via your organisation's identity provider — Okta, Auth0, Keycloak, Azure AD, or any OIDC-compliant IdP. It is the recommended method for enterprise deployments where user lifecycle (onboarding, offboarding, MFA) is managed centrally.
+
+### 1. Create an OIDC application in your IdP
+
+The exact steps vary by provider, but the common fields are:
+
+- **Application type**: Web application (or equivalent)
+- **Redirect / callback URL**: `https://canette.example.com/api/auth/oauth2/callback/oidc`
+- **Scopes**: `openid`, `profile`, `email` (canette requests these automatically)
+
+Copy the **Client ID**, **Client secret**, and **Issuer URL** from the application settings.
+
+Common issuer URL formats:
+
+| Provider | Issuer URL |
+|----------|-----------|
+| Okta | `https://your-org.okta.com/oauth2/default` |
+| Auth0 | `https://your-tenant.auth0.com` |
+| Keycloak | `https://keycloak.example.com/realms/your-realm` |
+| Azure AD | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
+
+The issuer URL is the base URL as returned in the `iss` claim of OIDC tokens. canette appends `/.well-known/openid-configuration` to discover the authorization and token endpoints automatically.
+
+### 2. Configure Helm
+
+```yaml
+auth:
+  oidc:
+    clientId: "<client-id>"
+    clientSecret: "<client-secret>"
+    issuerUrl: "https://your-org.okta.com/oauth2/default"
+```
+
+Or reference a pre-existing Kubernetes Secret for the client secret:
+
+```yaml
+auth:
+  oidc:
+    clientId: "<client-id>"
+    clientSecretRef:
+      name: my-oidc-secret
+      key: client-secret
+    issuerUrl: "https://your-org.okta.com/oauth2/default"
+```
+
+Once configured, a **Continue with SSO** button with a key icon appears on the login page.
+
+### Button label
+
+The button label defaults to `SSO`. Set `auth.oidc.displayName` to match your IdP's name:
+
+```yaml
+auth:
+  oidc:
+    displayName: "Okta"   # renders as "Continue with Okta"
+```
+
+### Enforcement mode
+
+When OIDC is configured, you can optionally disable all other login methods so that users must authenticate via your IdP:
+
+```yaml
+auth:
+  oidc:
+    enforce: true
+```
+
+When enforcement is on:
+
+- GitHub OAuth, Google OAuth, and magic-link buttons are hidden from the login page
+- The `/login/email` route redirects back to `/login`
+- Email/password, magic-link, and social OAuth providers are not registered in the auth backend — preventing access even via direct API calls
+
+<Callout type="warn">
+  Enforcement applies to **all** users, including admins. If you need emergency access after an IdP outage, set `auth.oidc.enforce: false` and run `helm upgrade` to restore email/password login.
+</Callout>
 
 ---
 
