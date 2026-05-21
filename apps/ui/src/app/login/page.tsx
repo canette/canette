@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { CanetteLogo } from "@/components/canette-logo"
 import { LoginForm } from "./login-form"
+import { fetchSignupSettings } from "@/lib/api"
 
 export const dynamic = "force-dynamic"
 
@@ -12,7 +13,11 @@ export default async function LoginPage({
   const githubEnabled = !!process.env.GITHUB_LOGIN_ENABLED && process.env.GITHUB_LOGIN_ENABLED !== "false"
   const googleEnabled = !!process.env.GOOGLE_LOGIN_ENABLED && process.env.GOOGLE_LOGIN_ENABLED !== "false"
   const emailEnabled = process.env.EMAIL_LOGIN_ENABLED !== "false"
-  const { callbackURL } = await searchParams
+  const [{ callbackURL }, signupSettings] = await Promise.all([
+    searchParams,
+    emailEnabled ? fetchSignupSettings() : Promise.resolve(undefined),
+  ])
+  const signupEnabled = signupSettings?.mode !== "disabled"
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
@@ -25,7 +30,7 @@ export default async function LoginPage({
           <CardDescription>Kubernetes Push-to-deploy Platform</CardDescription>
         </CardHeader>
         <CardContent>
-          <LoginForm githubEnabled={githubEnabled} googleEnabled={googleEnabled} emailEnabled={emailEnabled} callbackURL={callbackURL} />
+          <LoginForm githubEnabled={githubEnabled} googleEnabled={googleEnabled} emailEnabled={emailEnabled} signupEnabled={signupEnabled} callbackURL={callbackURL} />
         </CardContent>
       </Card>
     </main>

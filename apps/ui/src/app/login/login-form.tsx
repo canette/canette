@@ -12,11 +12,13 @@ export function LoginForm({
   githubEnabled,
   googleEnabled,
   emailEnabled,
+  signupEnabled,
   callbackURL,
 }: {
   githubEnabled: boolean
   googleEnabled: boolean
   emailEnabled: boolean
+  signupEnabled?: boolean
   callbackURL?: string
 }) {
   const [githubLoading, setGithubLoading] = useState(false)
@@ -61,10 +63,13 @@ export function LoginForm({
       )}
 
       {showDivider && (
-        <div className="flex items-center gap-3">
-          <div className="flex-1 border-t border-border" />
-          <span className="text-xs text-muted-foreground">or</span>
-          <div className="flex-1 border-t border-border" />
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-border" />
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-card px-2 text-muted-foreground">or</span>
+          </div>
         </div>
       )}
 
@@ -72,6 +77,18 @@ export function LoginForm({
         <Button asChild variant="outline" className="w-full">
           <Link href={emailHref}>Sign in with email</Link>
         </Button>
+      )}
+
+      {emailEnabled && signupEnabled && (
+        <p className="text-center text-sm text-muted-foreground">
+          No account?{" "}
+          <Link
+            href={callbackURL ? `/login/email?signup=1&callbackURL=${encodeURIComponent(callbackURL)}` : "/login/email?signup=1"}
+            className="underline hover:text-foreground"
+          >
+            Sign up
+          </Link>
+        </p>
       )}
     </div>
   )

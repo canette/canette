@@ -13,11 +13,13 @@ import { validatePassword } from "@/lib/password"
 import { getSignupSettings } from "@/lib/api"
 import type { SignupSettings } from "@canette/types"
 
-export function EmailForm({ callbackURL, initialSettings, forceSignIn }: { callbackURL?: string; initialSettings?: SignupSettings; forceSignIn?: boolean }) {
+export function EmailForm({ callbackURL, initialSettings, forceSignIn, forceSignUp }: { callbackURL?: string; initialSettings?: SignupSettings; forceSignIn?: boolean; forceSignUp?: boolean }) {
   const router = useRouter()
   const [settings, setSettings] = useState<SignupSettings | null>(initialSettings ?? null)
   const [formMode, setFormMode] = useState<"signin" | "signup" | "magic_link">(
-    !forceSignIn && initialSettings?.magicLinkEnabled ? "magic_link" : "signin"
+    forceSignIn ? "signin" :
+    forceSignUp ? "signup" :
+    initialSettings?.magicLinkEnabled ? "magic_link" : "signin"
   )
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
@@ -33,7 +35,7 @@ export function EmailForm({ callbackURL, initialSettings, forceSignIn }: { callb
     if (initialSettings) return
     getSignupSettings().then(s => {
       setSettings(s)
-      if (s.magicLinkEnabled && !forceSignIn) setFormMode("magic_link")
+      if (s.magicLinkEnabled && !forceSignIn && !forceSignUp) setFormMode("magic_link")
     }).catch(() => setSettings({ mode: "open", magicLinkEnabled: false }))
   }, [initialSettings, forceSignIn])
 
@@ -186,7 +188,7 @@ export function EmailForm({ callbackURL, initialSettings, forceSignIn }: { callb
             <div className="absolute inset-0 flex items-center">
               <span className="w-full border-t border-border" />
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
+            <div className="relative flex justify-center text-xs">
               <span className="bg-card px-2 text-muted-foreground">or</span>
             </div>
           </div>

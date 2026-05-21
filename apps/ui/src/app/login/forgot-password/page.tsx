@@ -1,20 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { CanetteLogo } from "@/components/canette-logo"
 import { ForgotPasswordForm } from "./forgot-password-form"
-import type { SignupSettings } from "@canette/types"
+import { fetchSignupSettings } from "@/lib/api"
 
 export const dynamic = "force-dynamic"
-
-async function fetchSignupSettings(): Promise<SignupSettings | undefined> {
-  const base = process.env.API_INTERNAL_URL ?? "http://localhost:3001"
-  try {
-    const res = await fetch(`${base}/api/v1/signup-settings`, { cache: "no-store" })
-    if (!res.ok) return undefined
-    return res.json()
-  } catch {
-    return undefined
-  }
-}
 
 export default async function ForgotPasswordPage() {
   const settings = await fetchSignupSettings()

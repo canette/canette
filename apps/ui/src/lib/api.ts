@@ -185,6 +185,18 @@ export async function getSignupSettings(): Promise<SignupSettings> {
   return res.json()
 }
 
+// Server-side variant — uses the internal API URL, for use in Server Components only
+export async function fetchSignupSettings(): Promise<SignupSettings | undefined> {
+  const apiBase = process.env.API_INTERNAL_URL ?? "http://localhost:3001"
+  try {
+    const res = await fetch(`${apiBase}/api/v1/signup-settings`, { cache: "no-store" })
+    if (!res.ok) return undefined
+    return res.json()
+  } catch {
+    return undefined
+  }
+}
+
 // Templates
 export const templates = {
   parse: (body: { yaml: string }) =>
