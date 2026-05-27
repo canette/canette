@@ -34,7 +34,7 @@ jobs:
       working-directory: ${{ matrix.app }}
 
     - name: Lint ${{ matrix.app }}
-      uses: golangci/golangci-lint-action@v9.2.0
+      uses: golangci/golangci-lint-action@v9.2.1
       with:
         working-directory: ${{ matrix.app }}
 
