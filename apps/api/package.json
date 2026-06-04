@@ -17,7 +17,7 @@
     "@canette/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-auth": "^1.6.11",
-    "hono": "4.12.18",
+    "hono": "4.12.21",
     "jose": "^6.2.3",
     "js-yaml": "^4.1.1",
     "kysely": "^0.29.0",
