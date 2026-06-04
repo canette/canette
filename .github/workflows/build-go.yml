@@ -22,7 +22,7 @@ jobs:
         app: [ 'apps/builder', 'apps/controller', 'apps/logstreamer' ]
     
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v6.0.2
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -34,7 +34,7 @@ jobs:
       working-directory: ${{ matrix.app }}
 
     - name: Lint ${{ matrix.app }}
-      uses: golangci/golangci-lint-action@v9.2.0
+      uses: golangci/golangci-lint-action@v9.2.1
       with:
         working-directory: ${{ matrix.app }}
 
