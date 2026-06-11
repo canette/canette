@@ -11,14 +11,15 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { ChevronDown, Eye, EyeOff, RefreshCw, TriangleAlert } from "lucide-react"
+import { ChevronDown, Eye, EyeOff, FileText, Folder, FolderX, RefreshCw, Trash2, TriangleAlert } from "lucide-react"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CredentialSelect } from "@/components/credential-select"
 import { useAppContext } from "@/lib/app-context"
 import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
-import type { AppSecret, EnvVar, GitCredential, WebhookConfig } from "@canette/types"
+import type { AppSecret, AppVolume, EnvVar, GitCredential, VolumeType, WebhookConfig } from "@canette/types"
 
 // ── section wrapper ───────────────────────────────────────────────────────────
 
@@ -185,6 +186,273 @@ function EnvSection({ appId }: { appId: string }) {
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+// ── volume section ───────────────────────────────────────────────────────────
+
+const VOLUME_TYPE_LABELS: Record<VolumeType, string> = {
+  pvc: "Persistent Volume",
+  emptyDir: "Ephemeral (emptyDir)",
+  configmap: "Config File",
+}
+
+function VolumeSection({ appId, hasPvcVolume }: { appId: string; hasPvcVolume: boolean }) {
+  const [volumes, setVolumes] = useState<AppVolume[]>([])
+  const [loading, setLoading] = useState(true)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+
+  // Add form state
+  const [addType, setAddType] = useState<VolumeType>("pvc")
+  const [addMountPath, setAddMountPath] = useState("")
+  const [addSize, setAddSize] = useState("")
+  const [addContent, setAddContent] = useState("")
+  const [adding, setAdding] = useState(false)
+  const [addError, setAddError] = useState("")
+  const [hasPvc, setHasPvc] = useState(hasPvcVolume)
+
+  // Edit configmap state
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editContent, setEditContent] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState("")
+
+  const loadVolumes = useCallback(async () => {
+    try {
+      const { items } = await api.volumes.list(appId)
+      setVolumes(items)
+      setHasPvc(items.some((v) => v.type === "pvc"))
+    } catch { /* ignore */ } finally { setLoading(false) }
+  }, [appId])
+
+  useEffect(() => { loadVolumes() }, [loadVolumes])
+
+  function resetForm() {
+    setAddType("pvc"); setAddMountPath(""); setAddSize(""); setAddContent(""); setAddError("")
+  }
+
+  async function handleAdd() {
+    setAddError("")
+    setAdding(true)
+    try {
+      await api.volumes.create(appId, {
+        type: addType,
+        mountPath: addMountPath.trim(),
+        config: addType === "pvc" ? { size: addSize.trim() }
+          : addType === "emptyDir" ? (addSize.trim() ? { size: addSize.trim() } : {})
+          : { content: addContent },
+      })
+      resetForm()
+      setDialogOpen(false)
+      await loadVolumes()
+    } catch (e: unknown) {
+      setAddError(e instanceof Error ? e.message : "Failed to add volume")
+    } finally { setAdding(false) }
+  }
+
+  async function handleDelete(id: string) {
+    setDeleting(true); setDeleteError("")
+    try {
+      await api.volumes.delete(appId, id)
+      setDeleteId(null)
+      await loadVolumes()
+    } catch (e: unknown) {
+      setDeleteError(e instanceof Error ? e.message : "Failed to delete volume")
+    } finally { setDeleting(false) }
+  }
+
+  function openEdit(vol: AppVolume) {
+    setEditId(vol.id)
+    setEditContent(vol.config.content ?? "")
+    setEditError("")
+  }
+
+  async function handleSaveEdit() {
+    if (!editId) return
+    setSaving(true); setEditError("")
+    try {
+      await api.volumes.update(appId, editId, { config: { content: editContent } })
+      setEditId(null)
+      await loadVolumes()
+    } catch (e: unknown) {
+      setEditError(e instanceof Error ? e.message : "Failed to save")
+    } finally { setSaving(false) }
+  }
+
+  const volToDelete = volumes.find((v) => v.id === deleteId)
+  const volToEdit = volumes.find((v) => v.id === editId)
+
+  return (
+    <div className="flex flex-col gap-4">
+      {hasPvc && (
+        <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
+          <TriangleAlert size={14} className="shrink-0" />
+          <span>A PVC volume is attached. Replicas are locked to 1 (EBS volumes are ReadWriteOnce).</span>
+        </div>
+      )}
+
+      {loading ? (
+        <Skeleton className="h-4 w-40" />
+      ) : volumes.length > 0 ? (
+        <div className="flex flex-col divide-y divide-border border rounded-md">
+          {volumes.map((vol) => (
+            <div key={vol.id} className="flex items-center gap-3 px-4 py-3">
+              {vol.type === "pvc" && <Folder size={14} className="text-muted-foreground shrink-0" />}
+              {vol.type === "emptyDir" && <FolderX size={14} className="text-muted-foreground shrink-0" />}
+              {vol.type === "configmap" && <FileText size={14} className="text-muted-foreground shrink-0" />}
+              <div className="flex-1 min-w-0 flex items-center gap-2">
+                <span className="text-sm font-mono">{vol.mountPath}</span>
+                <Badge variant="outline" className="text-xs py-0 shrink-0">{VOLUME_TYPE_LABELS[vol.type]}</Badge>
+                {vol.config.size && <span className="text-xs text-muted-foreground shrink-0">{vol.config.size}</span>}
+              </div>
+              {vol.type === "configmap" && (
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground"
+                  onClick={() => openEdit(vol)}>
+                  Edit
+                </Button>
+              )}
+              <Button size="sm" variant="ghost"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                onClick={() => { setDeleteId(vol.id); setDeleteError("") }}>
+                <Trash2 size={13} />
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">No volumes configured.</p>
+      )}
+
+      <div>
+        <Button size="sm" variant="outline" onClick={() => { resetForm(); setDialogOpen(true) }}>Add volume</Button>
+      </div>
+
+      {/* Add volume dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add volume</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 px-6 pb-6">
+            <div className="flex flex-col gap-1.5">
+              <Label>Type</Label>
+              <Select value={addType} onValueChange={(v) => setAddType(v as VolumeType)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pvc">Persistent Volume (PVC)</SelectItem>
+                  <SelectItem value="emptyDir">Ephemeral (emptyDir)</SelectItem>
+                  <SelectItem value="configmap">Config File (ConfigMap)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="vol-path">Mount path</Label>
+              <Input id="vol-path" placeholder="/data" value={addMountPath}
+                onChange={(e) => setAddMountPath(e.target.value)}
+                className="font-mono text-sm" />
+            </div>
+            {(addType === "pvc" || addType === "emptyDir") && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="vol-size">
+                  Size {addType === "emptyDir" && <span className="text-muted-foreground font-normal">(optional)</span>}
+                </Label>
+                <Input id="vol-size" placeholder={addType === "pvc" ? "5Gi" : "500Mi"} value={addSize}
+                  onChange={(e) => setAddSize(e.target.value)}
+                  className="font-mono text-sm w-36" />
+                {addType === "pvc" && <p className="text-xs text-muted-foreground">Uses the cluster default storage class.</p>}
+              </div>
+            )}
+            {addType === "configmap" && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="vol-content">File content</Label>
+                <Textarea id="vol-content" value={addContent}
+                  onChange={(e) => setAddContent(e.target.value)}
+                  className="font-mono text-xs min-h-[120px]" spellCheck={false}
+                  placeholder="# File content mounted at the path above" />
+                <p className="text-xs text-muted-foreground">
+                  Mounted as a single file at the path above using <code>subPath</code>.
+                </p>
+              </div>
+            )}
+            {addError && <p className="text-sm text-destructive">{addError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button size="sm" onClick={handleAdd} disabled={adding ||
+                !addMountPath.trim() ||
+                (addType === "pvc" && !addSize.trim()) ||
+                (addType === "configmap" && !addContent.trim())
+              }>
+                {adding ? "Adding…" : "Add volume"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit configmap dialog */}
+      <Dialog open={!!editId} onOpenChange={(open) => { if (!open) setEditId(null) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit file content</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 px-6 pb-6">
+            {volToEdit && (
+              <p className="text-xs text-muted-foreground font-mono">{volToEdit.mountPath}</p>
+            )}
+            <Textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              className="font-mono text-xs min-h-[200px]"
+              spellCheck={false}
+            />
+            {editError && <p className="text-sm text-destructive">{editError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setEditId(null)} disabled={saving}>Cancel</Button>
+              <Button size="sm" onClick={handleSaveEdit} disabled={saving || !editContent.trim()}>
+                {saving ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!deleteId} onOpenChange={(open) => { if (!open) setDeleteId(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete volume</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 px-6 pb-6">
+            {volToDelete?.type === "pvc" ? (
+              <p className="text-sm text-destructive font-medium">
+                This will permanently delete the underlying Kubernetes PersistentVolumeClaim and all data stored in it. This cannot be undone.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Remove the {volToDelete?.type === "configmap" ? "ConfigMap" : "emptyDir"} volume at{" "}
+                <code className="text-xs font-mono">{volToDelete?.mountPath}</code> from this app?
+              </p>
+            )}
+            {volToDelete?.type === "pvc" && (
+              <p className="text-sm text-muted-foreground">
+                Mount path: <code className="text-xs font-mono">{volToDelete.mountPath}</code>
+              </p>
+            )}
+            {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDeleteId(null)} disabled={deleting}>Cancel</Button>
+              <Button variant="destructive" size="sm" disabled={deleting}
+                onClick={() => deleteId && handleDelete(deleteId)}>
+                {deleting ? "Deleting…" : volToDelete?.type === "pvc" ? "Delete PVC and data" : "Delete volume"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -590,6 +858,11 @@ export default function SettingsPage() {
       {/* Environment & Secrets */}
       <Section title="Environment & Secrets" description="Variables are available in the runtime environment.">
         <EnvSection appId={app.id} />
+      </Section>
+
+      {/* Volumes */}
+      <Section title="Volumes" description="Mount persistent storage, ephemeral scratch space, or configuration files into the container.">
+        <VolumeSection appId={app.id} hasPvcVolume={false} />
       </Section>
 
       {/* Webhooks */}

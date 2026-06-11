@@ -4,6 +4,7 @@ import type { Selectable, Updateable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
+import jsYaml from "js-yaml"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
@@ -133,6 +134,16 @@ export async function getAppByRef(
     .executeTakeFirst()
   if (!row) return null
   return mapApp(row)
+}
+
+function getReplicasFromCanetteConfig(yaml: string): number {
+  try {
+    const parsed = jsYaml.load(yaml) as Record<string, unknown> | null
+    if (parsed && typeof parsed === "object" && typeof parsed.replicas === "number") {
+      return parsed.replicas
+    }
+  } catch { /* treat parse errors as default */ }
+  return 1
 }
 
 // Standard 5-field cron OR @-prefixed K8s predefined schedules.
@@ -348,6 +359,26 @@ export async function updateApp(
   }
   if (patch.gitUrl !== undefined && patch.gitUrl.trim()) validateGitUrl(patch.gitUrl.trim())
   if (patch.canetteConfig) validateCanetteConfig(patch.canetteConfig)
+
+  // Prevent replicas > 1 when the app has PVC volumes (EBS volumes are ReadWriteOnce).
+  if (patch.canetteConfig) {
+    const newReplicas = getReplicasFromCanetteConfig(patch.canetteConfig)
+    if (newReplicas > 1) {
+      const pvcVolume = await db
+        .selectFrom("app_volumes")
+        .select("id")
+        .where("app_id", "=", appId)
+        .where("type", "=", "pvc")
+        .executeTakeFirst()
+      if (pvcVolume) {
+        throw new ServiceError(
+          "Cannot set replicas > 1 while the app has PVC volumes. Remove PVC volumes first or keep replicas at 1.",
+          "PVC_REPLICAS_CONFLICT",
+          422
+        )
+      }
+    }
+  }
 
   if (patch.gitUrl !== undefined && patch.gitUrl.trim() !== app.gitUrl) {
     const webhook = await db

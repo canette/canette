@@ -26,6 +26,8 @@ var (
 	gvrService    = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}
 	gvrHTTPRoute  = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}
 	gvrCronJob    = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}
+	gvrPVC        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
+	gvrConfigMap  = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
 )
 
 const fieldManager = "can-controller"
@@ -55,7 +57,8 @@ func ApplyResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupV
 	return nil
 }
 
-// ApplyAll applies Namespace first, then Secrets (env + imagePull), then app workload resources.
+// ApplyAll applies Namespace first, then Secrets (env + imagePull), then volumes (PVCs,
+// ConfigMaps), then app workload resources.
 // For CronJob deployments: applies CronJob only (no Deployment, Service, or HTTPRoute).
 // For web/private deployments: applies Deployment, Service, and optionally HTTPRoute.
 func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) error {
@@ -73,6 +76,18 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 	if res.ImagePullSecret != nil {
 		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.ImagePullSecret); err != nil {
 			return fmt.Errorf("apply imagepullsecret: %w", err)
+		}
+	}
+	for i, pvc := range res.PVCs {
+		pvcName, _ := objectName(pvc)
+		if err := ApplyResource(ctx, dyn, gvrPVC, ns, pvc); err != nil {
+			return fmt.Errorf("apply pvc[%d] %s: %w", i, pvcName, err)
+		}
+	}
+	for i, cm := range res.ConfigMaps {
+		cmName, _ := objectName(cm)
+		if err := ApplyResource(ctx, dyn, gvrConfigMap, ns, cm); err != nil {
+			return fmt.Errorf("apply configmap[%d] %s: %w", i, cmName, err)
 		}
 	}
 	if res.CronJob != nil {
@@ -99,6 +114,21 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 		}
 	}
 	return nil
+}
+
+// DeleteVolumeResource deletes a PVC or ConfigMap that was previously managed by canette.
+// Ignores not-found errors (idempotent).
+func DeleteVolumeResource(ctx context.Context, dyn dynamic.Interface, resourceType, namespace, name string) error {
+	var gvr schema.GroupVersionResource
+	switch resourceType {
+	case "PersistentVolumeClaim":
+		gvr = gvrPVC
+	case "ConfigMap":
+		gvr = gvrConfigMap
+	default:
+		return fmt.Errorf("unknown volume resource type: %s", resourceType)
+	}
+	return DeleteResource(ctx, dyn, gvr, namespace, name)
 }
 
 // RolloutStatus describes the outcome of watching a Deployment rollout.

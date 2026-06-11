@@ -133,6 +133,32 @@ func (c *Controller) processPending(ctx context.Context) error {
 		}
 	}
 
+	// Delete K8s resources for volumes removed from canette.
+	volDels, err := c.store.ClaimVolumeDeletions(ctx, c.cfg.MaxConcurrent)
+	if err != nil {
+		c.log.Error("claim volume deletions error", zap.Error(err))
+	} else {
+		for _, vd := range volDels {
+			go func(d store.PendingVolumeDeletion) {
+				if err := k8sres.DeleteVolumeResource(ctx, c.dynClient, d.ResourceType, d.Namespace, d.ResourceName); err != nil {
+					c.log.Warn("volume deletion error",
+						zap.String("resource_type", d.ResourceType),
+						zap.String("namespace", d.Namespace),
+						zap.String("name", d.ResourceName),
+						zap.Error(err))
+					return // will retry next poll
+				}
+				if err := c.store.MarkVolumeDeleted(ctx, d.ID); err != nil {
+					c.log.Warn("mark volume deleted error", zap.Error(err))
+				}
+				c.log.Info("volume resource deleted",
+					zap.String("resource_type", d.ResourceType),
+					zap.String("namespace", d.Namespace),
+					zap.String("name", d.ResourceName))
+			}(vd)
+		}
+	}
+
 	return nil
 }
 
@@ -149,6 +175,17 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 	envMap := cfg.Env
 	if envMap == nil {
 		envMap = make(map[string]string)
+	}
+
+	volumes := make([]k8sres.VolumeSpec, 0, len(cfg.Volumes))
+	for _, v := range cfg.Volumes {
+		volumes = append(volumes, k8sres.VolumeSpec{
+			Name:      v.Name,
+			Type:      v.Type,
+			MountPath: v.MountPath,
+			Size:      v.Config.Size,
+			Content:   v.Config.Content,
+		})
 	}
 
 	return k8sres.DeployConfig{
@@ -176,5 +213,6 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		Schedule:            cfg.Schedule,
 		ImagePullSecretName: imagePullSecretName,
 		ImagePullSecretData: imagePullSecretData,
+		Volumes:             volumes,
 	}
 }

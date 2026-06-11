@@ -3,6 +3,7 @@ package k8s
 
 import (
 	"fmt"
+	"path"
 
 	libk8s "canette.dev/lib/k8s"
 )
@@ -16,6 +17,8 @@ type AppResources struct {
 	Service         map[string]interface{} // nil when IsCronJob
 	HTTPRoute       map[string]interface{} // nil when SkipHTTPRoute or IsCronJob
 	CronJob         map[string]interface{} // nil unless IsCronJob
+	PVCs            []map[string]interface{}
+	ConfigMaps      []map[string]interface{}
 }
 
 // Resources holds resolved Kubernetes resource requests and limits.
@@ -24,6 +27,15 @@ type Resources struct {
 	MemoryRequest string
 	CPULimit      string
 	MemoryLimit   string
+}
+
+// VolumeSpec describes a volume to mount in the app container.
+type VolumeSpec struct {
+	Name      string
+	Type      string // "pvc" | "emptyDir" | "configmap"
+	MountPath string
+	Size      string // PVC (required) and optional emptyDir size limit
+	Content   string // configmap only
 }
 
 // DeployConfig carries everything needed to build resources.
@@ -47,6 +59,7 @@ type DeployConfig struct {
 	Schedule            string // cron expression, only used when IsCronJob
 	ImagePullSecretName string // Name of the imagePullSecret to reference in pod spec
 	ImagePullSecretData []byte // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
+	Volumes             []VolumeSpec
 }
 
 // AppNamespace returns the K8s namespace for a project: can-{id[:8]}-{slug[:50]}.
@@ -171,8 +184,86 @@ func BuildResources(cfg DeployConfig) AppResources {
 		}
 	}
 
+	// Build volume and volumeMount entries for each configured volume.
+	var pvcs []map[string]interface{}
+	var configMaps []map[string]interface{}
+	var podVolumes []interface{}
+	var volumeMounts []interface{}
+
+	for _, v := range cfg.Volumes {
+		switch v.Type {
+		case "pvc":
+			pvcName := cfg.AppSlug + "-" + v.Name
+			pvcs = append(pvcs, map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "PersistentVolumeClaim",
+				"metadata": map[string]interface{}{
+					"name":      pvcName,
+					"namespace": ns,
+					"labels":    labels,
+				},
+				"spec": map[string]interface{}{
+					"accessModes": []interface{}{"ReadWriteOnce"},
+					"resources": map[string]interface{}{
+						"requests": map[string]interface{}{"storage": v.Size},
+					},
+				},
+			})
+			podVolumes = append(podVolumes, map[string]interface{}{
+				"name": v.Name,
+				"persistentVolumeClaim": map[string]interface{}{"claimName": pvcName},
+			})
+			volumeMounts = append(volumeMounts, map[string]interface{}{
+				"name": v.Name, "mountPath": v.MountPath,
+			})
+
+		case "emptyDir":
+			emptyDir := map[string]interface{}{}
+			if v.Size != "" {
+				emptyDir["sizeLimit"] = v.Size
+			}
+			podVolumes = append(podVolumes, map[string]interface{}{
+				"name": v.Name, "emptyDir": emptyDir,
+			})
+			volumeMounts = append(volumeMounts, map[string]interface{}{
+				"name": v.Name, "mountPath": v.MountPath,
+			})
+
+		case "configmap":
+			cmName := cfg.AppSlug + "-" + v.Name + "-cfg"
+			filename := path.Base(v.MountPath)
+			configMaps = append(configMaps, map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": map[string]interface{}{
+					"name":      cmName,
+					"namespace": ns,
+					"labels":    labels,
+				},
+				"data": map[string]interface{}{filename: v.Content},
+			})
+			podVolumes = append(podVolumes, map[string]interface{}{
+				"name": v.Name,
+				"configMap": map[string]interface{}{
+					"name":  cmName,
+					"items": []interface{}{map[string]interface{}{"key": filename, "path": filename}},
+				},
+			})
+			volumeMounts = append(volumeMounts, map[string]interface{}{
+				"name": v.Name, "mountPath": v.MountPath, "subPath": filename,
+			})
+		}
+	}
+
+	if len(volumeMounts) > 0 {
+		containerSpec["volumeMounts"] = volumeMounts
+	}
+
 	podSpec := map[string]interface{}{
 		"containers": []interface{}{containerSpec},
+	}
+	if len(podVolumes) > 0 {
+		podSpec["volumes"] = podVolumes
 	}
 	if cfg.ImagePullSecretName != "" {
 		podSpec["imagePullSecrets"] = []interface{}{
@@ -299,5 +390,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 		Service:         service,
 		HTTPRoute:       httpRoute,
 		CronJob:         cronJob,
+		PVCs:            pvcs,
+		ConfigMaps:      configMaps,
 	}
 }
