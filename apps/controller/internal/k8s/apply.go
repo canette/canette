@@ -250,8 +250,10 @@ func DeleteNamespace(ctx context.Context, dyn dynamic.Interface, namespace strin
 	return nil
 }
 
-// TeardownApp deletes the app's Deployment, Service, and HTTPRoute.
-// The Namespace and Secret are left in place (cheap; reused on next deploy).
+// TeardownApp deletes the app's Deployment, Service, HTTPRoute, and ConfigMaps.
+// The Namespace, Secret, and PVCs are left in place. PVCs hold user data and
+// are preserved across Stop so the app can be restarted without data loss —
+// they are reclaimed only when the project (namespace) is deleted.
 func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
 	if err := DeleteResource(ctx, dyn, gvrDeployment, namespace, appSlug); err != nil {
 		return err
@@ -261,6 +263,30 @@ func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug 
 	}
 	if err := DeleteResource(ctx, dyn, gvrHTTPRoute, namespace, appSlug); err != nil {
 		return err
+	}
+	if err := deleteConfigMapsForApp(ctx, dyn, namespace, appSlug); err != nil {
+		return fmt.Errorf("delete configmaps: %w", err)
+	}
+	return nil
+}
+
+// deleteConfigMapsForApp deletes all canette-managed ConfigMaps for the given app
+// in the namespace, identified by the canette.dev/app label. ConfigMaps are cheap
+// to recreate on the next deploy, so we don't bother queuing them in the DB.
+func deleteConfigMapsForApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
+	list, err := dyn.Resource(gvrConfigMap).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
+	})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("list configmaps: %w", err)
+	}
+	for _, cm := range list.Items {
+		if err := DeleteResource(ctx, dyn, gvrConfigMap, namespace, cm.GetName()); err != nil {
+			return err
+		}
 	}
 	return nil
 }

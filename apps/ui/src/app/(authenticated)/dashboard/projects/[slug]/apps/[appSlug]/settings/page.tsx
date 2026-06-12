@@ -198,7 +198,7 @@ const VOLUME_TYPE_LABELS: Record<VolumeType, string> = {
   configmap: "Config File",
 }
 
-function VolumeSection({ appId, hasPvcVolume }: { appId: string; hasPvcVolume: boolean }) {
+function VolumeSection({ appId }: { appId: string }) {
   const [volumes, setVolumes] = useState<AppVolume[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -213,7 +213,7 @@ function VolumeSection({ appId, hasPvcVolume }: { appId: string; hasPvcVolume: b
   const [addContent, setAddContent] = useState("")
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState("")
-  const [hasPvc, setHasPvc] = useState(hasPvcVolume)
+  const hasPvc = volumes.some((v) => v.type === "pvc")
 
   // Edit configmap state
   const [editId, setEditId] = useState<string | null>(null)
@@ -225,7 +225,6 @@ function VolumeSection({ appId, hasPvcVolume }: { appId: string; hasPvcVolume: b
     try {
       const { items } = await api.volumes.list(appId)
       setVolumes(items)
-      setHasPvc(items.some((v) => v.type === "pvc"))
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [appId])
 
@@ -288,6 +287,10 @@ function VolumeSection({ appId, hasPvcVolume }: { appId: string; hasPvcVolume: b
 
   return (
     <div className="flex flex-col gap-4">
+      <p className="text-xs text-muted-foreground">
+        Volume changes (add, edit, delete) take effect on the next deployment.
+        Trigger a redeploy after changes to see them in your running app.
+      </p>
       {hasPvc && (
         <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
           <TriangleAlert size={14} className="shrink-0" />
@@ -442,6 +445,10 @@ function VolumeSection({ appId, hasPvcVolume }: { appId: string; hasPvcVolume: b
                 Mount path: <code className="text-xs font-mono">{volToDelete.mountPath}</code>
               </p>
             )}
+            <p className="text-xs text-muted-foreground">
+              Stop the app first if it&apos;s running with this mount — the next deploy
+              will reconcile the change.
+            </p>
             {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setDeleteId(null)} disabled={deleting}>Cancel</Button>
@@ -862,7 +869,7 @@ export default function SettingsPage() {
 
       {/* Volumes */}
       <Section title="Volumes" description="Mount persistent storage, ephemeral scratch space, or configuration files into the container.">
-        <VolumeSection appId={app.id} hasPvcVolume={false} />
+        <VolumeSection appId={app.id} />
       </Section>
 
       {/* Webhooks */}

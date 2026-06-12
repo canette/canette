@@ -498,10 +498,31 @@ type PendingVolumeDeletion struct {
 	ResourceName string
 }
 
-// ClaimVolumeDeletions returns up to limit entries queued for volume deletion.
+// volumeDeletionClaimTTL bounds how long a claimed row stays "in flight" before
+// another controller may retry it. Long enough to absorb a slow K8s API call,
+// short enough that a crashed controller's claims become available again.
+const volumeDeletionClaimTTL = 5 * time.Minute
+
+// ClaimVolumeDeletions atomically transitions up to limit rows from "unclaimed"
+// (or "claimed long ago") to "claimed now" and returns them. Uses FOR UPDATE
+// SKIP LOCKED so multiple controller replicas never claim the same row. Call
+// MarkVolumeDeleted after the K8s delete succeeds; on failure the claim expires
+// after volumeDeletionClaimTTL and another poll cycle retries.
 func (s *Store) ClaimVolumeDeletions(ctx context.Context, limit int) ([]PendingVolumeDeletion, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, namespace, resource_type, resource_name FROM pending_volume_deletions ORDER BY created_at ASC LIMIT $1`, limit)
+	now := time.Now().UTC()
+	staleBefore := now.Add(-volumeDeletionClaimTTL)
+	rows, err := s.db.QueryContext(ctx, `
+		UPDATE pending_volume_deletions
+		SET claimed_at = $1
+		WHERE id IN (
+			SELECT id FROM pending_volume_deletions
+			WHERE claimed_at IS NULL OR claimed_at < $2
+			ORDER BY created_at ASC
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id, namespace, resource_type, resource_name`,
+		now, staleBefore, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query volume deletions: %w", err)
 	}

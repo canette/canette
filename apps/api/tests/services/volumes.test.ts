@@ -3,8 +3,8 @@ import { ServiceError } from "../../src/services/errors"
 import { join } from "path"
 import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
-import { createApp } from "../../src/services/apps"
-import { createVolume, deleteVolume, listVolumes } from "../../src/services/volumes"
+import { createApp, updateApp } from "../../src/services/apps"
+import { createVolume, deleteVolume, listVolumes, updateVolume } from "../../src/services/volumes"
 
 const db = createTestDb()
 
@@ -155,5 +155,126 @@ describe("services/volumes", () => {
     await expect(
       createVolume(db, app.id, "otherUserId", { type: "emptyDir", mountPath: "/data" })
     ).rejects.toThrow(ServiceError)
+  })
+
+  it("rejects PVC with invalid size quantity", async () => {
+    const app = await makeApp("pvc-badsize-app")
+    await expect(
+      createVolume(db, app.id, "userId", { type: "pvc", mountPath: "/data", config: { size: "5gb" } })
+    ).rejects.toThrow(/Kubernetes quantity/)
+  })
+
+  it("rejects emptyDir with invalid size quantity", async () => {
+    const app = await makeApp("emptydir-badsize-app")
+    await expect(
+      createVolume(db, app.id, "userId", { type: "emptyDir", mountPath: "/cache", config: { size: "lots" } })
+    ).rejects.toThrow(/Kubernetes quantity/)
+  })
+
+  it("rejects emptyDir mounted over /etc (directory mount)", async () => {
+    const app = await makeApp("etc-emptydir-app")
+    await expect(
+      createVolume(db, app.id, "userId", { type: "emptyDir", mountPath: "/etc/things" })
+    ).rejects.toThrow(/Directory mounts under \/etc/)
+  })
+
+  it("rejects mount at root /", async () => {
+    const app = await makeApp("root-mount-app")
+    await expect(
+      createVolume(db, app.id, "userId", { type: "emptyDir", mountPath: "/" })
+    ).rejects.toThrow(/system directory/)
+  })
+
+  it("rejects any mount under /proc", async () => {
+    const app = await makeApp("proc-mount-app")
+    await expect(
+      createVolume(db, app.id, "userId", { type: "configmap", mountPath: "/proc/sys/net.conf", config: { content: "x" } })
+    ).rejects.toThrow(/virtual filesystem/)
+  })
+
+  it("rejects mount path with ..", async () => {
+    const app = await makeApp("dotdot-mount-app")
+    await expect(
+      createVolume(db, app.id, "userId", { type: "emptyDir", mountPath: "/data/../etc" })
+    ).rejects.toThrow(/'\.\.' or '\/\/'/)
+  })
+
+  it("allows ConfigMap as a single file under /etc", async () => {
+    const app = await makeApp("etc-cm-app")
+    const vol = await createVolume(db, app.id, "userId", {
+      type: "configmap", mountPath: "/etc/nginx/nginx.conf", config: { content: "x" },
+    })
+    expect(vol.mountPath).toBe("/etc/nginx/nginx.conf")
+  })
+
+  it("rejects ConfigMap content exceeding 1 MiB", async () => {
+    const app = await makeApp("cm-toolarge-app")
+    const big = "x".repeat(1024 * 1024 + 1)
+    await expect(
+      createVolume(db, app.id, "userId", { type: "configmap", mountPath: "/etc/big.conf", config: { content: big } })
+    ).rejects.toThrow(/1 MiB ConfigMap limit/)
+  })
+
+  it("updateVolume validates emptyDir size", async () => {
+    const app = await makeApp("update-bad-size-app")
+    const vol = await createVolume(db, app.id, "userId", { type: "emptyDir", mountPath: "/cache" })
+    await expect(
+      updateVolume(db, app.id, vol.id, "userId", { config: { size: "garbage" } })
+    ).rejects.toThrow(/Kubernetes quantity/)
+  })
+
+  it("updateVolume clears emptyDir size when explicitly empty", async () => {
+    const app = await makeApp("clear-size-app")
+    const vol = await createVolume(db, app.id, "userId", {
+      type: "emptyDir", mountPath: "/cache", config: { size: "100Mi" },
+    })
+    const updated = await updateVolume(db, app.id, vol.id, "userId", { config: { size: "" } })
+    expect(updated.config.size).toBeUndefined()
+  })
+
+  it("updateVolume rejects empty ConfigMap content", async () => {
+    const app = await makeApp("update-empty-cm-app")
+    const vol = await createVolume(db, app.id, "userId", {
+      type: "configmap", mountPath: "/etc/x.conf", config: { content: "y" },
+    })
+    await expect(
+      updateVolume(db, app.id, vol.id, "userId", { config: { content: "" } })
+    ).rejects.toThrow(ServiceError)
+  })
+
+  it("blocks replicas > 1 in canette.yaml when a PVC is attached", async () => {
+    const app = await makeApp("replicas-block-app")
+    await createVolume(db, app.id, "userId", {
+      type: "pvc", mountPath: "/data", config: { size: "1Gi" },
+    })
+    await expect(
+      updateApp(db, app.id, "userId", { canetteConfig: "replicas: 3\n" })
+    ).rejects.toThrow(/replicas > 1/)
+  })
+
+  it("blocks new PVC when replicas > 1 is already set in canette.yaml", async () => {
+    const app = await makeApp("pvc-block-app")
+    await updateApp(db, app.id, "userId", { canetteConfig: "replicas: 2\n" })
+    await expect(
+      createVolume(db, app.id, "userId", {
+        type: "pvc", mountPath: "/data", config: { size: "1Gi" },
+      })
+    ).rejects.toThrow(/replicas > 1/)
+  })
+
+  it("deleteVolume is atomic: pending row + volume removal in one transaction", async () => {
+    const app = await makeApp("tx-delete-app")
+    const vol = await createVolume(db, app.id, "userId", {
+      type: "configmap", mountPath: "/etc/app.conf", config: { content: "hello" },
+    })
+    await deleteVolume(db, app.id, vol.id, "userId")
+    const remaining = await listVolumes(db, app.id)
+    expect(remaining).toHaveLength(0)
+    const pending = await db
+      .selectFrom("pending_volume_deletions")
+      .selectAll()
+      .where("resource_name", "=", `${app.slug}-etc-app-conf-cfg`)
+      .executeTakeFirst()
+    expect(pending?.resource_type).toBe("ConfigMap")
   })
 })

@@ -207,6 +207,7 @@ export interface Database {
     resource_type: string
     resource_name: string
     created_at: string
+    claimed_at: string | null
   }
 
   // ── DB Migration tracking ──────────────────────────
