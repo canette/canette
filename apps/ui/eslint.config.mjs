@@ -6,6 +6,7 @@ export default [
   ...nextConfig,
   {
     plugins: { "unused-imports": unusedImports },
+    settings: { react: { version: "19" } },
     rules: {
       "unused-imports/no-unused-imports": "error",
       "unused-imports/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
