@@ -158,7 +158,7 @@ apps:
   })
 
   it("rejects invalid YAML", async () => {
-    await expect(parseTemplate({ yaml: ": : : bad yaml !!!" })).rejects.toMatchObject({
+    await expect(parseTemplate({ yaml: "{ unclosed" })).rejects.toMatchObject({
       code: "INVALID_YAML",
     })
   })

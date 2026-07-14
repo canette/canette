@@ -1,4 +1,4 @@
-import jsyaml from "js-yaml"
+import { load, dump } from "js-yaml"
 import { ServiceError } from "./errors"
 import type { AppDeploymentType, AppTemplate, AppSourceType, TemplateApp } from "@canette/types"
 
@@ -67,7 +67,7 @@ function parseTemplateApp(raw: Record<string, unknown>, index: number): Template
     if (!APP_ROW_FIELDS.has(key)) canetteFields[key] = val
   }
   const canetteConfig =
-    Object.keys(canetteFields).length > 0 ? jsyaml.dump(canetteFields) : undefined
+    Object.keys(canetteFields).length > 0 ? dump(canetteFields) : undefined
 
   return {
     name: (name as string).trim(),
@@ -97,9 +97,13 @@ export async function parseTemplate(input: { yaml: string }): Promise<AppTemplat
   }
   const yamlContent = input.yaml
 
+  if (!yamlContent.trim()) {
+    throw new ServiceError("Template must be a YAML object at the top level", "INVALID_TEMPLATE", 400)
+  }
+
   let doc: unknown
   try {
-    doc = jsyaml.load(yamlContent)
+    doc = load(yamlContent)
   } catch {
     throw new ServiceError("Invalid YAML: could not parse template", "INVALID_YAML", 400)
   }
