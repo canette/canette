@@ -351,6 +351,12 @@ Always use `bun` and `bun x` for running scripts and executing packages. Do not 
 
 ---
 
+## Linting
+
+JS/TS linting is **oxlint**, configured by a single `.oxlintrc.json` at the repo root (with per-directory overrides for `apps/api`, `apps/ui`, `apps/docs`). ESLint has been removed — do not reintroduce it or per-package `eslint.config.*` files. Run linting with `bun run lint` (whole repo) or the per-app `lint:ui` / `lint:api` / `lint:docs` scripts; `bun run lint:fix` applies fixes (including unused-import removal, via `--fix-dangerously`). Go services still use `golangci-lint`, unchanged.
+
+---
+
 ## Things to never do
 
 - Never log secret values, tokens, or credentials at any log level

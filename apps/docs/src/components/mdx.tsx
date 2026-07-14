@@ -11,6 +11,6 @@ export function getMDXComponents(components?: MDXComponents) {
 export const useMDXComponents = getMDXComponents;
 
 declare global {
-  // eslint-disable-next-line no-unused-vars
+  // oxlint-disable-next-line no-unused-vars
   type MDXProvidedComponents = ReturnType<typeof getMDXComponents>;
 }
