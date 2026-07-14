@@ -136,7 +136,7 @@ export function AppFormFields({
     }, 400)
 
     return () => { if (checkTimer.current) clearTimeout(checkTimer.current) }
-  }, [value.slug, projectId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [value.slug, projectId]) // oxlint-disable-line react-hooks/exhaustive-deps
 
   function handleNameChange(v: string) {
     if (autoSlug && !slugEdited.current) {

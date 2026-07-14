@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["import", "typescript", "unicorn", "oxc"],
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/.next/**",
+    "**/out/**",
+    "**/build/**",
+    "**/.source/**",
+    "**/next-env.d.ts",
+    "**/postcss.config.mjs"
+  ],
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }]
+  },
+  "overrides": [
+    {
+      "files": ["apps/api/**"],
+      "rules": {
+        "typescript/no-explicit-any": "warn",
+        "unicorn/no-invalid-fetch-options": "off"
+      }
+    },
+    {
+      "files": ["apps/ui/**", "apps/docs/**"],
+      "plugins": ["react", "jsx-a11y", "nextjs"],
+      "rules": {}
+    }
+  ]
+}
