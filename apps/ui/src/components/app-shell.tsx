@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { CanetteLogo } from "@/components/canette-logo"
 import { Footer } from "@/components/footer"
 import { UserMenu } from "@/components/user-menu"
@@ -23,20 +24,20 @@ export function AppShell({ breadcrumb = [], actions, rawMain, children }: AppShe
       <header className="border-b border-border sticky top-0 z-10 bg-background/80 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <nav className="flex items-center gap-2 text-sm">
-            <a
+            <Link
               href="/dashboard"
               className="flex items-center gap-2 font-semibold tracking-tight hover:opacity-80 transition-opacity"
             >
               <CanetteLogo className="size-5 p-0.5" />
               canette
-            </a>
+            </Link>
             {breadcrumb.map((item, i) => (
               <span key={i} className="contents">
                 <span className="text-muted-foreground/40">/</span>
                 {item.href ? (
-                  <a href={item.href} className="text-muted-foreground hover:text-foreground transition-colors">
+                  <Link href={item.href} className="text-muted-foreground hover:text-foreground transition-colors">
                     {item.label}
-                  </a>
+                  </Link>
                 ) : (
                   <span className="font-medium">{item.label}</span>
                 )}

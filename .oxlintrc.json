@@ -24,7 +24,10 @@
     {
       "files": ["apps/ui/**", "apps/docs/**"],
       "plugins": ["react", "jsx-a11y", "nextjs"],
-      "rules": {}
+      "rules": {
+        "jsx-a11y/no-autofocus": "off",
+        "jsx-a11y/label-has-associated-control": ["warn", { "controlComponents": ["Checkbox"] }]
+      }
     }
   ]
 }
