@@ -17,6 +17,12 @@ import {
   ShieldCheck,
 } from "lucide-react"
 import { CanetteLogo } from "@/components/canette-logo"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
 import { useSelectedTeam } from "@/lib/team-context"
@@ -90,7 +96,6 @@ function TeamSelector({
   onSelect: (id: string) => void
   collapsed: boolean
 }) {
-  const [open, setOpen] = useState(false)
   const pathname = usePathname()
   const isTeamsPage = pathname.startsWith("/dashboard/teams")
   const hasMultiple = teams.length > 1
@@ -114,54 +119,41 @@ function TeamSelector({
   }
 
   return (
-    <div className="relative">
-      <div className="flex items-center">
-        <Link
-          href="/dashboard/teams"
-          className={cn(
-            "flex-1 flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted/50 min-w-0",
-            hasMultiple ? "rounded-l-md" : "rounded-md",
-            isTeamsPage && "bg-muted",
-          )}
-        >
-          <Layers size={15} className="shrink-0" />
-          <span className="truncate">{name}</span>
-        </Link>
-        {hasMultiple && (
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            className={cn(
-              "px-1.5 py-1.5 rounded-r-md transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/50",
-              open && "bg-muted/50 text-foreground",
-            )}
-          >
-            <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
-          </button>
+    <div className="flex items-center">
+      <Link
+        href="/dashboard/teams"
+        className={cn(
+          "flex-1 flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted/50 min-w-0",
+          hasMultiple ? "rounded-l-md" : "rounded-md",
+          isTeamsPage && "bg-muted",
         )}
-      </div>
-
-      {open && hasMultiple && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-popover border border-border rounded-md shadow-md py-1">
+      >
+        <Layers size={15} className="shrink-0" />
+        <span className="truncate">{name}</span>
+      </Link>
+      {hasMultiple && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Switch team"
+              className="group px-1.5 py-1.5 rounded-r-md transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/50 data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
+            >
+              <ChevronDown size={13} className="transition-transform group-data-[state=open]:rotate-180" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={4} className="min-w-[12rem]">
             {teams.map((t) => (
-              <button
+              <DropdownMenuItem
                 key={t.id}
-                type="button"
-                onClick={() => { onSelect(t.id); setOpen(false) }}
-                className={cn(
-                  "w-full text-left px-3 py-1.5 text-sm transition-colors",
-                  t.id === activeTeam?.id
-                    ? "font-medium text-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                )}
+                onSelect={() => onSelect(t.id)}
+                className={cn(t.id === activeTeam?.id ? "font-medium text-foreground" : "text-muted-foreground")}
               >
                 {t.isPersonal ? "Personal" : t.name}
-              </button>
+              </DropdownMenuItem>
             ))}
-          </div>
-        </>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </div>
   )
@@ -196,7 +188,6 @@ export function Sidebar({
   const [teamProjects, setTeamProjects] = useState<Project[]>([])
   const [project, setProject] = useState<Project | null>(null)
   const [apps, setApps] = useState<App[]>([])
-  const [projectsOpen, setProjectsOpen] = useState(false)
 
   useEffect(() => {
     if (isAdmin) return
@@ -267,9 +258,6 @@ export function Sidebar({
     return () => { cancelled = true }
   }, [isAdmin, project])
 
-  // Close the projects dropdown on navigation.
-  useEffect(() => { setProjectsOpen(false) }, [pathname])
-
   const activeTeam = teams.find((t) => t.id === selectedTeamId) ?? teams[0]
 
   const handleSelectTeam = useCallback((id: string) => {
@@ -329,40 +317,30 @@ export function Sidebar({
               {!collapsed && <span className="truncate">Projects</span>}
             </Link>
             {!collapsed && teamProjects.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setProjectsOpen((o) => !o)}
-                className={cn(
-                  "px-1.5 py-1.5 rounded-r-md transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                  projectsOpen && "bg-muted/50 text-foreground",
-                )}
-              >
-                <ChevronDown size={13} className={cn("transition-transform", projectsOpen && "rotate-180")} />
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Switch project"
+                    className="group px-1.5 py-1.5 rounded-r-md transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/50 data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
+                  >
+                    <ChevronDown size={13} className="transition-transform group-data-[state=open]:rotate-180" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" sideOffset={4} className="min-w-[12rem] max-h-60 overflow-y-auto">
+                  {teamProjects.map((p) => (
+                    <DropdownMenuItem
+                      key={p.id}
+                      asChild
+                      className={cn(p.slug === projectSlug ? "font-medium text-foreground" : "text-muted-foreground")}
+                    >
+                      <Link href={`/dashboard/projects/${p.slug}`} className="truncate">{p.name}</Link>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
-          {projectsOpen && !collapsed && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setProjectsOpen(false)} />
-              <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-popover border border-border rounded-md shadow-md py-1 max-h-60 overflow-y-auto">
-                {teamProjects.map((p) => (
-                  <Link
-                    key={p.id}
-                    href={`/dashboard/projects/${p.slug}`}
-                    onClick={() => setProjectsOpen(false)}
-                    className={cn(
-                      "block px-3 py-1.5 text-sm truncate transition-colors",
-                      p.slug === projectSlug
-                        ? "font-medium text-foreground"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                    )}
-                  >
-                    {p.name}
-                  </Link>
-                ))}
-              </div>
-            </>
-          )}
         </div>
         {project && !collapsed && (
           <Link href={`/dashboard/projects/${projectSlug}`}

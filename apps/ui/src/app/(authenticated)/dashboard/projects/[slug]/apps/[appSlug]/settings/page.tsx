@@ -77,9 +77,9 @@ function EnvRow({ label, value, isSecret, onSave, onDelete }: {
           {editing ? (
             <Input className="h-7 text-xs font-mono" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
           ) : (
-            <span className="text-sm font-mono text-foreground/80 cursor-pointer hover:text-foreground" onClick={() => { setDraft(value); setEditing(true) }}>
+            <button type="button" className="text-sm font-mono text-foreground/80 cursor-pointer hover:text-foreground text-left" onClick={() => { setDraft(value); setEditing(true) }}>
               {value || <span className="text-muted-foreground italic">empty</span>}
-            </span>
+            </button>
           )}
         </div>
       )}
