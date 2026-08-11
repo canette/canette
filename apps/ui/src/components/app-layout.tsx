@@ -58,7 +58,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="h-screen flex w-full overflow-hidden">
       <Sidebar collapsed={collapsed} onToggle={toggle} />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <header className="h-14 border-b border-border flex items-center gap-3 px-4 shrink-0">
+        <header className="h-14 border-b border-border bg-surface flex items-center gap-3 px-4 shrink-0">
           {collapsed && (
             <button
               type="button"
@@ -74,8 +74,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             {action && (
               action.dropdownItems ? (
                 <div className="flex">
-                  <Button variant="outline" size="sm" asChild
-                    className="text-muted-foreground hover:text-foreground gap-1.5 rounded-r-none border-r-0">
+                  <Button size="sm" asChild className="gap-1.5 rounded-r-none">
                     <Link href={action.href}>
                       <Plus size={14} />
                       {action.label}
@@ -83,8 +82,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                   </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm"
-                        className="rounded-l-none px-2 text-muted-foreground hover:text-foreground">
+                      <Button size="sm"
+                        className="rounded-l-none px-2 border-l border-primary-foreground/20">
                         <ChevronDown size={14} />
                       </Button>
                     </DropdownMenuTrigger>
@@ -98,8 +97,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                   </DropdownMenu>
                 </div>
               ) : (
-                <Button variant="outline" size="sm" asChild
-                  className="text-muted-foreground hover:text-foreground gap-1.5">
+                <Button size="sm" asChild className="gap-1.5">
                   <Link href={action.href}>
                     <Plus size={14} />
                     {action.label}

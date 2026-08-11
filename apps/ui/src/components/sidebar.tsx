@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { useTheme } from "next-themes"
 import {
   ChevronDown,
   Settings,
@@ -12,9 +13,11 @@ import {
   Users,
   LayoutDashboard,
   Layers,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   ShieldCheck,
+  Sun,
 } from "lucide-react"
 import { CanetteLogo } from "@/components/canette-logo"
 import {
@@ -69,8 +72,8 @@ function NavItem({
         collapsed && "justify-center",
         indent && !collapsed && "pl-5",
         active
-          ? "bg-muted font-medium text-foreground"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+          ? "bg-accent-soft font-medium text-accent-text"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted"
       )}
     >
       {Icon && <Icon size={15} className="shrink-0" />}
@@ -81,6 +84,28 @@ function NavItem({
 
 function Divider() {
   return <div className="border-t border-border my-1.5" />
+}
+
+// ── team initial square ───────────────────────────────────────────────────────
+
+const TEAM_COLORS = ["#30a46c", "#6e56cf", "#0090ff", "#e5484d", "#f76b15", "#12a594"]
+
+function teamColor(id: string): string {
+  let h = 0
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) | 0
+  return TEAM_COLORS[Math.abs(h) % TEAM_COLORS.length]
+}
+
+function TeamInitial({ team, size = 22 }: { team: Team; size?: number }) {
+  const label = team.isPersonal ? "Personal" : team.name
+  return (
+    <span
+      className="flex items-center justify-center rounded-sm text-white font-semibold shrink-0"
+      style={{ width: size, height: size, background: teamColor(team.id), fontSize: size * 0.5 }}
+    >
+      {label.trim().charAt(0).toUpperCase()}
+    </span>
+  )
 }
 
 // ── team selector (nav area) ──────────────────────────────────────────────────
@@ -105,31 +130,38 @@ function TeamSelector({
     return (
       <Link
         href="/dashboard/teams"
-        title="Teams"
+        title={activeTeam ? `Teams — ${name}` : "Teams"}
         className={cn(
           "flex items-center justify-center px-3 py-1.5 rounded-md transition-colors",
           isTeamsPage
             ? "bg-muted text-foreground"
-            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted"
         )}
       >
-        <Layers size={15} className="shrink-0" />
+        {activeTeam ? <TeamInitial team={activeTeam} size={20} /> : <Layers size={15} className="shrink-0" />}
       </Link>
     )
   }
 
   return (
-    <div className="flex items-center">
+    <div className={cn(
+      "flex items-center rounded-md border border-input bg-card transition-colors",
+      isTeamsPage && "bg-muted",
+    )}>
       <Link
         href="/dashboard/teams"
         className={cn(
-          "flex-1 flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted/50 min-w-0",
+          "flex-1 flex items-center gap-2.5 pl-2 pr-1 py-1.5 text-sm transition-colors hover:bg-muted min-w-0",
           hasMultiple ? "rounded-l-md" : "rounded-md",
-          isTeamsPage && "bg-muted",
         )}
       >
-        <Layers size={15} className="shrink-0" />
-        <span className="truncate">{name}</span>
+        {activeTeam ? <TeamInitial team={activeTeam} /> : <Layers size={15} className="shrink-0" />}
+        <span className="flex-1 min-w-0">
+          <span className="block text-[13px] font-medium truncate leading-tight">{name}</span>
+          <span className="block text-[11px] text-tertiary leading-tight">
+            {activeTeam?.isPersonal ? "Your workspace" : "Team"}
+          </span>
+        </span>
       </Link>
       {hasMultiple && (
         <DropdownMenu>
@@ -137,25 +169,81 @@ function TeamSelector({
             <button
               type="button"
               aria-label="Switch team"
-              className="group px-1.5 py-1.5 rounded-r-md transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/50 data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
+              className="group self-stretch px-1.5 rounded-r-md transition-colors text-tertiary hover:text-foreground hover:bg-muted data-[state=open]:bg-muted data-[state=open]:text-foreground"
             >
               <ChevronDown size={13} className="transition-transform group-data-[state=open]:rotate-180" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={4} className="min-w-[12rem]">
+          <DropdownMenuContent align="end" sideOffset={4} className="min-w-[13rem]">
             {teams.map((t) => (
               <DropdownMenuItem
                 key={t.id}
                 onSelect={() => onSelect(t.id)}
-                className={cn(t.id === activeTeam?.id ? "font-medium text-foreground" : "text-muted-foreground")}
+                className={cn(
+                  "flex items-center gap-2.5",
+                  t.id === activeTeam?.id ? "font-medium text-foreground" : "text-muted-foreground",
+                )}
               >
-                {t.isPersonal ? "Personal" : t.name}
+                <TeamInitial team={t} size={20} />
+                <span className="flex-1 truncate">{t.isPersonal ? "Personal" : t.name}</span>
+                {t.id === activeTeam?.id && <span className="text-accent-text text-xs">✓</span>}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
       )}
     </div>
+  )
+}
+
+// ── fleet health ──────────────────────────────────────────────────────────────
+
+const BUILDING_STATUSES = new Set(["pending_build", "building", "scanning", "pending_deployment", "deploying"])
+
+function FleetHealth({ apps }: { apps: App[] }) {
+  const total = apps.length
+  if (total === 0) return null
+  const live = apps.filter((a) => a.latestDeploymentStatus === "live").length
+  const building = apps.filter((a) => BUILDING_STATUSES.has(a.latestDeploymentStatus ?? "")).length
+  const failed = apps.filter((a) => a.latestDeploymentStatus === "failed").length
+  const pct = Math.round((live / total) * 100)
+
+  return (
+    <div className="rounded-lg border border-border bg-card px-3 py-2.5 mb-2">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-muted-foreground">Fleet health</span>
+        <span className={cn("text-xs font-semibold", failed > 0 ? "text-warning-text" : "text-success-text")}>
+          {pct}%
+        </span>
+      </div>
+      <div className="h-[5px] rounded-full bg-muted overflow-hidden">
+        <div className="h-full bg-success rounded-full transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="flex gap-2.5 mt-2 text-[11px] text-tertiary">
+        <span><b className="font-semibold text-success-text">{live}</b> live</span>
+        <span><b className="font-semibold text-warning-text">{building}</b> building</span>
+        <span><b className="font-semibold text-destructive-text">{failed}</b> failed</span>
+      </div>
+    </div>
+  )
+}
+
+// ── theme toggle ──────────────────────────────────────────────────────────────
+
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+      title="Toggle appearance"
+      className="flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+    >
+      {mounted && resolvedTheme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+    </button>
   )
 }
 
@@ -188,6 +276,7 @@ export function Sidebar({
   const [teamProjects, setTeamProjects] = useState<Project[]>([])
   const [project, setProject] = useState<Project | null>(null)
   const [apps, setApps] = useState<App[]>([])
+  const [teamApps, setTeamApps] = useState<App[]>([])
 
   useEffect(() => {
     if (isAdmin) return
@@ -258,6 +347,19 @@ export function Sidebar({
     return () => { cancelled = true }
   }, [isAdmin, project])
 
+  // Aggregate app statuses across the team's projects for the fleet-health card.
+  useEffect(() => {
+    if (isAdmin || teamProjects.length === 0) {
+      setTeamApps([])
+      return
+    }
+    let cancelled = false
+    Promise.all(
+      teamProjects.map((p) => api.apps.list(p.id).then((r) => r.items).catch(() => [] as App[]))
+    ).then((all) => { if (!cancelled) setTeamApps(all.flat()) })
+    return () => { cancelled = true }
+  }, [isAdmin, teamProjects])
+
   const activeTeam = teams.find((t) => t.id === selectedTeamId) ?? teams[0]
 
   const handleSelectTeam = useCallback((id: string) => {
@@ -268,11 +370,24 @@ export function Sidebar({
   // ── header area (h-14, always rendered) ──────────────────────────────────
 
   const header = (
-    <div className={cn("flex items-center gap-2", collapsed && "justify-center")}>
-      <Link href="/dashboard" className="shrink-0 hover:opacity-80 transition-opacity">
-        <CanetteLogo className="size-5" />
+    <div className={cn("flex items-center gap-2", collapsed ? "justify-center" : "w-full")}>
+      <Link href="/dashboard" className="flex items-center gap-2 min-w-0 hover:opacity-80 transition-opacity">
+        <CanetteLogo className="size-5 shrink-0" />
+        {!collapsed && <span className="text-sm font-semibold tracking-tight">canette</span>}
       </Link>
-      {isAdmin && !collapsed && <span className="text-sm font-semibold">Admin</span>}
+      {isAdmin && !collapsed && (
+        <span className="text-[10.5px] font-medium px-1.5 py-px rounded-sm bg-muted text-muted-foreground">Admin</span>
+      )}
+      {!collapsed && (
+        <button
+          type="button"
+          onClick={onToggle}
+          title="Collapse sidebar"
+          className="ml-auto flex items-center justify-center size-6 rounded-md text-tertiary hover:text-foreground hover:bg-muted transition-colors shrink-0"
+        >
+          <PanelLeftClose size={14} />
+        </button>
+      )}
     </div>
   )
 
@@ -375,6 +490,9 @@ export function Sidebar({
     const teamId = activeTeam?.id
     nav = (
       <>
+        {!collapsed && (
+          <div className="px-3 pb-1 text-[11px] font-medium text-tertiary">Workspace</div>
+        )}
         <NavItem href="/dashboard" label="Projects" icon={LayoutDashboard}
           active={pathname === "/dashboard" || pathname.startsWith("/dashboard/projects")}
           collapsed={collapsed} />
@@ -420,7 +538,7 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "flex flex-col border-r border-border bg-background transition-all duration-200 shrink-0",
+        "flex flex-col border-r border-border bg-surface transition-all duration-200 shrink-0",
         collapsed ? "w-[52px]" : "w-[220px]"
       )}
     >
@@ -435,24 +553,26 @@ export function Sidebar({
       {/* Nav content */}
       <div className="flex-1 overflow-y-auto py-2 px-2">
         <div className="flex flex-col gap-0.5">
+          {collapsed && (
+            <button
+              type="button"
+              onClick={onToggle}
+              title="Expand sidebar"
+              className="flex items-center justify-center py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <PanelLeftOpen size={14} />
+            </button>
+          )}
           {nav}
         </div>
       </div>
 
-      {/* Collapse toggle */}
-      <div className="px-2 py-2">
-        <button
-          type="button"
-          onClick={onToggle}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className={cn(
-            "flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors",
-            collapsed ? "justify-center w-full" : "w-full"
-          )}
-        >
-          {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-          {!collapsed && <span className="text-xs">Collapse</span>}
-        </button>
+      {/* Footer: fleet health + appearance */}
+      <div className="px-2 py-2 flex flex-col">
+        {!collapsed && !isAdmin && <FleetHealth apps={teamApps} />}
+        <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-end px-1")}>
+          <ThemeToggle />
+        </div>
       </div>
     </aside>
   )
