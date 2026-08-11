@@ -213,7 +213,7 @@ export default function AdminUsersPage() {
                       </span>
                     )}
                     {deletionImpact.personalTeam && deletionImpact.personalTeam.inFlightAppNames.length === 0 && deletionImpact.personalTeam.projectCount > 0 && (
-                      <span className="block mt-2 text-sm text-amber-600 dark:text-amber-500">
+                      <span className="block mt-2 text-sm text-warning-text">
                         This will permanently delete {deletionImpact.personalTeam.projectCount} project{deletionImpact.personalTeam.projectCount !== 1 ? "s" : ""} and {deletionImpact.personalTeam.appCount} app{deletionImpact.personalTeam.appCount !== 1 ? "s" : ""}. Running apps will be stopped. Kubernetes resources will be cleaned up in the background.
                       </span>
                     )}
@@ -287,7 +287,7 @@ export default function AdminUsersPage() {
           <div className="flex items-center gap-2 rounded-md border border-input bg-muted px-3 py-2 mx-6 mb-2">
             <code className="flex-1 font-mono text-sm select-all">{resetPasswordResult}</code>
             <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" onClick={handleCopy}>
-              {copied ? <Check className="size-4 text-green-600" /> : <Copy className="size-4" />}
+              {copied ? <Check className="size-4 text-success-text" /> : <Copy className="size-4" />}
             </Button>
           </div>
           <DialogFooter>

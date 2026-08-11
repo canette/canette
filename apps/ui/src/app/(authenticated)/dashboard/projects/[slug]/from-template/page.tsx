@@ -295,7 +295,7 @@ export default function FromTemplatePage() {
                     {status === "creating" && (
                       <span className="text-muted-foreground animate-pulse">Creating…</span>
                     )}
-                    {status === "done" && <span className="text-green-500">Created</span>}
+                    {status === "done" && <span className="text-success-text">Created</span>}
                     {status === "error" && <span className="text-destructive">Failed</span>}
                   </div>
                 </div>

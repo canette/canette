@@ -164,7 +164,7 @@ export default function AdminSettingsPage() {
                   <p className="text-xs text-muted-foreground mb-1">Email provider</p>
                   <p className="text-sm font-mono">
                     {signupSettings?.emailProviderConfigured
-                      ? <span className="text-green-600 dark:text-green-400">configured</span>
+                      ? <span className="text-success-text">configured</span>
                       : <span className="text-muted-foreground">none — magic link login disabled</span>}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">

@@ -226,7 +226,7 @@ export default function ProfilePage() {
                   </div>
 
                   {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
-                  {passwordSuccess && <p className="text-sm text-green-600">Password updated successfully.</p>}
+                  {passwordSuccess && <p className="text-sm text-success-text">Password updated successfully.</p>}
 
                   <div className="flex justify-end">
                     <Button

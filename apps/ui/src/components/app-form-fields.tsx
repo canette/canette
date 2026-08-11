@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
@@ -167,7 +168,7 @@ export function AppFormFields({
   const slugHint = {
     idle: null,
     checking: <span className="text-muted-foreground">Checking…</span>,
-    available: <span className="text-green-500">Available</span>,
+    available: <span className="text-success-text">Available</span>,
     taken: <span className="text-destructive">Already taken in this project</span>,
     invalid: <span className="text-destructive">Lowercase letters, numbers and hyphens only; cannot start or end with a hyphen</span>,
   }[value.slugState]
@@ -201,7 +202,7 @@ export function AppFormFields({
           onChange={(e) => handleSlugChange(e.target.value)}
           className={cn(
             value.slugState === "taken" || value.slugState === "invalid" ? "border-destructive" : "",
-            value.slugState === "available" ? "border-green-500" : "",
+            value.slugState === "available" ? "border-success" : "",
           )}
         />
         <p className="text-xs min-h-[1rem]">{slugHint}</p>
@@ -210,75 +211,25 @@ export function AppFormFields({
       {/* Source type toggle */}
       <div className="flex flex-col gap-1.5">
         <Label>Source</Label>
-        <div className="flex rounded-md border border-border overflow-hidden w-fit">
-          <button
-            type="button"
-            onClick={() => onChange({ sourceType: "git" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors",
-              value.sourceType === "git"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Git
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange({ sourceType: "image" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors border-l border-border",
-              value.sourceType === "image"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Docker Image
-          </button>
-        </div>
+        <SegmentedControl
+          options={[{ value: "git", label: "Git" }, { value: "image", label: "Docker Image" }]}
+          value={value.sourceType}
+          onChange={(sourceType) => onChange({ sourceType })}
+        />
       </div>
 
       {/* Deployment type toggle */}
       <div className="flex flex-col gap-1.5">
         <Label>Type</Label>
-        <div className="flex rounded-md border border-border overflow-hidden w-fit">
-          <button
-            type="button"
-            onClick={() => onChange({ deploymentType: "web" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors",
-              value.deploymentType === "web"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Public
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange({ deploymentType: "private" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors border-l border-border",
-              value.deploymentType === "private"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Private
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange({ deploymentType: "cronjob" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors border-l border-border",
-              value.deploymentType === "cronjob"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Scheduled
-          </button>
-        </div>
+        <SegmentedControl
+          options={[
+            { value: "web", label: "Public" },
+            { value: "private", label: "Private" },
+            { value: "cronjob", label: "Scheduled" },
+          ]}
+          value={value.deploymentType}
+          onChange={(deploymentType) => onChange({ deploymentType })}
+        />
         {value.deploymentType === "private" && (
           <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
         )}
@@ -471,7 +422,7 @@ export function AppFormFields({
                       const rows = value.envRows.map((r, i) => i === ri ? { ...r, isSecret: !r.isSecret } : r)
                       onChange({ envRows: rows })
                     }}
-                    className={cn("h-8 shrink-0 text-xs", row.isSecret && "border border-amber-500/50 text-amber-600")}
+                    className={cn("h-8 shrink-0 text-xs", row.isSecret && "bg-warning-soft text-warning-text ring-1 ring-inset ring-warning-line")}
                   >
                     Secret
                   </Button>
