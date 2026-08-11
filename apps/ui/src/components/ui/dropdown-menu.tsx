@@ -17,7 +17,7 @@ function DropdownMenuContent({
       <DropdownMenuPrimitive.Content
         sideOffset={sideOffset}
         className={cn(
-          "z-50 min-w-[13rem] rounded-lg border border-border bg-background shadow-md py-1",
+          "z-50 min-w-[13rem] rounded-lg border border-border bg-popover shadow-lg py-1",
           "data-[state=open]:animate-in data-[state=closed]:animate-out",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
@@ -50,7 +50,7 @@ function DropdownMenuItem({
     <DropdownMenuPrimitive.Item
       className={cn(
         "block w-full px-3 py-2 text-sm cursor-pointer select-none outline-none",
-        "hover:bg-muted focus:bg-muted transition-colors",
+        "hover:bg-accent-soft hover:text-accent-text focus:bg-accent-soft focus:text-accent-text transition-colors",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
