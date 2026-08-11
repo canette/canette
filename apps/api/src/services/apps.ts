@@ -106,6 +106,15 @@ export async function getAppById(
     .innerJoin("projects as p", "p.id", "a.project_id")
     .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
     .selectAll("a")
+    .select((eb) =>
+      eb
+        .selectFrom("deployments")
+        .select("status")
+        .whereRef("app_id", "=", "a.id")
+        .orderBy("created_at", "desc")
+        .limit(1)
+        .as("latest_deployment_status")
+    )
     .where("a.id", "=", appId)
     .where("tm.user_id", "=", userId)
     .executeTakeFirst()
@@ -129,6 +138,15 @@ export async function getAppByRef(
     .innerJoin("projects as p", "p.id", "a.project_id")
     .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
     .selectAll("a")
+    .select((eb) =>
+      eb
+        .selectFrom("deployments")
+        .select("status")
+        .whereRef("app_id", "=", "a.id")
+        .orderBy("created_at", "desc")
+        .limit(1)
+        .as("latest_deployment_status")
+    )
     .where(sql.ref(projectCol), "=", projectRef)
     .where(sql.ref(appCol), "=", appRef)
     .where("tm.user_id", "=", userId)

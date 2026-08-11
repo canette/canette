@@ -15,9 +15,9 @@ export function TabNavigation({ tabs }: { tabs: TabItem[] }) {
           key={tab.href}
           href={tab.href}
           className={cn(
-            "px-3 py-2 text-sm border-b-2 -mb-px transition-colors",
+            "px-3.5 py-2.5 text-sm border-b-2 -mb-px transition-colors",
             tab.active
-              ? "border-foreground text-foreground font-medium"
+              ? "border-primary text-foreground font-medium"
               : "border-transparent text-muted-foreground hover:text-foreground"
           )}
         >

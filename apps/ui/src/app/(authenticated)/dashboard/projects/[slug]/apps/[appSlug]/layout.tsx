@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from "react"
 import { useParams, usePathname } from "next/navigation"
 import { AppProvider } from "@/lib/app-context"
 import { TabNavigation } from "@/components/tab-navigation"
+import { StatusBadge } from "@/components/ui/status-badge"
+import { ExternalLink } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
 import * as api from "@/lib/api"
 import type { App, Project } from "@canette/types"
@@ -41,10 +43,35 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        {app
-          ? <h1 className="text-xl font-semibold mb-4">{app.name}</h1>
-          : <Skeleton className="h-7 w-40 mb-4" />
-        }
+        {app ? (
+          <div className="flex items-center gap-3.5 mb-4">
+            <div className="size-10 rounded-lg bg-muted flex items-center justify-center font-mono text-sm font-medium text-muted-foreground shrink-0">
+              {app.slug.slice(0, 2)}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
+                <h1 className="text-xl font-semibold font-mono tracking-tight truncate">{app.name}</h1>
+                <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
+              </div>
+              {app.liveUrl && app.deploymentType !== "private" && (
+                <a
+                  href={app.liveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[13px] font-mono text-accent-text hover:underline"
+                >
+                  {app.liveUrl.replace(/^https?:\/\//, "")}
+                  <ExternalLink size={11} className="shrink-0" />
+                </a>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3.5 mb-4">
+            <Skeleton className="size-10 rounded-lg" />
+            <Skeleton className="h-7 w-40" />
+          </div>
+        )}
         <TabNavigation tabs={[
           { label: "Overview", href: appBase, active: isOverview },
           { label: "Deployments", href: `${appBase}/deployments`, active: isDeployments },

@@ -8,24 +8,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@
 import { Separator } from "@/components/ui/separator"
 import { Download, Loader2, ShieldAlert, ShieldCheck, X } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
+import { StatusDot, StatusLabel, formatStatus } from "@/components/ui/status-badge"
+import { Terminal } from "@/components/ui/terminal"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
 import type { BuildLog, Deployment, ScanSummary } from "@canette/types"
-
-type StatusVariant = "live" | "building" | "deploying" | "failed" | "pending" | "secondary"
-
-function statusVariant(status: string | undefined): StatusVariant {
-  if (status === "live") return "live"
-  if (status === "building" || status === "scanning") return "building"
-  if (status === "pending_deployment" || status === "deploying") return "deploying"
-  if (status === "failed") return "failed"
-  if (status === "stopped") return "secondary"
-  return "pending"
-}
-
-function formatStatus(status: string) {
-  return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-}
 
 function formatHistoricalStatus(status: string) {
   return status === "live" ? "Deployed" : formatStatus(status)
@@ -119,15 +106,17 @@ function LogDialog({ deployment, onClose }: { deployment: Deployment; onClose: (
       <div ref={scrollRef} onScroll={() => {
         const el = scrollRef.current
         if (el) userScrolledUp.current = el.scrollHeight - el.scrollTop - el.clientHeight > 48
-      }} className="flex-1 overflow-y-auto p-6 pt-0">
-        {loading
-          ? <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />Loading logs…</div>
-          : logs.length === 0
-            ? !isTerminal
-              ? <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />Waiting for logs…</div>
-              : <p className="text-muted-foreground text-sm">No logs available.</p>
-            : <pre className="text-xs font-mono text-foreground/80 whitespace-pre-wrap leading-5">{logs.map((l) => l.line).join("\n")}</pre>
-        }
+      }} className="flex-1 overflow-y-auto px-6 pb-6">
+        <Terminal className="min-h-full">
+          {loading
+            ? <span className="flex items-center gap-2 text-[#777b84]"><Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />Loading logs…</span>
+            : logs.length === 0
+              ? !isTerminal
+                ? <span className="flex items-center gap-2 text-[#777b84]"><Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />Waiting for logs…</span>
+                : <span className="text-[#777b84]">No logs available.</span>
+              : <pre className="whitespace-pre-wrap">{logs.map((l) => l.line).join("\n")}</pre>
+          }
+        </Terminal>
       </div>
     </DialogContent>
   )
@@ -149,10 +138,12 @@ function ManifestDialog({ deploymentId, onClose }: { deploymentId: string; onClo
           <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7"><X size={14} /></Button>
         </DialogClose>
       </DialogHeader>
-      <div className="flex-1 overflow-y-auto p-6 pt-0">
-        {loading ? <Skeleton className="h-4 w-32" />
-          : manifest === null ? <p className="text-muted-foreground text-sm">Manifest not available.</p>
-            : <pre className="text-xs font-mono text-foreground/80 whitespace-pre-wrap leading-5">{manifest}</pre>}
+      <div className="flex-1 overflow-y-auto px-6 pb-6">
+        <Terminal className="min-h-full">
+          {loading ? <Skeleton className="h-4 w-32" />
+            : manifest === null ? <span className="text-[#777b84]">Manifest not available.</span>
+              : <pre className="whitespace-pre-wrap">{manifest}</pre>}
+        </Terminal>
       </div>
     </DialogContent>
   )
@@ -187,17 +178,21 @@ export default function DeploymentsPage() {
             deploymentList.map((d, i) => (
               <div key={d.id}>
                 {i > 0 && <Separator />}
-                <div className="flex items-center justify-between px-6 py-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Badge variant={statusVariant(d.status)} className="shrink-0">{formatHistoricalStatus(d.status)}</Badge>
-                    <span className="font-mono text-xs text-muted-foreground shrink-0">{shortSha(d.commitSha)}</span>
-                    {d.commitMessage && (
-                      <span className="text-sm text-foreground/80 truncate">{d.commitMessage}</span>
-                    )}
-                    <ScanBadge deployment={d} />
+                <div className="flex items-center gap-3.5 px-6 py-3">
+                  <StatusDot status={d.status} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-medium truncate">
+                        {d.commitMessage || shortSha(d.commitSha)}
+                      </span>
+                      <ScanBadge deployment={d} />
+                    </div>
+                    <div className="text-[11.5px] text-tertiary font-mono truncate">
+                      {shortSha(d.commitSha)} · {timeAgo(d.createdAt)}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-3">
-                    <span className="text-xs text-muted-foreground">{timeAgo(d.createdAt)}</span>
+                  <StatusLabel status={d.status} label={formatHistoricalStatus(d.status)} className="shrink-0" />
+                  <div className="flex items-center gap-1 shrink-0">
                     <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setLogDeployment(d)}>Logs</Button>
                     {d.status === "live" && (
                       <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setManifestDeployment(d)}>Manifest</Button>

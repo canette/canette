@@ -4,19 +4,8 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { SkeletonText } from "@/components/ui/skeleton"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { StatusBadge } from "@/components/ui/status-badge"
 import type { App, Project } from "@canette/types"
-
-type StatusVariant = "live" | "building" | "deploying" | "failed" | "pending" | "secondary"
-function statusVariant(status: string | undefined): StatusVariant {
-  if (status === "live") return "live"
-  if (status === "building" || status === "scanning") return "building"
-  if (status === "pending_deployment" || status === "deploying") return "deploying"
-  if (status === "failed") return "failed"
-  if (status === "stopped") return "secondary"
-  return "pending"
-}
 
 export default function ProjectPage() {
   const { slug } = useParams<{ slug: string }>()
@@ -75,32 +64,30 @@ export default function ProjectPage() {
           </p>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           {apps.map((app) => (
             <Link key={app.id} href={`/dashboard/projects/${slug}/apps/${app.slug}`} className="block group">
-              <Card className="h-full transition-colors group-hover:border-foreground/20">
-                <CardHeader>
-                  <div className="flex items-center justify-between gap-2">
-                    <CardTitle className="text-base truncate">{app.name}</CardTitle>
-                    {app.latestDeploymentStatus && (
-                      <Badge variant={statusVariant(app.latestDeploymentStatus)} className="shrink-0">
-                        {app.latestDeploymentStatus}
-                      </Badge>
-                    )}
+              <div className="h-full rounded-lg border border-border bg-card p-[15px] transition-colors group-hover:border-border-strong">
+                <div className="flex items-center gap-3">
+                  <div className="size-[34px] rounded-md bg-muted flex items-center justify-center font-mono text-xs font-medium text-muted-foreground shrink-0">
+                    {app.slug.slice(0, 2)}
                   </div>
-                  {app.sourceType === "image" ? (
-                    <>
-                      <CardDescription className="font-mono text-xs truncate">{app.imageUrl}</CardDescription>
-                      <p className="text-xs text-muted-foreground">{app.imageTag || "latest"}</p>
-                    </>
-                  ) : (
-                    <>
-                      <CardDescription className="font-mono text-xs truncate">{app.gitUrl}</CardDescription>
-                      <p className="text-xs text-muted-foreground">{app.gitBranch}</p>
-                    </>
-                  )}
-                </CardHeader>
-              </Card>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold font-mono tracking-tight truncate">{app.name}</div>
+                    <div className="text-[11.5px] text-tertiary truncate">
+                      {app.sourceType === "image"
+                        ? `image · ${app.imageTag || "latest"}`
+                        : `git · ${app.gitBranch}`}
+                      {app.deploymentType !== "web" && ` · ${app.deploymentType}`}
+                    </div>
+                  </div>
+                  <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
+                </div>
+                <div className="flex items-center gap-1.5 mt-2.5 text-xs text-tertiary font-mono truncate">
+                  <span className="shrink-0">{app.sourceType === "image" ? "⛁" : "↗"}</span>
+                  <span className="truncate">{app.sourceType === "image" ? app.imageUrl : app.gitUrl}</span>
+                </div>
+              </div>
             </Link>
           ))}
         </div>
