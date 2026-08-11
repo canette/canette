@@ -102,6 +102,24 @@ export interface AppSecret {
   updatedAt: string
 }
 
+export type VolumeType = "pvc" | "emptyDir" | "configmap"
+
+export interface VolumeConfig {
+  size?: string     // PVC (required) and emptyDir (optional size limit)
+  content?: string  // configmap only
+}
+
+export interface AppVolume {
+  id: string
+  appId: string
+  name: string
+  type: VolumeType
+  mountPath: string
+  config: VolumeConfig
+  createdAt: string
+  updatedAt: string
+}
+
 export type DeploymentStatus =
   | "pending_build"
   | "building"

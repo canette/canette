@@ -4,6 +4,8 @@ import type { Selectable, Updateable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
+import { getReplicasFromCanetteConfig } from "./canette-config"
+import { supportsForUpdate } from "../db/dialect"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
@@ -402,11 +404,40 @@ export async function updateApp(
   if (!Object.keys(updates).length) throw new ServiceError("Nothing to update", "VALIDATION_ERROR", 400)
   updates.updated_at = new Date().toISOString()
 
-  await db
-    .updateTable("apps")
-    .set(updates)
-    .where("id", "=", appId)
-    .execute()
+  // When canetteConfig changes, we must check the PVC/replicas invariant inside
+  // the same transaction as the UPDATE to avoid a TOCTOU race with concurrent
+  // POST /volumes (which locks the apps row before inserting a PVC). Other
+  // updates don't need the row lock — pay the transaction cost only when needed.
+  const needsPvcCheck = patch.canetteConfig !== undefined && patch.canetteConfig !== null
+  if (needsPvcCheck) {
+    await db.transaction().execute(async (tx) => {
+      let lockQ = tx
+        .selectFrom("apps")
+        .select("id")
+        .where("id", "=", appId)
+      if (supportsForUpdate(tx)) lockQ = lockQ.forUpdate()
+      await lockQ.executeTakeFirstOrThrow()
+      const newReplicas = getReplicasFromCanetteConfig(patch.canetteConfig)
+      if (newReplicas > 1) {
+        const pvcVolume = await tx
+          .selectFrom("app_volumes")
+          .select("id")
+          .where("app_id", "=", appId)
+          .where("type", "=", "pvc")
+          .executeTakeFirst()
+        if (pvcVolume) {
+          throw new ServiceError(
+            "Cannot set replicas > 1 while the app has PVC volumes. Remove PVC volumes first or keep replicas at 1.",
+            "PVC_REPLICAS_CONFLICT",
+            422
+          )
+        }
+      }
+      await tx.updateTable("apps").set(updates).where("id", "=", appId).execute()
+    })
+  } else {
+    await db.updateTable("apps").set(updates).where("id", "=", appId).execute()
+  }
 
   const row = await db
     .selectFrom("apps")

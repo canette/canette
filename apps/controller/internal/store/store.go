@@ -40,6 +40,13 @@ type deploymentSnapshot struct {
 		Key   string `json:"key"`
 		Value string `json:"value"`
 	} `json:"env_vars"`
+	Volumes []struct {
+		ID        string          `json:"id"`
+		Name      string          `json:"name"`
+		Type      string          `json:"type"`
+		MountPath string          `json:"mount_path"`
+		Config    json.RawMessage `json:"config"`
+	} `json:"volumes"`
 	ResourceDefaults struct {
 		CPURequest    string `json:"cpu_request"`
 		MemoryRequest string `json:"memory_request"`
@@ -72,6 +79,21 @@ type Resources struct {
 	MemoryLimit   string
 }
 
+// VolumeConfig holds the parsed config for a single volume.
+type VolumeConfig struct {
+	Size    string `json:"size"`    // PVC (required) and emptyDir (optional)
+	Content string `json:"content"` // configmap only
+}
+
+// VolumeSpec describes a volume to mount in the app container.
+type VolumeSpec struct {
+	ID        string
+	Name      string
+	Type      string // "pvc" | "emptyDir" | "configmap"
+	MountPath string
+	Config    VolumeConfig
+}
+
 // AppConfig is the full config for an app needed during reconciliation.
 type AppConfig struct {
 	AppID          string
@@ -89,6 +111,7 @@ type AppConfig struct {
 	Replicas       int
 	Resources      Resources
 	Env            map[string]string
+	Volumes        []VolumeSpec
 }
 
 // Secret is an encrypted secret row.
@@ -317,6 +340,21 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		envMap[k] = v
 	}
 
+	volumes := make([]VolumeSpec, 0, len(snap.Volumes))
+	for _, v := range snap.Volumes {
+		var vcfg VolumeConfig
+		if len(v.Config) > 0 {
+			_ = json.Unmarshal(v.Config, &vcfg)
+		}
+		volumes = append(volumes, VolumeSpec{
+			ID:        v.ID,
+			Name:      v.Name,
+			Type:      v.Type,
+			MountPath: v.MountPath,
+			Config:    vcfg,
+		})
+	}
+
 	return &AppConfig{
 		AppID:          dep.AppID,
 		AppSlug:        dep.AppSlug,
@@ -333,6 +371,7 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		Replicas:       replicas,
 		Resources:      res,
 		Env:            envMap,
+		Volumes:        volumes,
 	}, parseErr
 }
 
@@ -447,6 +486,65 @@ func (s *Store) MarkNamespaceDeleted(ctx context.Context, id string) error {
 		`DELETE FROM queued_namespace_cleanups WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("mark namespace deleted: %w", err)
+	}
+	return nil
+}
+
+// PendingVolumeDeletion holds the details of a K8s volume resource queued for deletion.
+type PendingVolumeDeletion struct {
+	ID           string
+	Namespace    string
+	ResourceType string // "PersistentVolumeClaim" | "ConfigMap"
+	ResourceName string
+}
+
+// volumeDeletionClaimTTL bounds how long a claimed row stays "in flight" before
+// another controller may retry it. Long enough to absorb a slow K8s API call,
+// short enough that a crashed controller's claims become available again.
+const volumeDeletionClaimTTL = 5 * time.Minute
+
+// ClaimVolumeDeletions atomically transitions up to limit rows from "unclaimed"
+// (or "claimed long ago") to "claimed now" and returns them. Uses FOR UPDATE
+// SKIP LOCKED so multiple controller replicas never claim the same row. Call
+// MarkVolumeDeleted after the K8s delete succeeds; on failure the claim expires
+// after volumeDeletionClaimTTL and another poll cycle retries.
+func (s *Store) ClaimVolumeDeletions(ctx context.Context, limit int) ([]PendingVolumeDeletion, error) {
+	now := time.Now().UTC()
+	staleBefore := now.Add(-volumeDeletionClaimTTL)
+	rows, err := s.db.QueryContext(ctx, `
+		UPDATE pending_volume_deletions
+		SET claimed_at = $1
+		WHERE id IN (
+			SELECT id FROM pending_volume_deletions
+			WHERE claimed_at IS NULL OR claimed_at < $2
+			ORDER BY created_at ASC
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id, namespace, resource_type, resource_name`,
+		now, staleBefore, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query volume deletions: %w", err)
+	}
+	defer rows.Close()
+
+	var dels []PendingVolumeDeletion
+	for rows.Next() {
+		var d PendingVolumeDeletion
+		if err := rows.Scan(&d.ID, &d.Namespace, &d.ResourceType, &d.ResourceName); err != nil {
+			return nil, fmt.Errorf("scan volume deletion row: %w", err)
+		}
+		dels = append(dels, d)
+	}
+	return dels, rows.Err()
+}
+
+// MarkVolumeDeleted removes a pending volume deletion record.
+func (s *Store) MarkVolumeDeleted(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM pending_volume_deletions WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("mark volume deleted: %w", err)
 	}
 	return nil
 }

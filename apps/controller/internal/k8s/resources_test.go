@@ -103,3 +103,132 @@ func TestBuildResources_CronJobSchedule(t *testing.T) {
 		t.Errorf("CronJob concurrencyPolicy = %q, want %q", got, "Forbid")
 	}
 }
+
+func TestBuildResources_PVCVolume(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Volumes = []VolumeSpec{
+		{Name: "data", Type: "pvc", MountPath: "/data", Size: "5Gi"},
+	}
+	res := BuildResources(cfg)
+
+	if len(res.PVCs) != 1 {
+		t.Fatalf("expected 1 PVC, got %d", len(res.PVCs))
+	}
+
+	pvc := res.PVCs[0]
+	meta, _ := pvc["metadata"].(map[string]interface{})
+	if got := meta["name"]; got != "my-app-data" {
+		t.Errorf("PVC name = %q, want %q", got, "my-app-data")
+	}
+	spec, _ := pvc["spec"].(map[string]interface{})
+	reqs, _ := spec["resources"].(map[string]interface{})
+	requests, _ := reqs["requests"].(map[string]interface{})
+	if got := requests["storage"]; got != "5Gi" {
+		t.Errorf("PVC storage = %q, want %q", got, "5Gi")
+	}
+	// storageClassName must NOT be set (use cluster default)
+	if _, ok := spec["storageClassName"]; ok {
+		t.Error("expected storageClassName to be absent; got it set")
+	}
+
+	// Verify volumeMount in container
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	container, _ := containers[0].(map[string]interface{})
+	mounts, _ := container["volumeMounts"].([]interface{})
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 volumeMount, got %d", len(mounts))
+	}
+	mount, _ := mounts[0].(map[string]interface{})
+	if got := mount["mountPath"]; got != "/data" {
+		t.Errorf("volumeMount mountPath = %q, want %q", got, "/data")
+	}
+}
+
+func TestBuildResources_EmptyDirVolume(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Volumes = []VolumeSpec{
+		{Name: "cache", Type: "emptyDir", MountPath: "/tmp/cache", Size: "200Mi"},
+	}
+	res := BuildResources(cfg)
+
+	if len(res.PVCs) != 0 {
+		t.Errorf("expected no PVCs for emptyDir, got %d", len(res.PVCs))
+	}
+
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	vols, _ := podSpec["volumes"].([]interface{})
+	if len(vols) != 1 {
+		t.Fatalf("expected 1 volume, got %d", len(vols))
+	}
+	vol, _ := vols[0].(map[string]interface{})
+	emptyDir, _ := vol["emptyDir"].(map[string]interface{})
+	if got := emptyDir["sizeLimit"]; got != "200Mi" {
+		t.Errorf("emptyDir sizeLimit = %q, want %q", got, "200Mi")
+	}
+}
+
+func TestBuildResources_ConfigMapVolume(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Volumes = []VolumeSpec{
+		{Name: "nginx-conf", Type: "configmap", MountPath: "/etc/nginx/nginx.conf", Content: "worker_processes 1;"},
+	}
+	res := BuildResources(cfg)
+
+	if len(res.ConfigMaps) != 1 {
+		t.Fatalf("expected 1 ConfigMap, got %d", len(res.ConfigMaps))
+	}
+
+	cm := res.ConfigMaps[0]
+	meta, _ := cm["metadata"].(map[string]interface{})
+	if got := meta["name"]; got != "my-app-nginx-conf-cfg" {
+		t.Errorf("ConfigMap name = %q, want %q", got, "my-app-nginx-conf-cfg")
+	}
+
+	// Verify subPath in volumeMount
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	container, _ := containers[0].(map[string]interface{})
+	mounts, _ := container["volumeMounts"].([]interface{})
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 volumeMount, got %d", len(mounts))
+	}
+	mount, _ := mounts[0].(map[string]interface{})
+	if got := mount["mountPath"]; got != "/etc/nginx/nginx.conf" {
+		t.Errorf("volumeMount mountPath = %q, want %q", got, "/etc/nginx/nginx.conf")
+	}
+	if got := mount["subPath"]; got != "nginx.conf" {
+		t.Errorf("volumeMount subPath = %q, want %q", got, "nginx.conf")
+	}
+}
+
+func TestBuildResources_NoVolumes(t *testing.T) {
+	cfg := baseDeployConfig()
+	res := BuildResources(cfg)
+
+	if len(res.PVCs) != 0 {
+		t.Errorf("expected no PVCs, got %d", len(res.PVCs))
+	}
+	if len(res.ConfigMaps) != 0 {
+		t.Errorf("expected no ConfigMaps, got %d", len(res.ConfigMaps))
+	}
+	// volumes and volumeMounts should be absent from pod spec
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	if _, ok := podSpec["volumes"]; ok {
+		t.Error("expected no volumes key in podSpec, got one")
+	}
+	containers, _ := podSpec["containers"].([]interface{})
+	container, _ := containers[0].(map[string]interface{})
+	if _, ok := container["volumeMounts"]; ok {
+		t.Error("expected no volumeMounts in container, got one")
+	}
+}
+

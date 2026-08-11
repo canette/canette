@@ -190,6 +190,26 @@ export interface Database {
     created_at: string
   }
 
+  app_volumes: {
+    id: string
+    app_id: string
+    name: string
+    type: string
+    mount_path: string
+    config: string
+    created_at: string
+    updated_at: string
+  }
+
+  pending_volume_deletions: {
+    id: string
+    namespace: string
+    resource_type: string
+    resource_name: string
+    created_at: string
+    claimed_at: string | null
+  }
+
   // ── DB Migration tracking ──────────────────────────
 
   schema_migrations: {

@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppSecret, AppTemplate, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -117,6 +117,17 @@ export const deployments = {
   manifest: (deploymentId: string) => request<{ manifest: string }>(`/deployments/${deploymentId}/manifest`),
   sbom: (deploymentId: string) => request<{ sbom: string }>(`/deployments/${deploymentId}/sbom`),
   redeploy: (deploymentId: string) => request<Deployment>(`/deployments/${deploymentId}/redeploy`, { method: "POST" }),
+}
+
+// Volumes
+export const volumes = {
+  list: (appId: string) => request<{ items: AppVolume[] }>(`/apps/${appId}/volumes`),
+  create: (appId: string, body: { type: VolumeType; mountPath: string; config?: VolumeConfig }) =>
+    request<AppVolume>(`/apps/${appId}/volumes`, { method: "POST", body: JSON.stringify(body) }),
+  update: (appId: string, volumeId: string, body: { config?: VolumeConfig }) =>
+    request<AppVolume>(`/apps/${appId}/volumes/${volumeId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  delete: (appId: string, volumeId: string) =>
+    request<void>(`/apps/${appId}/volumes/${volumeId}`, { method: "DELETE" }),
 }
 
 // Webhooks

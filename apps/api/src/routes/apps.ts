@@ -19,6 +19,13 @@ import {
   redeployDeployment,
   stopApp,
 } from "../services/deployments"
+import {
+  createVolume,
+  deleteVolume,
+  listVolumes,
+  updateVolume,
+} from "../services/volumes"
+import type { VolumeConfig, VolumeType } from "@canette/types"
 
 export const appsRouter = new Hono<AppEnv>()
 
@@ -187,4 +194,61 @@ appsRouter.get("/deployments/:deploymentId/logs", async (c) => {
   const logs = await getDeploymentLogs(db, c.req.param("deploymentId"), session.user.id)
   if (!logs) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
   return c.json({ items: logs })
+})
+
+// ── Volumes ───────────────────────────────────────────────────────────────────
+
+// List volumes for an app
+// GET /api/v1/apps/:id/volumes
+appsRouter.get("/apps/:id/volumes", async (c) => {
+  const session = c.get("session")
+  const app = await getAppById(db, c.req.param("id"), session.user.id)
+  if (!app) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  const volumes = await listVolumes(db, app.id)
+  return c.json({ items: volumes })
+})
+
+// Create a volume
+// POST /api/v1/apps/:id/volumes
+appsRouter.post("/apps/:id/volumes", async (c) => {
+  const session = c.get("session")
+  const body = await c.req.json<{
+    type: VolumeType
+    mountPath: string
+    config?: VolumeConfig
+  }>()
+  try {
+    const volume = await createVolume(db, c.req.param("id"), session.user.id, body)
+    return c.json(volume, 201)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// Update a volume (configmap content or emptyDir size limit)
+// PATCH /api/v1/apps/:id/volumes/:volumeId
+appsRouter.patch("/apps/:id/volumes/:volumeId", async (c) => {
+  const session = c.get("session")
+  const body = await c.req.json<{ config?: VolumeConfig }>()
+  try {
+    const volume = await updateVolume(db, c.req.param("id"), c.req.param("volumeId"), session.user.id, body)
+    return c.json(volume)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// Delete a volume
+// DELETE /api/v1/apps/:id/volumes/:volumeId
+appsRouter.delete("/apps/:id/volumes/:volumeId", async (c) => {
+  const session = c.get("session")
+  try {
+    await deleteVolume(db, c.req.param("id"), c.req.param("volumeId"), session.user.id)
+    return c.body(null, 204)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
 })
