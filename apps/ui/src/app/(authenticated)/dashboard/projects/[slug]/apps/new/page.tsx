@@ -1,21 +1,26 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { FormError } from "@/components/ui/form-error"
 import { AppFormFields, defaultAppFormValue, isValidEnvKey } from "@/components/app-form-fields"
 import type { AppFormValue } from "@/components/app-form-fields"
+import { SourceChooser } from "@/components/source-chooser"
 import * as api from "@/lib/api"
 import type { GitCredential, Project } from "@canette/types"
 
 export default function NewAppPage() {
   const { slug: projectSlug } = useParams<{ slug: string }>()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [project, setProject] = useState<Project | null>(null)
   const [credentials, setCredentials] = useState<GitCredential[]>([])
-  const [form, setForm] = useState<AppFormValue>(defaultAppFormValue)
+  const [form, setForm] = useState<AppFormValue>(() => ({
+    ...defaultAppFormValue(),
+    sourceType: searchParams.get("source") === "image" ? "image" : "git",
+  }))
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
 
@@ -51,6 +56,7 @@ export default function NewAppPage() {
               appPath: form.appPath.trim() || undefined,
               gitCredentialId: form.gitCredentialId || undefined,
               port: form.deploymentType !== "cronjob" ? port : undefined,
+              canetteConfig: form.canetteConfig.trim() || undefined,
             }
           : {
               name: form.name.trim(),
@@ -61,6 +67,7 @@ export default function NewAppPage() {
               imageUrl: form.imageUrl.trim(),
               imageTag: form.imageTag.trim() || "latest",
               port: form.deploymentType !== "cronjob" ? port : undefined,
+              canetteConfig: form.canetteConfig.trim() || undefined,
             }
 
       const res = await fetch(`/api/v1/projects/${project.id}/apps`, {
@@ -94,13 +101,17 @@ export default function NewAppPage() {
   const canSubmit = !!form.name.trim() && sourceReady && form.slugState === "available" && envKeysValid && !!project && !submitting
 
   return (
-    <div>
-      <h1 className="text-xl font-semibold mb-6">Add app</h1>
+    <div className="max-w-3xl flex flex-col gap-6">
+      <h1 className="text-xl font-semibold">Add app</h1>
+
+      <SourceChooser
+        value={form.sourceType}
+        onChange={(sourceType) => handleChange({ sourceType })}
+        hrefs={{ template: `/dashboard/projects/${projectSlug}/from-template` }}
+      />
+
       <Card>
-        <CardHeader>
-          <CardDescription>Connect a Git repository or Docker image to deploy.</CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
             {project && (
               <AppFormFields
@@ -112,6 +123,7 @@ export default function NewAppPage() {
                 parseGitUrl
                 autoSlug
                 autoFocus
+                hideSourceToggle
               />
             )}
 

@@ -28,7 +28,6 @@ function headerAction(pathname: string): HeaderAction | null {
     return {
       label: "New app",
       href: `/dashboard/projects/${slug}/apps/new`,
-      dropdownItems: [{ label: "From template", href: `/dashboard/projects/${slug}/from-template` }],
     }
   }
   return null

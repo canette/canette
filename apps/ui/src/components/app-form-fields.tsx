@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { Globe, Lock, Clock, type LucideIcon } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SegmentedControl } from "@/components/ui/segmented-control"
@@ -63,6 +64,56 @@ export function isValidEnvKey(key: string): boolean {
   return /^[A-Z_][A-Z0-9_]*$/.test(key)
 }
 
+// ── Deployment type field ───────────────────────────────────────────────────
+// Shared by the create form and app settings so the explanation text only
+// needs to be updated in one place.
+
+export type DeploymentType = "web" | "private" | "cronjob"
+
+const DEPLOYMENT_TYPE_NOTES: Partial<Record<DeploymentType, { icon: LucideIcon; text: string }>> = {
+  web: {
+    icon: Globe,
+    text: "Gets a public URL, reachable from the internet.",
+  },
+  private: {
+    icon: Lock,
+    text: "Reachable only inside the cluster — good for databases, internal APIs, or other services only used by your other apps.",
+  },
+  cronjob: {
+    icon: Clock,
+    text: "Runs as a Kubernetes CronJob on the given schedule, then exits. For batch jobs, not long-running services.",
+  },
+}
+
+export function DeploymentTypeField({
+  value,
+  onChange,
+  options,
+  lockedNotice,
+}: {
+  value: DeploymentType
+  onChange: (v: DeploymentType) => void
+  options: Array<{ value: DeploymentType; label: string; disabled?: boolean }>
+  /** Overrides the default explanation, e.g. "cannot be changed after creation". */
+  lockedNotice?: React.ReactNode
+}) {
+  const note = DEPLOYMENT_TYPE_NOTES[value]
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label>Type</Label>
+      <SegmentedControl options={options} value={value} onChange={onChange} />
+      {lockedNotice ? (
+        <p className="text-xs text-muted-foreground">{lockedNotice}</p>
+      ) : note ? (
+        <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+          <note.icon className="size-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+          <span>{note.text}</span>
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 function parseGitUrlHelper(raw: string): { gitUrl: string; branch: string; appPath: string } | null {
   const gh = raw.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+)\/tree\/([^/]+)(\/.*)?$/)
   if (gh) return { gitUrl: gh[1], branch: gh[2], appPath: gh[3] ?? "" }
@@ -86,6 +137,9 @@ type AppFormFieldsProps = {
   // When true, name changes auto-update slug (until user manually edits slug)
   autoSlug?: boolean
   autoFocus?: boolean
+  // When true, hides the in-form Source toggle — for pages where a page-level
+  // chooser (e.g. SourceChooser) already owns that decision.
+  hideSourceToggle?: boolean
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -100,6 +154,7 @@ export function AppFormFields({
   parseGitUrl = false,
   autoSlug = false,
   autoFocus = false,
+  hideSourceToggle = false,
 }: AppFormFieldsProps) {
   const slugEdited = useRef(false)
   const [urlParsed, setUrlParsed] = useState(false)
@@ -209,34 +264,27 @@ export function AppFormFields({
       </div>
 
       {/* Source type toggle */}
-      <div className="flex flex-col gap-1.5">
-        <Label>Source</Label>
-        <SegmentedControl
-          options={[{ value: "git", label: "Git" }, { value: "image", label: "Docker Image" }]}
-          value={value.sourceType}
-          onChange={(sourceType) => onChange({ sourceType })}
-        />
-      </div>
+      {!hideSourceToggle && (
+        <div className="flex flex-col gap-1.5">
+          <Label>Source</Label>
+          <SegmentedControl
+            options={[{ value: "git", label: "Git" }, { value: "image", label: "Docker Image" }]}
+            value={value.sourceType}
+            onChange={(sourceType) => onChange({ sourceType })}
+          />
+        </div>
+      )}
 
       {/* Deployment type toggle */}
-      <div className="flex flex-col gap-1.5">
-        <Label>Type</Label>
-        <SegmentedControl
-          options={[
-            { value: "web", label: "Public" },
-            { value: "private", label: "Private" },
-            { value: "cronjob", label: "Scheduled" },
-          ]}
-          value={value.deploymentType}
-          onChange={(deploymentType) => onChange({ deploymentType })}
-        />
-        {value.deploymentType === "private" && (
-          <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
-        )}
-        {value.deploymentType === "cronjob" && (
-          <p className="text-xs text-muted-foreground">Runs as a Kubernetes CronJob on the given schedule. No public URL.</p>
-        )}
-      </div>
+      <DeploymentTypeField
+        value={value.deploymentType}
+        onChange={(deploymentType) => onChange({ deploymentType })}
+        options={[
+          { value: "web", label: "Public" },
+          { value: "private", label: "Private" },
+          { value: "cronjob", label: "Scheduled" },
+        ]}
+      />
 
       {/* Cron schedule (only for scheduled type) */}
       {value.deploymentType === "cronjob" && (

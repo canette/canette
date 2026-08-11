@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CredentialSelect } from "@/components/credential-select"
+import { DeploymentTypeField } from "@/components/app-form-fields"
 import { useAppContext } from "@/lib/app-context"
 import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
@@ -800,28 +801,16 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Label>Type</Label>
-            {app.deploymentType === "cronjob" ? (
-              <SegmentedControl
-                options={[{ value: "cronjob", label: "Scheduled", disabled: true }]}
-                value="cronjob"
-                onChange={() => {}}
-              />
-            ) : (
-              <SegmentedControl
-                options={[{ value: "web", label: "Public" }, { value: "private", label: "Private" }]}
-                value={deploymentType as "web" | "private"}
-                onChange={setDeploymentType}
-              />
-            )}
-            {deploymentType === "private" && (
-              <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
-            )}
-            {app.deploymentType === "cronjob" && (
-              <p className="text-xs text-muted-foreground">Deployment type cannot be changed after creation.</p>
-            )}
-          </div>
+          <DeploymentTypeField
+            value={app.deploymentType === "cronjob" ? "cronjob" : (deploymentType as "web" | "private")}
+            onChange={setDeploymentType}
+            options={
+              app.deploymentType === "cronjob"
+                ? [{ value: "cronjob", label: "Scheduled", disabled: true }]
+                : [{ value: "web", label: "Public" }, { value: "private", label: "Private" }]
+            }
+            lockedNotice={app.deploymentType === "cronjob" ? "Deployment type cannot be changed after creation." : undefined}
+          />
 
           {deploymentType === "cronjob" && (
             <div className="flex flex-col gap-1.5">

@@ -201,11 +201,14 @@ function TeamSelector({
 const BUILDING_STATUSES = new Set(["pending_build", "building", "scanning", "pending_deployment", "deploying"])
 
 function FleetHealth({ apps }: { apps: App[] }) {
-  const total = apps.length
-  if (total === 0) return null
+  // Apps that are stopped, or have never been deployed, aren't part of the
+  // live fleet — excluding them keeps the percentage and the live/building/failed
+  // breakdown below it consistent with each other (they always sum to total).
   const live = apps.filter((a) => a.latestDeploymentStatus === "live").length
   const building = apps.filter((a) => BUILDING_STATUSES.has(a.latestDeploymentStatus ?? "")).length
   const failed = apps.filter((a) => a.latestDeploymentStatus === "failed").length
+  const total = live + building + failed
+  if (total === 0) return null
   const pct = Math.round((live / total) * 100)
 
   return (

@@ -145,14 +145,17 @@ Auth is handled by `better-auth` embedded in the API server. Supported providers
 
 ## Database schema (current)
 
-Tables: `projects`, `apps`, `deployments`, `build_logs`, `secrets`, `env_vars`, `memberships`, `git_credentials`, `webhook_secrets`, `admin_settings`, `scan_sboms`, `pending_namespace_deletions`. Better-auth owns `user`, `session`, `account`, `verification` (note: `user` not `users`).
+Tables: `teams`, `team_members`, `projects`, `apps`, `deployments`, `build_logs`, `secrets`, `env_vars`, `app_volumes`, `pending_volume_deletions`, `git_credentials`, `webhook_secrets`, `admin_settings`, `scan_sboms`, `pending_namespace_deletions`. Better-auth owns `user`, `session`, `account`, `verification` (note: `user` not `users`).
 
-`git_credentials` columns: `id`, `user_id` (FK → user, nullable for system credentials), `name`, `provider` enum(`github|gitlab|gitea|generic`), `type` enum(`pat|ssh_key|github_app`), `encrypted_value` (AES-256-GCM — stores the PAT token, SSH private key, or GitHub App private key), `created_at`. The `known_hosts` value for SSH credentials is not secret and is stored as plain text in a separate `ssh_known_hosts` column. Credentials are scoped to a user; apps reference them via `apps.git_credential_id`.
+Ownership is team-based: every user gets a personal team at registration, projects/apps hang off a team, and `git_credentials` are scoped to a team (`teamId`, nullable for system-wide credentials) rather than an individual user. `git_credentials` columns: `id`, `team_id` (FK → teams, null for system credentials), `name`, `provider` enum(`github|gitlab|gitea|generic`), `type` enum(`pat|ssh_key|github_app`), `encrypted_value` (AES-256-GCM — stores the PAT token, SSH private key, or GitHub App private key), `installation_id`/`connected_by_user_id` (github_app type only), `created_at`. The `known_hosts` value for SSH credentials is not secret and is stored as plain text in a separate `ssh_known_hosts` column. Apps reference credentials via `apps.git_credential_id`.
+
+`app_volumes` columns: `id`, `app_id`, `name`, `type` enum(`pvc|emptyDir|configmap`), `mount_path`, `config` (JSON, shape depends on `type`), `created_at`, `updated_at` — unique on `(app_id, name)` and `(app_id, mount_path)`. Async PVC/ConfigMap cleanup goes through `pending_volume_deletions` (controller claims rows via `FOR UPDATE SKIP LOCKED`).
 
 Key invariants:
 - `projects.slug` — globally unique, lowercase alphanumeric + hyphens, max 50 chars. Used as part of the K8s namespace: `can-{id[:7]}-{slug}`. Immutable after creation (changing it would orphan all K8s resources).
 - `apps.slug` — unique within the project, lowercase alphanumeric + hyphens, max 63 chars. Used as the K8s container/resource name.
 - `apps.project_id` references `projects.id` — deleting a project cascades to apps
+- `apps.deployment_type` is an enum: `web | private | cronjob` — controls what K8s resources the controller generates (see Component responsibilities → controller); `cronjob` requires `apps.schedule` (cron expression)
 - `deployments.status` is an enum: `pending_build | building | scanning | pending_deployment | deploying | live | failed | stopped`
 - `secrets.encrypted_value` is never null — empty string is stored encrypted
 - `users.role` is `admin | developer`
@@ -222,10 +225,9 @@ Fields are split between the database (set via UI) and `canette.yaml` (committed
 
 ### canette-template.yaml
 
-At a later point we might want to add an extended version of the canette.yaml file used for configuration templates.
-This would include git-repo/image and suggested app name. The name is an array with remaning values under it.
+Implemented. An extended, multi-app version of `canette.yaml` used to scaffold several apps at once — top-level `name`, optional `description`, and an `apps` array where each entry carries `name`/`slug`/`source_type`/`deployment_type` plus the same `git_*`/`image_*`/`port`/`env`/`secrets` fields as a single app (see `AppTemplate`/`TemplateApp`/`TemplateSecret` in `packages/types/src/index.ts`). Unrecognized per-app fields are preserved and serialized back into that app's `canetteConfig` YAML rather than dropped.
 
-A file like this would be loaded into a project in the UI and converted into DB configuration with the help of a wizard.
+The UI wizard lives at the project's `/from-template` route: paste or load a template file, `POST /api/v1/templates/parse` (`apps/api/src/routes/templates.ts` → `parseTemplate()` in `apps/api/src/services/templates.ts`) validates and returns one editable form per parsed app, and apps are created sequentially on confirm. It's a peer entry point to creating a single app via Git/Docker image on the "New app" page, not a separate hidden feature.
 
 ---
 
@@ -271,24 +273,17 @@ Each of these can be built and tested independently before wiring them together.
 
 ---
 
+## Shipped since the original MVP plan
+
+These were previously listed under "Planned features" below but are now fully implemented — schema, controller/API, and UI. Documented here so they aren't re-planned from scratch.
+
+- **App types / deployment type**: `apps.deployment_type` (`web | private | cronjob`, migration `000005`) controls what K8s resources the controller generates. `web` gets `Deployment` + `Service` + `HTTPRoute` + `Gateway`; `private` drops the `HTTPRoute`/`Gateway` (cluster-internal DNS only, `<app-slug>.<namespace>.svc.cluster.local`); `cronjob` creates a `CronJob` instead, using `apps.schedule` (migration `000006`) and skipping `PORT` injection. `ingress.enabled = false` in `canette.yaml` still maps onto `private` as an override. Controller branches on this throughout resource generation, reconciliation, and teardown (`apps/controller/internal/k8s/resources.go`, `internal/controller/reconcile.go`, `internal/controller/teardown.go`). UI selector: shared `DeploymentTypeField` in `apps/ui/src/components/app-form-fields.tsx`, used on both the new-app and app-settings pages.
+- **Mounted volumes**: three types (`pvc`, `emptyDir`, `configmap`) on the `app_volumes` table (migration `000009`/`000010`), full CRUD in `apps/api/src/services/volumes.ts`, controller reconciliation of the corresponding K8s volumes/mounts, and a "Volumes" section on the app settings page. Volumes are intentionally configured post-creation (settings), not during app creation.
+- **Teams**: `teams`/`team_members` tables have existed since the initial schema migration. A personal team is created per user at registration; projects/apps and `git_credentials` are team-scoped; roles are `owner`/`member`. Full UI at `/dashboard/teams/[id]` (overview, members, credentials).
+
 ## Planned features
 
-The MVP is complete. The following features are planned for future iterations, in no particular order.
-
-### App types
-
-The current `source_type` field (`git` | `image`) describes where the image comes from. A separate concept — the app's **deployment type** — controls what Kubernetes resources the controller generates. Planned types:
-
-- `web` (default): `Deployment` + `Service` + `HTTPRoute` + `Gateway` — current behaviour
-- `private`: `Deployment` + `Service` only, no `HTTPRoute`/`Gateway`. For databases, internal APIs, or any service that should only be reachable within the cluster via cluster-internal DNS (`<app-slug>.<namespace>.svc.cluster.local`)
-- `cronjob`: no `Deployment` or `Service` — creates a Kubernetes `CronJob` instead. Has an additional `schedule` field (standard cron expression) and an optional `command` override. Inherits the app's env vars, secrets, and mounted volumes. UI shows last-run status instead of a live URL.
-
-`ingress.enabled = false` in `canette.yaml` already maps to the `private` behaviour and should remain supported as an override. The deployment type is stored on the `apps` table (new `deployment_type` column) and is the primary control; `ingress.enabled` in `canette.yaml` overrides it at deploy time.
-
-What remains:
-- Migration: add `deployment_type` enum column to `apps` (`web` | `private` | `cronjob`)
-- Controller: branch resource generation on `deployment_type`; add `CronJob` reconciliation path
-- UI: deployment type selector on the app creation and settings pages; show `schedule` field when `cronjob` is selected
+The following features are still future work, in no particular order.
 
 ### Network isolation with internet egress
 
@@ -299,29 +294,6 @@ Default posture for every app namespace: deny all inter-namespace traffic and de
 - Per-app exceptions: user can add egress rules for specific external CIDRs or hostnames (e.g. an external managed database). Stored as a JSON field on the `apps` table, rendered as additional `NetworkPolicy` egress rules by the controller
 - UI: "Network" section on the app settings page to manage egress exceptions
 
-### Mounted volumes
-
-Three volume types, configured via the UI and stored in the DB:
-
-| Type | Use case |
-|------|----------|
-| `configmap` | Mount a file (e.g. a config file or certificate) at a specified path. Value stored in a Kubernetes `ConfigMap` in the app namespace. |
-| `emptyDir` | Ephemeral shared scratch space, wiped on pod restart. |
-| `persistentVolumeClaim` | Durable storage backed by a PVC. Size and `storageClass` configurable. |
-
-Controller creates/updates the corresponding Kubernetes resources and mounts them into the `Deployment` pod spec.
-
-### Teams
-
-Replace the current per-project per-user membership model with team-based ownership:
-
-- A **personal team** is automatically created for every new user at registration (name defaults to the user's name)
-- Projects and apps are owned by a team, not an individual user
-- Users are invited to teams; team membership grants access to all that team's projects and apps
-- Roles: `owner` (can manage members and delete the team) and `member` (full access to projects/apps)
-- Schema: add `teams` and `team_members` tables, move `projects.owner_id` → `projects.team_id`
-- The personal team model means no UI complexity for solo users — inviting collaborators is the only new concept
-
 ### SSO login (SAML / OIDC)
 
 Allow organisations to authenticate via their identity provider in addition to the existing GitHub OAuth / Google OAuth / magic link methods.
@@ -331,10 +303,6 @@ Allow organisations to authenticate via their identity provider in addition to t
 - Admin UI: configure IdP metadata URL / client ID / client secret
 - Just-in-time provisioning: create a canette user on first SSO login
 - Optional: enforce SSO-only login (disable magic link for non-admin accounts)
-
-### Scheduled tasks (CronJobs)
-
-Covered by the `cronjob` deployment type described under **App types** above.
 
 ### Multi-line secrets
 
