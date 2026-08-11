@@ -10,7 +10,7 @@ export function PasswordRequirements({ password }: { password: string }) {
         return (
           <li
             key={req.label}
-            className={`flex items-center gap-1.5 ${met ? "text-green-600" : "text-muted-foreground"}`}
+            className={`flex items-center gap-1.5 ${met ? "text-success-text" : "text-muted-foreground"}`}
           >
             {met ? <Check className="size-3" /> : <X className="size-3" />}
             {req.label}

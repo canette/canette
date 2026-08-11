@@ -14,8 +14,10 @@ import { Badge } from "@/components/ui/badge"
 import { ChevronDown, Eye, EyeOff, FileText, Folder, FolderX, RefreshCw, Trash2, TriangleAlert } from "lucide-react"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
+import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CredentialSelect } from "@/components/credential-select"
+import { DeploymentTypeField } from "@/components/app-form-fields"
 import { useAppContext } from "@/lib/app-context"
 import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
@@ -23,15 +25,47 @@ import type { AppSecret, AppVolume, EnvVar, GitCredential, VolumeType, WebhookCo
 
 // ── section wrapper ───────────────────────────────────────────────────────────
 
-function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+function Section({ id, title, description, children }: { id?: string; title: string; description?: string; children: React.ReactNode }) {
   return (
-    <Card>
+    <Card id={id} className="scroll-mt-6">
       <CardHeader>
         <CardTitle className="text-base">{title}</CardTitle>
         {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>
+  )
+}
+
+// ── section nav (design's settings left rail) ─────────────────────────────────
+
+const SETTINGS_SECTIONS = [
+  { id: "general", label: "General" },
+  { id: "environment", label: "Environment" },
+  { id: "volumes", label: "Volumes" },
+  { id: "webhook", label: "Webhook" },
+  { id: "advanced", label: "Advanced" },
+  { id: "danger", label: "Danger zone" },
+]
+
+function SectionNav() {
+  return (
+    <nav className="hidden lg:flex flex-col gap-px w-44 shrink-0 sticky top-6 self-start">
+      {SETTINGS_SECTIONS.map((s) => (
+        <a
+          key={s.id}
+          href={`#${s.id}`}
+          className={cn(
+            "px-2.5 py-1.5 rounded-md text-[13px] transition-colors",
+            s.id === "danger"
+              ? "text-destructive-text hover:bg-destructive-soft"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted",
+          )}
+        >
+          {s.label}
+        </a>
+      ))}
+    </nav>
   )
 }
 
@@ -175,7 +209,7 @@ function EnvSection({ appId }: { appId: string }) {
                 onChange={(e) => setAddValue(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") handleAdd() }} />
               <Button type="button" size="sm" variant={addIsSecret ? "secondary" : "outline"}
-                className={cn("h-8 shrink-0 text-xs", addIsSecret && "border border-amber-500/50 text-amber-600")}
+                className={cn("h-8 shrink-0 text-xs", addIsSecret && "bg-warning-soft text-warning-text ring-1 ring-inset ring-warning-line")}
                 onClick={() => setAddIsSecret((v) => !v)}>Secret</Button>
               <Button type="button" size="sm" className="h-8 shrink-0"
                 disabled={!addKey.trim() || !addValue.trim() || adding} onClick={handleAdd}>
@@ -292,7 +326,7 @@ function VolumeSection({ appId }: { appId: string }) {
         Trigger a redeploy after changes to see them in your running app.
       </p>
       {hasPvc && (
-        <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
+        <div className="flex items-center gap-2 text-sm text-warning-text bg-warning-soft ring-1 ring-inset ring-warning-line rounded-md px-3 py-2">
           <TriangleAlert size={14} className="shrink-0" />
           <span>A PVC volume is attached. Replicas are locked to 1 (EBS volumes are ReadWriteOnce).</span>
         </div>
@@ -561,7 +595,7 @@ function WebhookSection({ appId, sourceType, gitBranch, onWebhookChange }: {
           {!config.autoRegistered && !config.verifiedAt && (
             <div className="rounded-md border border-border bg-muted/30 p-3 flex flex-col gap-2">
               <div className="flex items-center gap-2">
-                <TriangleAlert size={14} className="text-yellow-400 shrink-0" />
+                <TriangleAlert size={14} className="text-warning-text shrink-0" />
                 <p className="text-sm font-medium">Manual setup required</p>
               </div>
               <p className="text-xs text-muted-foreground">Add the URL below to your repository settings.</p>
@@ -603,7 +637,7 @@ function WebhookSection({ appId, sourceType, gitBranch, onWebhookChange }: {
               ) : (
                 <div className="rounded-md border border-border bg-muted/30 p-3 flex flex-col gap-1.5">
                   <div className="flex items-center gap-2">
-                    <TriangleAlert size={14} className="text-yellow-400 shrink-0" />
+                    <TriangleAlert size={14} className="text-warning-text shrink-0" />
                     <p className="text-sm font-medium">Action required</p>
                   </div>
                   <p className="text-sm text-muted-foreground">Copy the URL and secret below and add them to your repository settings.</p>
@@ -617,9 +651,9 @@ function WebhookSection({ appId, sourceType, gitBranch, onWebhookChange }: {
                 </div>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-muted-foreground flex items-center gap-1.5">Webhook secret <span className="text-yellow-400 font-medium">— copy now, shown once</span></Label>
+                <Label className="text-xs text-muted-foreground flex items-center gap-1.5">Webhook secret <span className="text-warning-text font-medium">— copy now, shown once</span></Label>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded-md border border-yellow-500/30 bg-yellow-500/5 px-3 py-2 text-xs font-mono break-all">{createResult.webhookSecret}</code>
+                  <code className="flex-1 rounded-md border bg-warning-soft ring-1 ring-inset ring-warning-line border-transparent px-3 py-2 text-xs font-mono break-all">{createResult.webhookSecret}</code>
                   <Button size="sm" variant="outline" className="shrink-0" onClick={() => copySecret(createResult.webhookSecret)}>{secretCopied ? "Copied!" : "Copy"}</Button>
                 </div>
               </div>
@@ -747,9 +781,11 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex gap-6 items-start">
+      <SectionNav />
+      <div className="flex-1 min-w-0 flex flex-col gap-6">
       {/* General */}
-      <Section title="General">
+      <Section id="general" title="General">
         <form onSubmit={handleSave} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="name">Name</Label>
@@ -758,47 +794,23 @@ export default function SettingsPage() {
 
           <div className="flex flex-col gap-1.5">
             <Label>Source</Label>
-            <div className="flex rounded-md border border-border overflow-hidden w-fit">
-              <button type="button" onClick={() => setSourceType("git")}
-                className={cn("px-4 py-1.5 text-sm transition-colors",
-                  sourceType === "git" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
-                Git
-              </button>
-              <button type="button" onClick={() => setSourceType("image")}
-                className={cn("px-4 py-1.5 text-sm transition-colors border-l border-border",
-                  sourceType === "image" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
-                Docker Image
-              </button>
-            </div>
+            <SegmentedControl
+              options={[{ value: "git", label: "Git" }, { value: "image", label: "Docker Image" }]}
+              value={sourceType}
+              onChange={setSourceType}
+            />
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Label>Type</Label>
-            {app.deploymentType === "cronjob" ? (
-              <div className="flex rounded-md border border-border overflow-hidden w-fit opacity-60 cursor-not-allowed select-none">
-                <span className="px-4 py-1.5 text-sm bg-foreground text-background font-medium">Scheduled</span>
-              </div>
-            ) : (
-              <div className="flex rounded-md border border-border overflow-hidden w-fit">
-                <button type="button" onClick={() => setDeploymentType("web")}
-                  className={cn("px-4 py-1.5 text-sm transition-colors",
-                    deploymentType === "web" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
-                  Public
-                </button>
-                <button type="button" onClick={() => setDeploymentType("private")}
-                  className={cn("px-4 py-1.5 text-sm transition-colors border-l border-border",
-                    deploymentType === "private" ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
-                  Private
-                </button>
-              </div>
-            )}
-            {deploymentType === "private" && (
-              <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
-            )}
-            {app.deploymentType === "cronjob" && (
-              <p className="text-xs text-muted-foreground">Deployment type cannot be changed after creation.</p>
-            )}
-          </div>
+          <DeploymentTypeField
+            value={app.deploymentType === "cronjob" ? "cronjob" : (deploymentType as "web" | "private")}
+            onChange={setDeploymentType}
+            options={
+              app.deploymentType === "cronjob"
+                ? [{ value: "cronjob", label: "Scheduled", disabled: true }]
+                : [{ value: "web", label: "Public" }, { value: "private", label: "Private" }]
+            }
+            lockedNotice={app.deploymentType === "cronjob" ? "Deployment type cannot be changed after creation." : undefined}
+          />
 
           {deploymentType === "cronjob" && (
             <div className="flex flex-col gap-1.5">
@@ -855,7 +867,7 @@ export default function SettingsPage() {
           )}
 
           {saveError && <p className="text-sm text-destructive">{saveError}</p>}
-          {savedMsg && <p className="text-sm text-amber-600">{savedMsg}</p>}
+          {savedMsg && <p className="text-sm text-warning-text">{savedMsg}</p>}
           <div className="flex justify-end">
             <Button type="submit" size="sm" disabled={!isDirty || saving}>{saving ? "Saving…" : "Save changes"}</Button>
           </div>
@@ -863,23 +875,23 @@ export default function SettingsPage() {
       </Section>
 
       {/* Environment & Secrets */}
-      <Section title="Environment & Secrets" description="Variables are available in the runtime environment.">
+      <Section id="environment" title="Environment & Secrets" description="Variables are available in the runtime environment.">
         <EnvSection appId={app.id} />
       </Section>
 
       {/* Volumes */}
-      <Section title="Volumes" description="Mount persistent storage, ephemeral scratch space, or configuration files into the container.">
+      <Section id="volumes" title="Volumes" description="Mount persistent storage, ephemeral scratch space, or configuration files into the container.">
         <VolumeSection appId={app.id} />
       </Section>
 
       {/* Webhooks */}
-      <Section title="Webhook" description="Trigger deployments automatically on git push.">
+      <Section id="webhook" title="Webhook" description="Trigger deployments automatically on git push.">
         <WebhookSection appId={app.id} sourceType={app.sourceType} gitBranch={app.gitBranch || undefined}
           onWebhookChange={setHasWebhook} />
       </Section>
 
       {/* Advanced config */}
-      <Section title="Advanced Configuration">
+      <Section id="advanced" title="Advanced Configuration">
         <div className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
             Inline <code className="text-xs">canette.yaml</code> configuration. Applied at deploy time as the base layer — if your repo contains a <code className="text-xs">canette.yaml</code>, its fields take precedence.
@@ -889,7 +901,7 @@ export default function SettingsPage() {
             placeholder={`resources:\n  requests:\n    cpu: "100m"\n    memory: "128Mi"\n  limits:\n    cpu: "500m"\n    memory: "512Mi"\nreplicas: 1`}
             spellCheck={false} />
           {configError && <p className="text-sm text-destructive">{configError}</p>}
-          {configSaved && <p className="text-sm text-green-600">Saved.</p>}
+          {configSaved && <p className="text-sm text-success-text">Saved.</p>}
           <div className="flex justify-end">
             <Button size="sm" onClick={handleSaveConfig} disabled={savingConfig}>{savingConfig ? "Saving…" : "Save config"}</Button>
           </div>
@@ -897,13 +909,13 @@ export default function SettingsPage() {
       </Section>
 
       {/* Danger zone */}
-      <Collapsible>
-        <Card className="border-destructive/30">
+      <Collapsible id="danger" className="scroll-mt-6">
+        <Card className="border-transparent ring-1 ring-inset ring-destructive-line">
           <CollapsibleTrigger asChild>
             <CardHeader className="cursor-pointer select-none hover:bg-muted/30 transition-colors rounded-lg [&[data-state=open]]:rounded-b-none">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
-                <ChevronDown size={15} className={cn("text-destructive/70 transition-transform [[data-state=open]_&]:rotate-180")} />
+                <CardTitle className="text-base text-destructive-text">Danger Zone</CardTitle>
+                <ChevronDown size={15} className={cn("text-destructive-text/70 transition-transform [[data-state=open]_&]:rotate-180")} />
               </div>
             </CardHeader>
           </CollapsibleTrigger>
@@ -930,6 +942,7 @@ export default function SettingsPage() {
           </CollapsibleContent>
         </Card>
       </Collapsible>
+      </div>
     </div>
   )
 }

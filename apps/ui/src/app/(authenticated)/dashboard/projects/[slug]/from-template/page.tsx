@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardDescription } from "@/components/ui/
 import { FormError } from "@/components/ui/form-error"
 import { AppFormFields, toSlug, isValidEnvKey } from "@/components/app-form-fields"
 import type { AppFormValue } from "@/components/app-form-fields"
+import { SourceChooser } from "@/components/source-chooser"
 import * as api from "@/lib/api"
 import { resolveTemplateVars, buildSlugMap } from "@/lib/template"
 import type { AppTemplate, GitCredential, Project } from "@canette/types"
@@ -218,9 +219,16 @@ export default function FromTemplatePage() {
 
   if (!loaded) {
     return (
-      <div>
-        <h1 className="text-xl font-semibold mb-6">From template</h1>
-        <Card className="max-w-2xl">
+      <div className="max-w-3xl flex flex-col gap-6">
+        <h1 className="text-xl font-semibold">From template</h1>
+        <SourceChooser
+          value="template"
+          hrefs={{
+            git: `/dashboard/projects/${projectSlug}/apps/new`,
+            image: `/dashboard/projects/${projectSlug}/apps/new?source=image`,
+          }}
+        />
+        <Card>
           <CardHeader>
             <CardDescription>
               Load a <code className="text-xs">canette-template.yaml</code> file to create one or more apps at once.
@@ -295,7 +303,7 @@ export default function FromTemplatePage() {
                     {status === "creating" && (
                       <span className="text-muted-foreground animate-pulse">Creating…</span>
                     )}
-                    {status === "done" && <span className="text-green-500">Created</span>}
+                    {status === "done" && <span className="text-success-text">Created</span>}
                     {status === "error" && <span className="text-destructive">Failed</span>}
                   </div>
                 </div>

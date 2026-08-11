@@ -101,7 +101,7 @@ export default function NewProjectPage() {
   const slugHint = {
     idle: null,
     checking: <span className="text-muted-foreground">Checking…</span>,
-    available: <span className="text-green-500">Available</span>,
+    available: <span className="text-success-text">Available</span>,
     taken: <span className="text-destructive">Already taken</span>,
     invalid: <span className="text-destructive">Lowercase letters, numbers and hyphens only; cannot start or end with a hyphen</span>,
   }[slugState]
@@ -147,7 +147,7 @@ export default function NewProjectPage() {
                 onChange={(e) => { setSlug(e.target.value); setSlugEdited(true) }}
                 className={cn(
                   slugState === "taken" || slugState === "invalid" ? "border-destructive" : "",
-                  slugState === "available" ? "border-green-500" : "",
+                  slugState === "available" ? "border-success" : "",
                 )} />
               <p className="text-xs min-h-[1rem]">{slugHint}</p>
             </div>

@@ -1,8 +1,10 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { Globe, Lock, Clock, type LucideIcon } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
@@ -62,6 +64,56 @@ export function isValidEnvKey(key: string): boolean {
   return /^[A-Z_][A-Z0-9_]*$/.test(key)
 }
 
+// ── Deployment type field ───────────────────────────────────────────────────
+// Shared by the create form and app settings so the explanation text only
+// needs to be updated in one place.
+
+export type DeploymentType = "web" | "private" | "cronjob"
+
+const DEPLOYMENT_TYPE_NOTES: Partial<Record<DeploymentType, { icon: LucideIcon; text: string }>> = {
+  web: {
+    icon: Globe,
+    text: "Gets a public URL, reachable from the internet.",
+  },
+  private: {
+    icon: Lock,
+    text: "Reachable only inside the cluster — good for databases, internal APIs, or other services only used by your other apps.",
+  },
+  cronjob: {
+    icon: Clock,
+    text: "Runs as a Kubernetes CronJob on the given schedule, then exits. For batch jobs, not long-running services.",
+  },
+}
+
+export function DeploymentTypeField({
+  value,
+  onChange,
+  options,
+  lockedNotice,
+}: {
+  value: DeploymentType
+  onChange: (v: DeploymentType) => void
+  options: Array<{ value: DeploymentType; label: string; disabled?: boolean }>
+  /** Overrides the default explanation, e.g. "cannot be changed after creation". */
+  lockedNotice?: React.ReactNode
+}) {
+  const note = DEPLOYMENT_TYPE_NOTES[value]
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label>Type</Label>
+      <SegmentedControl options={options} value={value} onChange={onChange} />
+      {lockedNotice ? (
+        <p className="text-xs text-muted-foreground">{lockedNotice}</p>
+      ) : note ? (
+        <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+          <note.icon className="size-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+          <span>{note.text}</span>
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 function parseGitUrlHelper(raw: string): { gitUrl: string; branch: string; appPath: string } | null {
   const gh = raw.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+)\/tree\/([^/]+)(\/.*)?$/)
   if (gh) return { gitUrl: gh[1], branch: gh[2], appPath: gh[3] ?? "" }
@@ -85,6 +137,9 @@ type AppFormFieldsProps = {
   // When true, name changes auto-update slug (until user manually edits slug)
   autoSlug?: boolean
   autoFocus?: boolean
+  // When true, hides the in-form Source toggle — for pages where a page-level
+  // chooser (e.g. SourceChooser) already owns that decision.
+  hideSourceToggle?: boolean
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -99,6 +154,7 @@ export function AppFormFields({
   parseGitUrl = false,
   autoSlug = false,
   autoFocus = false,
+  hideSourceToggle = false,
 }: AppFormFieldsProps) {
   const slugEdited = useRef(false)
   const [urlParsed, setUrlParsed] = useState(false)
@@ -167,7 +223,7 @@ export function AppFormFields({
   const slugHint = {
     idle: null,
     checking: <span className="text-muted-foreground">Checking…</span>,
-    available: <span className="text-green-500">Available</span>,
+    available: <span className="text-success-text">Available</span>,
     taken: <span className="text-destructive">Already taken in this project</span>,
     invalid: <span className="text-destructive">Lowercase letters, numbers and hyphens only; cannot start or end with a hyphen</span>,
   }[value.slugState]
@@ -201,91 +257,34 @@ export function AppFormFields({
           onChange={(e) => handleSlugChange(e.target.value)}
           className={cn(
             value.slugState === "taken" || value.slugState === "invalid" ? "border-destructive" : "",
-            value.slugState === "available" ? "border-green-500" : "",
+            value.slugState === "available" ? "border-success" : "",
           )}
         />
         <p className="text-xs min-h-[1rem]">{slugHint}</p>
       </div>
 
       {/* Source type toggle */}
-      <div className="flex flex-col gap-1.5">
-        <Label>Source</Label>
-        <div className="flex rounded-md border border-border overflow-hidden w-fit">
-          <button
-            type="button"
-            onClick={() => onChange({ sourceType: "git" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors",
-              value.sourceType === "git"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Git
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange({ sourceType: "image" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors border-l border-border",
-              value.sourceType === "image"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Docker Image
-          </button>
+      {!hideSourceToggle && (
+        <div className="flex flex-col gap-1.5">
+          <Label>Source</Label>
+          <SegmentedControl
+            options={[{ value: "git", label: "Git" }, { value: "image", label: "Docker Image" }]}
+            value={value.sourceType}
+            onChange={(sourceType) => onChange({ sourceType })}
+          />
         </div>
-      </div>
+      )}
 
       {/* Deployment type toggle */}
-      <div className="flex flex-col gap-1.5">
-        <Label>Type</Label>
-        <div className="flex rounded-md border border-border overflow-hidden w-fit">
-          <button
-            type="button"
-            onClick={() => onChange({ deploymentType: "web" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors",
-              value.deploymentType === "web"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Public
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange({ deploymentType: "private" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors border-l border-border",
-              value.deploymentType === "private"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Private
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange({ deploymentType: "cronjob" })}
-            className={cn(
-              "px-4 py-1.5 text-sm transition-colors border-l border-border",
-              value.deploymentType === "cronjob"
-                ? "bg-foreground text-background font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            Scheduled
-          </button>
-        </div>
-        {value.deploymentType === "private" && (
-          <p className="text-xs text-muted-foreground">No public URL. Reachable inside the cluster only.</p>
-        )}
-        {value.deploymentType === "cronjob" && (
-          <p className="text-xs text-muted-foreground">Runs as a Kubernetes CronJob on the given schedule. No public URL.</p>
-        )}
-      </div>
+      <DeploymentTypeField
+        value={value.deploymentType}
+        onChange={(deploymentType) => onChange({ deploymentType })}
+        options={[
+          { value: "web", label: "Public" },
+          { value: "private", label: "Private" },
+          { value: "cronjob", label: "Scheduled" },
+        ]}
+      />
 
       {/* Cron schedule (only for scheduled type) */}
       {value.deploymentType === "cronjob" && (
@@ -471,7 +470,7 @@ export function AppFormFields({
                       const rows = value.envRows.map((r, i) => i === ri ? { ...r, isSecret: !r.isSecret } : r)
                       onChange({ envRows: rows })
                     }}
-                    className={cn("h-8 shrink-0 text-xs", row.isSecret && "border border-amber-500/50 text-amber-600")}
+                    className={cn("h-8 shrink-0 text-xs", row.isSecret && "bg-warning-soft text-warning-text ring-1 ring-inset ring-warning-line")}
                   >
                     Secret
                   </Button>

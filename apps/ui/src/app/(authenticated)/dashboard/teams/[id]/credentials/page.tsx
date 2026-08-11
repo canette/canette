@@ -495,7 +495,7 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
                 {connectingGithubApp && <p className="text-sm text-muted-foreground">Loading…</p>}
                 {!connectingGithubApp && (
                   <>
-                    <p className="text-xs text-amber-600 dark:text-amber-500 border-l-2 border-amber-400 pl-2 leading-relaxed">
+                    <p className="text-xs text-warning-text border-l-2 border-warning pl-2 leading-relaxed">
                       GitHub App permissions apply to all teams — you cannot restrict access per team. For fine-grained per-team access control, use fine-grained PAT tokens instead.
                     </p>
                     {linkableInstallations.length > 0 && (
