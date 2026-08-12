@@ -62,6 +62,11 @@ func run(log *zap.Logger) error {
 		return fmt.Errorf("create k8s client: %w", err)
 	}
 
+	metricsClient, err := newMetricsRESTClient(restCfg)
+	if err != nil {
+		return fmt.Errorf("create metrics.k8s.io client: %w", err)
+	}
+
 	secret := os.Getenv("LOGSTREAMER_SECRET")
 	if secret == "" {
 		return fmt.Errorf("LOGSTREAMER_SECRET environment variable is required")
@@ -70,7 +75,7 @@ func run(log *zap.Logger) error {
 	addr := env.EnvOr("ADDR", ":8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newMux(log, k8sClient, secret),
+		Handler:           newMux(log, k8sClient, metricsClient, secret),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -88,12 +93,13 @@ func run(log *zap.Logger) error {
 	return nil
 }
 
-func newMux(log *zap.Logger, client kubernetes.Interface, secret string) http.Handler {
+func newMux(log *zap.Logger, client kubernetes.Interface, metricsClient rest.Interface, secret string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /stream", requireSecret(secret, streamHandler(log, client)))
+	mux.Handle("GET /metrics/usage", requireSecret(secret, metricsUsageHandler(log, client, metricsClient)))
 	return mux
 }
 

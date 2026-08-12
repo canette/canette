@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppMetricsUsage, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -148,6 +148,11 @@ export const webhooks = {
 export const appLogs = {
   stream: (appId: string) =>
     new EventSource(`${base}/apps/${appId}/logs/stream`, { withCredentials: true }),
+}
+
+// App runtime metrics
+export const appMetrics = {
+  usage: (appId: string) => request<AppMetricsUsage>(`/apps/${appId}/metrics/usage`),
 }
 
 // Current user

@@ -134,10 +134,10 @@ Auth is handled by `better-auth` embedded in the API server. Supported providers
 - Handles build log streaming (tails pod logs, writes to database)
 
 ### `apps/logstreamer` (Go)
-- Streams live pod logs to the browser over SSE
-- The API proxies `GET /api/v1/apps/:id/logs/stream` to it — the logstreamer is never exposed directly
-- On connection: polls for a `Running` pod with label `canette.dev/app=<appSlug>`, opens a following log stream, emits `event: log` SSE frames and `event: ping` keep-alives every 3 s
-- Logs are never stored — pure live stream, no database involvement
+- Streams live pod logs to the browser over SSE, and serves basic per-app runtime metrics (CPU/memory usage, pod ready/restart counts) — both are internal-only, pod-level reads proxied by the API, so they share one service, image, secret, and NetworkPolicy
+- The API proxies `GET /api/v1/apps/:id/logs/stream` and `GET /api/v1/apps/:id/metrics/usage` to it — the logstreamer is never exposed directly
+- Logs: on connection, polls for a `Running` pod with label `canette.dev/app=<appSlug>`, opens a following log stream, emits `event: log` SSE frames and `event: ping` keep-alives every 3 s. Logs are never stored — pure live stream, no database involvement
+- Metrics: `GET /metrics/usage` reads pod health (ready/restart count) and declared resources from the core Pods API (always available), and current CPU/memory usage from `metrics.k8s.io` (metrics-server) when installed — degrades gracefully (`usageAvailable: false`) when it isn't. No Prometheus or time-series history yet; see [canette/canette#168](https://github.com/canette/canette/issues/168) for the staged rollout (bundled/external Prometheus, Traefik traffic adapter)
 - Authenticated via a shared secret (`LOGSTREAMER_SECRET`) passed as `Authorization: Bearer` — must match the value configured in the API
 - Restricted to in-cluster traffic only via NetworkPolicy (only the API pod may reach port 8080)
 

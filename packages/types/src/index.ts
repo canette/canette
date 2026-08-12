@@ -222,6 +222,24 @@ export interface ResourceDefaults {
   memoryLimit: string
 }
 
+export interface AppPodMetrics {
+  name: string
+  ready: boolean
+  restarts: number
+  cpuRequestMilli?: number
+  cpuLimitMilli?: number
+  memoryRequestBytes?: number
+  memoryLimitBytes?: number
+  cpuUsageMilli?: number
+  memoryUsageBytes?: number
+}
+
+export interface AppMetricsUsage {
+  usageAvailable: boolean
+  usageUnavailableReason?: string
+  pods: AppPodMetrics[]
+}
+
 export interface SignupSettings {
   mode: "open" | "disabled" | "invite_code"
   magicLinkEnabled: boolean

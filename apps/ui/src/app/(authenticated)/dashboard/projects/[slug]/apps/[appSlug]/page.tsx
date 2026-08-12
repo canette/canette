@@ -13,6 +13,7 @@ import { ExternalLink, Info, ShieldAlert, ShieldCheck } from "lucide-react"
 import { StatusBadge, StatusDot, StatusLabel, formatStatus } from "@/components/ui/status-badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { ManifestDialog } from "@/components/manifest-dialog"
+import { AppMetricsSummary } from "@/components/app-metrics-summary"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
 import { shortSha, timeAgo, formatHistoricalStatus } from "@/lib/deployment-format"
@@ -159,6 +160,8 @@ export default function AppOverviewPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <AppMetricsSummary appId={app.id} />
+
       {/* Status card */}
       <Card>
         <CardHeader>
