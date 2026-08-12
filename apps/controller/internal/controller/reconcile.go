@@ -97,7 +97,7 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 			}
 		}
 	}
-	deployCfg := c.buildDeployConfig(appCfg, secretData, imagePullSecretName, imagePullSecretData, skipHTTPRoute)
+	deployCfg := c.buildDeployConfig(appCfg, secretData, imagePullSecretName, imagePullSecretData, skipHTTPRoute, dep.ID)
 	res := k8sres.BuildResources(deployCfg)
 
 	// 5. Render and store manifest (before applying — preserves intent even if apply fails).
