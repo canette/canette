@@ -10,6 +10,7 @@ import { appsRouter } from "./routes/apps"
 import { envRouter } from "./routes/env"
 import { appLogsRouter } from "./routes/app-logs"
 import { appLogsStreamRouter } from "./routes/app-logs-stream"
+import { appMetricsRouter } from "./routes/app-metrics"
 import { webhooksRouter } from "./routes/webhooks"
 import { webhookReceiverRouter } from "./routes/webhook-receiver"
 import { adminRouter } from "./routes/admin"
@@ -95,6 +96,7 @@ export function createApp() {
     api.route("/", envRouter)
     api.route("/", appLogsRouter)
     api.route("/", appLogsStreamRouter)
+    api.route("/", appMetricsRouter)
     api.route("/", webhooksRouter)
     api.route("/admin", adminRouter)
     api.route("/users", usersRouter)

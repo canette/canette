@@ -95,6 +95,13 @@ the base for interactive components per CLAUDE.md.
 
 ## Not yet implemented (mockup-only, needs backend)
 
-Metrics tab (traffic chart, stat tiles), repo auto-detection preview in the
-new-app flow, build-pipeline phase panel, ⌘K search. Don't build these as
-UI-only stubs.
+Metrics traffic chart (needs a Prometheus-compatible source — see
+[canette/canette#168](https://github.com/canette/canette/issues/168)), repo
+auto-detection preview in the new-app flow, build-pipeline phase panel, ⌘K
+search. Don't build these as UI-only stubs.
+
+Basic metrics (CPU/memory usage, pod health) are implemented as a stat-tile
+row at the top of the app Overview tab — `AppMetricsSummary`
+(`src/components/app-metrics-summary.tsx`) + `StatTile`
+(`src/components/ui/stat-tile.tsx`). It renders nothing when the app has no
+running/pending pod.

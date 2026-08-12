@@ -13,3 +13,8 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # Pod metrics — required for CPU/memory usage stat tiles (Metrics tab). Absent
+  # metrics-server on the cluster just means usage data degrades gracefully.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
