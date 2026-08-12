@@ -208,6 +208,80 @@ func TestBuildResources_ConfigMapVolume(t *testing.T) {
 	}
 }
 
+func TestBuildResources_VersionLabelExcludedFromSelectors(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.CommitSha = "abcdef1234567890"
+	res := BuildResources(cfg)
+
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	selector, _ := depSpec["selector"].(map[string]interface{})
+	matchLabels, _ := selector["matchLabels"].(map[string]interface{})
+	if _, ok := matchLabels["app.kubernetes.io/version"]; ok {
+		t.Error("expected Deployment selector.matchLabels to omit app.kubernetes.io/version, got it set")
+	}
+
+	svcSpec, _ := res.Service["spec"].(map[string]interface{})
+	svcSelector, _ := svcSpec["selector"].(map[string]interface{})
+	if _, ok := svcSelector["app.kubernetes.io/version"]; ok {
+		t.Error("expected Service spec.selector to omit app.kubernetes.io/version, got it set")
+	}
+}
+
+func TestBuildResources_VersionLabelOnPodTemplate(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.CommitSha = "abcdef1234567890"
+	res := BuildResources(cfg)
+
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	tmplMeta, _ := tmpl["metadata"].(map[string]interface{})
+	tmplLabels, _ := tmplMeta["labels"].(map[string]interface{})
+	if got := tmplLabels["app.kubernetes.io/version"]; got != "abcdef1" {
+		t.Errorf("pod template app.kubernetes.io/version = %q, want %q", got, "abcdef1")
+	}
+}
+
+func TestBuildResources_VersionLabelOmittedWithoutCommitSha(t *testing.T) {
+	cfg := baseDeployConfig()
+	res := BuildResources(cfg)
+
+	depMeta, _ := res.Deployment["metadata"].(map[string]interface{})
+	depLabels, _ := depMeta["labels"].(map[string]interface{})
+	if _, ok := depLabels["app.kubernetes.io/version"]; ok {
+		t.Error("expected app.kubernetes.io/version to be absent when CommitSha is empty, got it set")
+	}
+}
+
+func TestBuildResources_DeploymentIDAnnotation(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.DeploymentID = "dep-123"
+	res := BuildResources(cfg)
+
+	depMeta, _ := res.Deployment["metadata"].(map[string]interface{})
+	depAnnotations, _ := depMeta["annotations"].(map[string]interface{})
+	if got := depAnnotations["canette.dev/deployment-id"]; got != "dep-123" {
+		t.Errorf("Deployment annotation canette.dev/deployment-id = %q, want %q", got, "dep-123")
+	}
+
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	tmplMeta, _ := tmpl["metadata"].(map[string]interface{})
+	tmplAnnotations, _ := tmplMeta["annotations"].(map[string]interface{})
+	if got := tmplAnnotations["canette.dev/deployment-id"]; got != "dep-123" {
+		t.Errorf("pod template annotation canette.dev/deployment-id = %q, want %q", got, "dep-123")
+	}
+}
+
+func TestBuildResources_NoAnnotationsWithoutDeploymentID(t *testing.T) {
+	cfg := baseDeployConfig()
+	res := BuildResources(cfg)
+
+	depMeta, _ := res.Deployment["metadata"].(map[string]interface{})
+	if _, ok := depMeta["annotations"]; ok {
+		t.Error("expected Deployment metadata.annotations to be absent when DeploymentID is empty, got it set")
+	}
+}
+
 func TestBuildResources_NoVolumes(t *testing.T) {
 	cfg := baseDeployConfig()
 	res := BuildResources(cfg)

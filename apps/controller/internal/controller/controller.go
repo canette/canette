@@ -163,7 +163,7 @@ func (c *Controller) processPending(ctx context.Context) error {
 }
 
 // buildDeployConfig translates store+config into k8s.DeployConfig.
-func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[string][]byte, imagePullSecretName string, imagePullSecretData []byte, skipHTTPRoute bool) k8sres.DeployConfig {
+func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[string][]byte, imagePullSecretName string, imagePullSecretData []byte, skipHTTPRoute bool, deploymentID string) k8sres.DeployConfig {
 	var imageRef string
 	if cfg.SourceType == "image" {
 		// image_digest holds the full external image reference (e.g. "nginx:latest")
@@ -214,5 +214,7 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		ImagePullSecretName: imagePullSecretName,
 		ImagePullSecretData: imagePullSecretData,
 		Volumes:             volumes,
+		CommitSha:           cfg.CommitSha,
+		DeploymentID:        deploymentID,
 	}
 }

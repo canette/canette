@@ -6,13 +6,12 @@ import { useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
+import { Dialog } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
-import { Loader2, ShieldAlert, ShieldCheck, X } from "lucide-react"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Loader2, ShieldAlert, ShieldCheck } from "lucide-react"
 import { StatusDot, StatusLabel } from "@/components/ui/status-badge"
-import { Terminal } from "@/components/ui/terminal"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { ManifestDialog } from "@/components/manifest-dialog"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
 import { shortSha, timeAgo, formatHistoricalStatus } from "@/lib/deployment-format"
@@ -41,33 +40,6 @@ function ScanBadge({ deployment }: { deployment: Deployment }) {
   }
 
   return <Badge variant="live" className="gap-1"><ShieldCheck className="h-3 w-3" />Scan clean</Badge>
-}
-
-function ManifestDialog({ deploymentId, onClose }: { deploymentId: string; onClose: () => void }) {
-  const [manifest, setManifest] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    api.deployments.manifest(deploymentId).then((r) => setManifest(r.manifest)).catch(() => setManifest(null)).finally(() => setLoading(false))
-  }, [deploymentId])
-
-  return (
-    <DialogContent className="max-h-[80vh] flex flex-col max-w-3xl" aria-describedby={undefined}>
-      <DialogHeader className="flex-row items-center justify-between">
-        <DialogTitle className="text-sm">Applied manifest</DialogTitle>
-        <DialogClose asChild>
-          <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7"><X size={14} /></Button>
-        </DialogClose>
-      </DialogHeader>
-      <div className="flex-1 overflow-y-auto px-6 pb-6">
-        <Terminal className="min-h-full">
-          {loading ? <Skeleton className="h-4 w-32" />
-            : manifest === null ? <span className="text-[#777b84]">Manifest not available.</span>
-              : <pre className="whitespace-pre-wrap">{manifest}</pre>}
-        </Terminal>
-      </div>
-    </DialogContent>
-  )
 }
 
 export default function DeploymentsPage() {

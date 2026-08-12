@@ -60,6 +60,39 @@ type DeployConfig struct {
 	ImagePullSecretName string // Name of the imagePullSecret to reference in pod spec
 	ImagePullSecretData []byte // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
 	Volumes             []VolumeSpec
+	CommitSha           string // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
+	DeploymentID        string // deployments.id row that triggered this apply, surfaced as an annotation
+}
+
+// shortSHA returns the first 7 characters of a commit SHA for display as a version label,
+// or the input unchanged if shorter, or "" if empty.
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
+// resourceMeta builds a top-level metadata block, omitting the annotations key when nil.
+func resourceMeta(name, namespace string, labels, annotations map[string]interface{}) map[string]interface{} {
+	meta := map[string]interface{}{
+		"name":      name,
+		"namespace": namespace,
+		"labels":    labels,
+	}
+	if annotations != nil {
+		meta["annotations"] = annotations
+	}
+	return meta
+}
+
+// templateMeta builds a pod template metadata block, omitting the annotations key when nil.
+func templateMeta(labels, annotations map[string]interface{}) map[string]interface{} {
+	meta := map[string]interface{}{"labels": labels}
+	if annotations != nil {
+		meta["annotations"] = annotations
+	}
+	return meta
 }
 
 // AppNamespace returns the K8s namespace for a project: can-{id[:8]}-{slug[:50]}.
@@ -72,11 +105,34 @@ func secretName(appSlug string) string {
 // BuildResources constructs all K8s resource manifests for an app deployment.
 func BuildResources(cfg DeployConfig) AppResources {
 	ns := AppNamespace(cfg.ProjectID, cfg.ProjectSlug)
-	labels := map[string]interface{}{
+
+	// selectorLabels are stable across redeploys of the same app - used only for
+	// Deployment.spec.selector.matchLabels and Service.spec.selector, both of which must
+	// never contain a per-deploy value (selector is immutable once a Deployment is created).
+	selectorLabels := map[string]interface{}{
 		libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
 		libk8s.LabelProject:    cfg.ProjectSlug,
 		libk8s.LabelProjectID:  cfg.ProjectID,
 		libk8s.LabelApp:        cfg.AppSlug,
+		libk8s.LabelK8sName:     cfg.AppSlug,
+		libk8s.LabelK8sInstance: cfg.AppSlug,
+	}
+
+	// resourceLabels is a superset used for every resource's own metadata.labels and for pod
+	// template labels - safe to include per-deploy values like the version label here.
+	resourceLabels := make(map[string]interface{}, len(selectorLabels)+2)
+	for k, v := range selectorLabels {
+		resourceLabels[k] = v
+	}
+	resourceLabels[libk8s.LabelK8sPartOf] = cfg.ProjectSlug
+	if sha := shortSHA(cfg.CommitSha); sha != "" {
+		resourceLabels[libk8s.LabelK8sVersion] = sha
+	}
+	labels := resourceLabels
+
+	var annotations map[string]interface{}
+	if cfg.DeploymentID != "" {
+		annotations = map[string]interface{}{libk8s.AnnotDeploymentID: cfg.DeploymentID}
 	}
 
 	nsLabels := map[string]interface{}{
@@ -278,11 +334,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 		cronJob = map[string]interface{}{
 			"apiVersion": "batch/v1",
 			"kind":       "CronJob",
-			"metadata": map[string]interface{}{
-				"name":      cfg.AppSlug,
-				"namespace": ns,
-				"labels":    labels,
-			},
+			"metadata":   resourceMeta(cfg.AppSlug, ns, labels, annotations),
 			"spec": map[string]interface{}{
 				"schedule":                    cfg.Schedule,
 				"concurrencyPolicy":           "Forbid",
@@ -291,7 +343,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 				"jobTemplate": map[string]interface{}{
 					"spec": map[string]interface{}{
 						"template": map[string]interface{}{
-							"metadata": map[string]interface{}{"labels": labels},
+							"metadata": templateMeta(labels, annotations),
 							"spec":     podSpec,
 						},
 					},
@@ -302,18 +354,14 @@ func BuildResources(cfg DeployConfig) AppResources {
 		deployment = map[string]interface{}{
 			"apiVersion": "apps/v1",
 			"kind":       "Deployment",
-			"metadata": map[string]interface{}{
-				"name":      cfg.AppSlug,
-				"namespace": ns,
-				"labels":    labels,
-			},
+			"metadata":   resourceMeta(cfg.AppSlug, ns, labels, annotations),
 			"spec": map[string]interface{}{
 				"replicas": cfg.Replicas,
 				"selector": map[string]interface{}{
-					"matchLabels": labels,
+					"matchLabels": selectorLabels,
 				},
 				"template": map[string]interface{}{
-					"metadata": map[string]interface{}{"labels": labels},
+					"metadata": templateMeta(labels, annotations),
 					"spec":     podSpec,
 				},
 			},
@@ -328,7 +376,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 				"labels":    labels,
 			},
 			"spec": map[string]interface{}{
-				"selector": labels,
+				"selector": selectorLabels,
 				"ports": []interface{}{
 					map[string]interface{}{
 						"port":       port,

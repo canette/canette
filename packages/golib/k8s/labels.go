@@ -13,6 +13,11 @@ const (
 
 	AnnotDeploymentID = "canette.dev/deployment-id"
 	LabelOwner        = "canette.dev/owner"
+
+	LabelK8sName     = "app.kubernetes.io/name"
+	LabelK8sInstance = "app.kubernetes.io/instance"
+	LabelK8sPartOf   = "app.kubernetes.io/part-of"
+	LabelK8sVersion  = "app.kubernetes.io/version"
 )
 
 // AppLabelSelector returns a K8s label selector string matching the given app slug.
