@@ -20,7 +20,7 @@ type Config struct {
 	GatewayName             string
 	GatewayNamespace        string
 	ClusterDomain           string
-	Namespace               string        // canette-build (build job namespace, not app namespace)
+	Namespace               string // canette-build (build job namespace, not app namespace)
 	PollInterval            time.Duration
 	MaxConcurrent           int
 	ImagePullSecretsEnabled bool   // Enable automatic imagePullSecret creation in app namespaces
@@ -189,14 +189,14 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 	}
 
 	return k8sres.DeployConfig{
-		ProjectID:           cfg.ProjectID,
-		ProjectSlug:         cfg.ProjectSlug,
-		ProjectOwner:        cfg.ProjectOwner,
-		AppSlug:             cfg.AppSlug,
-		ImageRef:            imageRef,
-		Command:             cfg.Command,
-		Port:                cfg.Port,
-		Replicas:            cfg.Replicas,
+		ProjectID:    cfg.ProjectID,
+		ProjectSlug:  cfg.ProjectSlug,
+		ProjectOwner: cfg.ProjectOwner,
+		AppSlug:      cfg.AppSlug,
+		ImageRef:     imageRef,
+		Command:      cfg.Command,
+		Port:         cfg.Port,
+		Replicas:     cfg.Replicas,
 		Resources: k8sres.Resources{
 			CPURequest:    cfg.Resources.CPURequest,
 			MemoryRequest: cfg.Resources.MemoryRequest,
@@ -214,6 +214,7 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		ImagePullSecretName: imagePullSecretName,
 		ImagePullSecretData: imagePullSecretData,
 		Volumes:             volumes,
+		ExtraHostnames:      cfg.ExtraHostnames,
 		CommitSha:           cfg.CommitSha,
 		DeploymentID:        deploymentID,
 	}

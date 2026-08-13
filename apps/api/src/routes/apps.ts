@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { db } from "../db/db"
 import { requireAuth } from "../middleware/require-auth"
+import { requireAdmin } from "../middleware/require-admin"
 import type { AppEnv } from "../types"
 import { ServiceError } from "../services/errors"
 import {
@@ -25,6 +26,7 @@ import {
   listVolumes,
   updateVolume,
 } from "../services/volumes"
+import { addHostname, deleteHostname, listHostnames } from "../services/hostnames"
 import type { VolumeConfig, VolumeType } from "@canette/types"
 
 export const appsRouter = new Hono<AppEnv>()
@@ -246,6 +248,48 @@ appsRouter.delete("/apps/:id/volumes/:volumeId", async (c) => {
   const session = c.get("session")
   try {
     await deleteVolume(db, c.req.param("id"), c.req.param("volumeId"), session.user.id)
+    return c.body(null, 204)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// ── Custom hostnames ─────────────────────────────────────────────────────────
+// Adding/removing a hostname requires admin authority — it implies the admin has
+// provisioned matching DNS/TLS at the Gateway level. Reading the list is team-scoped
+// like any other app sub-resource instead: a hostname is effectively public DNS
+// information (anyone can look it up or visit the site), so there's no reason to
+// hide it from a team member working on their own app, only from managing it.
+
+// List custom hostnames for an app
+// GET /api/v1/apps/:id/hostnames
+appsRouter.get("/apps/:id/hostnames", async (c) => {
+  const session = c.get("session")
+  const app = await getAppById(db, c.req.param("id"), session.user.id)
+  if (!app) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  const hostnames = await listHostnames(db, app.id)
+  return c.json({ items: hostnames })
+})
+
+// Add a custom hostname
+// POST /api/v1/apps/:id/hostnames
+appsRouter.post("/apps/:id/hostnames", requireAdmin, async (c) => {
+  const body = await c.req.json<{ hostname: string }>()
+  try {
+    const hostname = await addHostname(db, c.req.param("id"), body.hostname)
+    return c.json(hostname, 201)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// Remove a custom hostname
+// DELETE /api/v1/apps/:id/hostnames/:hostnameId
+appsRouter.delete("/apps/:id/hostnames/:hostnameId", requireAdmin, async (c) => {
+  try {
+    await deleteHostname(db, c.req.param("id"), c.req.param("hostnameId"))
     return c.body(null, 204)
   } catch (e) {
     if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)

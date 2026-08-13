@@ -48,6 +48,39 @@ func TestBuildResources_PrivateNoHTTPRoute(t *testing.T) {
 	}
 }
 
+func TestBuildResources_ExtraHostnames(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.SkipHTTPRoute = false
+	cfg.ExtraHostnames = []string{"custom.example.com", "other.example.org"}
+	res := BuildResources(cfg)
+	if res.HTTPRoute == nil {
+		t.Fatal("expected HTTPRoute to be set, got nil")
+	}
+
+	spec := res.HTTPRoute["spec"].(map[string]interface{})
+	hostnames := spec["hostnames"].([]interface{})
+
+	expected := []string{"my-app-my-project.apps.example.com", "custom.example.com", "other.example.org"}
+	if len(hostnames) != len(expected) {
+		t.Fatalf("expected %d hostnames, got %d: %v", len(expected), len(hostnames), hostnames)
+	}
+	for i, want := range expected {
+		if hostnames[i] != want {
+			t.Errorf("hostnames[%d] = %q, want %q", i, hostnames[i], want)
+		}
+	}
+}
+
+func TestBuildResources_ExtraHostnamesIgnoredWhenSkipHTTPRoute(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.SkipHTTPRoute = true
+	cfg.ExtraHostnames = []string{"custom.example.com"}
+	res := BuildResources(cfg)
+	if res.HTTPRoute != nil {
+		t.Error("expected HTTPRoute to be nil when SkipHTTPRoute is set, even with ExtraHostnames present")
+	}
+}
+
 func TestAppNamespaceShortProjectID(t *testing.T) {
 	got := AppNamespace("abc", "my-project")
 	expected := "can-abc-my-project"

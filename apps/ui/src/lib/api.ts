@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppMetricsUsage, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppHostname, AppMetricsUsage, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -128,6 +128,15 @@ export const volumes = {
     request<AppVolume>(`/apps/${appId}/volumes/${volumeId}`, { method: "PATCH", body: JSON.stringify(body) }),
   delete: (appId: string, volumeId: string) =>
     request<void>(`/apps/${appId}/volumes/${volumeId}`, { method: "DELETE" }),
+}
+
+// Custom hostnames (admin-only)
+export const hostnames = {
+  list: (appId: string) => request<{ items: AppHostname[] }>(`/apps/${appId}/hostnames`),
+  create: (appId: string, hostname: string) =>
+    request<AppHostname>(`/apps/${appId}/hostnames`, { method: "POST", body: JSON.stringify({ hostname }) }),
+  delete: (appId: string, hostnameId: string) =>
+    request<void>(`/apps/${appId}/hostnames/${hostnameId}`, { method: "DELETE" }),
 }
 
 // Webhooks

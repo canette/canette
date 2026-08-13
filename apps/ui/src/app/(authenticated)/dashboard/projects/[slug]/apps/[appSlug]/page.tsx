@@ -14,6 +14,7 @@ import { StatusBadge, StatusDot, StatusLabel, formatStatus } from "@/components/
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { ManifestDialog } from "@/components/manifest-dialog"
 import { AppMetricsSummary } from "@/components/app-metrics-summary"
+import { HostnameAltMenu } from "@/components/hostname-alt-menu"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
 import { shortSha, timeAgo, formatHistoricalStatus } from "@/lib/deployment-format"
@@ -74,7 +75,7 @@ function StopDialog({ onConfirm, onClose, stopping }: { onConfirm: () => void; o
 
 export default function AppOverviewPage() {
   const { slug: projectSlug, appSlug } = useParams<{ slug: string; appSlug: string }>()
-  const { app, project, refresh } = useAppContext()
+  const { app, project, refresh, hostnames } = useAppContext()
 
   const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
   const [loadingDeps, setLoadingDeps] = useState(true)
@@ -209,12 +210,15 @@ export default function AppOverviewPage() {
             </div>
           )}
           {liveDeployment && app.liveUrl && app.deploymentType !== "private" && (
-            <a href={app.liveUrl} target="_blank" rel="noopener noreferrer"
-              className="group flex items-center gap-2 w-fit rounded-md border border-border px-3 py-1.5 text-sm font-mono hover:border-foreground/30 transition-colors">
-              <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
-              {app.liveUrl}
-              <ExternalLink size={12} className="text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
-            </a>
+            <div className="flex items-center gap-2 flex-wrap">
+              <a href={app.liveUrl} target="_blank" rel="noopener noreferrer"
+                className="group flex items-center gap-2 w-fit rounded-md border border-border px-3 py-1.5 text-sm font-mono hover:border-foreground/30 transition-colors">
+                <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
+                {app.liveUrl}
+                <ExternalLink size={12} className="text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
+              </a>
+              <HostnameAltMenu primaryUrl={app.liveUrl} hostnames={hostnames} />
+            </div>
           )}
           {app.deploymentType === "private" && app.liveUrl && (
             <div className="flex items-start gap-2 rounded-md bg-warning-soft ring-1 ring-inset ring-warning-line px-3 py-2.5">

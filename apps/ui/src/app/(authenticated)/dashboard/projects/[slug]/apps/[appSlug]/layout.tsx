@@ -5,16 +5,18 @@ import { useParams, usePathname } from "next/navigation"
 import { AppProvider } from "@/lib/app-context"
 import { TabNavigation } from "@/components/tab-navigation"
 import { StatusBadge } from "@/components/ui/status-badge"
+import { HostnameAltMenu } from "@/components/hostname-alt-menu"
 import { ExternalLink } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
 import * as api from "@/lib/api"
-import type { App, Project } from "@canette/types"
+import type { App, AppHostname, Project } from "@canette/types"
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { slug, appSlug } = useParams<{ slug: string; appSlug: string }>()
   const pathname = usePathname()
   const [app, setApp] = useState<App | null>(null)
   const [project, setProject] = useState<Project | null>(null)
+  const [hostnames, setHostnames] = useState<AppHostname[]>([])
   const [error, setError] = useState("")
 
   const load = useCallback(async () => {
@@ -28,6 +30,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       ])
       setProject(p)
       setApp(a)
+      // Best-effort: hostnames are supplementary, don't block the rest of the page on it.
+      api.hostnames.list(a.id).then((h) => setHostnames(h.items)).catch(() => setHostnames([]))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load")
     }
@@ -55,15 +59,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
               </div>
               {app.liveUrl && app.deploymentType !== "private" && (
-                <a
-                  href={app.liveUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[13px] font-mono text-accent-text hover:underline"
-                >
-                  {app.liveUrl.replace(/^https?:\/\//, "")}
-                  <ExternalLink size={11} className="shrink-0" />
-                </a>
+                <div className="flex items-center gap-1.5">
+                  <a
+                    href={app.liveUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[13px] font-mono text-accent-text hover:underline"
+                  >
+                    {app.liveUrl.replace(/^https?:\/\//, "")}
+                    <ExternalLink size={11} className="shrink-0" />
+                  </a>
+                  <HostnameAltMenu primaryUrl={app.liveUrl} hostnames={hostnames} />
+                </div>
               )}
             </div>
           </div>
@@ -85,7 +92,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       ) : !app || !project ? (
         <SkeletonText />
       ) : (
-        <AppProvider value={{ app, project, refresh: load }}>
+        <AppProvider value={{ app, project, refresh: load, hostnames }}>
           {children}
         </AppProvider>
       )}

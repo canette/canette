@@ -19,6 +19,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CredentialSelect } from "@/components/credential-select"
 import { DeploymentTypeField } from "@/components/app-form-fields"
 import { useAppContext } from "@/lib/app-context"
+import { useSession } from "@/lib/auth-client"
+import { HostnameManager } from "@/components/hostname-manager"
 import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
 import type { AppSecret, AppVolume, EnvVar, GitCredential, VolumeType, WebhookConfig } from "@canette/types"
@@ -43,15 +45,17 @@ const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
   { id: "environment", label: "Environment" },
   { id: "volumes", label: "Volumes" },
+  { id: "hostnames", label: "Custom domains" },
   { id: "webhook", label: "Webhook" },
   { id: "advanced", label: "Advanced" },
   { id: "danger", label: "Danger zone" },
 ]
 
-function SectionNav() {
+function SectionNav({ showHostnames }: { showHostnames: boolean }) {
+  const sections = showHostnames ? SETTINGS_SECTIONS : SETTINGS_SECTIONS.filter((s) => s.id !== "hostnames")
   return (
     <nav className="hidden lg:flex flex-col gap-px w-44 shrink-0 sticky top-6 self-start">
-      {SETTINGS_SECTIONS.map((s) => (
+      {sections.map((s) => (
         <a
           key={s.id}
           href={`#${s.id}`}
@@ -680,6 +684,9 @@ export default function SettingsPage() {
   const { slug: projectSlug } = useParams<{ slug: string; appSlug: string }>()
   const router = useRouter()
   const { app, project, refresh } = useAppContext()
+  const { data: session } = useSession()
+  const sessionUser = session?.user as Record<string, unknown> | undefined
+  const isAdmin = (typeof sessionUser?.role === "string" ? sessionUser.role : undefined) === "admin"
 
   // General settings
   const [name, setName] = useState(app.name)
@@ -782,7 +789,7 @@ export default function SettingsPage() {
 
   return (
     <div className="flex gap-6 items-start">
-      <SectionNav />
+      <SectionNav showHostnames={isAdmin} />
       <div className="flex-1 min-w-0 flex flex-col gap-6">
       {/* General */}
       <Section id="general" title="General">
@@ -883,6 +890,13 @@ export default function SettingsPage() {
       <Section id="volumes" title="Volumes" description="Mount persistent storage, ephemeral scratch space, or configuration files into the container.">
         <VolumeSection appId={app.id} />
       </Section>
+
+      {/* Custom domains (admin-only) */}
+      {isAdmin && (
+        <Section id="hostnames" title="Custom domains" description="Attach additional hostnames to this app's HTTPRoute, beyond the platform-generated URL.">
+          <HostnameManager appId={app.id} />
+        </Section>
+      )}
 
       {/* Webhooks */}
       <Section id="webhook" title="Webhook" description="Trigger deployments automatically on git push.">

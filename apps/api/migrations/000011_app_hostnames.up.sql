@@ -1,0 +1,7 @@
+CREATE TABLE app_hostnames (
+  id         TEXT PRIMARY KEY,
+  app_id     TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  hostname   TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(hostname)
+);
