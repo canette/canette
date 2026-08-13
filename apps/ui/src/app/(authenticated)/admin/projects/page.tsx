@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel, SelectSeparator } from "@/components/ui/select"
@@ -9,6 +11,7 @@ import { ChevronDown } from "lucide-react"
 import * as api from "@/lib/api"
 import type { AdminProjectOverview, AdminTeamOverview } from "@canette/types"
 import { SkeletonText } from "@/components/ui/skeleton"
+import { HostnameManager } from "@/components/hostname-manager"
 
 type StatusVariant = "live" | "building" | "deploying" | "failed" | "pending" | "secondary"
 
@@ -37,6 +40,7 @@ export default function AdminProjectsPage() {
   const [error, setError] = useState("")
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [projectTeamFilter, setProjectTeamFilter] = useState("all")
+  const [hostnameApp, setHostnameApp] = useState<{ id: string; name: string } | null>(null)
 
   useEffect(() => {
     Promise.all([api.admin.getOverview(), api.admin.getTeams()])
@@ -143,11 +147,17 @@ export default function AdminProjectsPage() {
                             </a>
                           )}
                         </div>
-                        {app.latestDeploymentStatus && (
-                          <Badge variant={statusVariant(app.latestDeploymentStatus)} className="shrink-0">
-                            {app.latestDeploymentStatus}
-                          </Badge>
-                        )}
+                        <div className="flex items-center gap-3 shrink-0">
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                            onClick={() => setHostnameApp({ id: app.id, name: app.name })}>
+                            Hostnames
+                          </Button>
+                          {app.latestDeploymentStatus && (
+                            <Badge variant={statusVariant(app.latestDeploymentStatus)}>
+                              {app.latestDeploymentStatus}
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -160,6 +170,17 @@ export default function AdminProjectsPage() {
           ))
         )}
       </div>
+
+      <Dialog open={!!hostnameApp} onOpenChange={(open) => { if (!open) setHostnameApp(null) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Custom domains — {hostnameApp?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="px-6 pb-6">
+            {hostnameApp && <HostnameManager appId={hostnameApp.id} />}
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

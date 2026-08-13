@@ -120,6 +120,13 @@ export interface AppVolume {
   updatedAt: string
 }
 
+export interface AppHostname {
+  id: string
+  appId: string
+  hostname: string
+  createdAt: string
+}
+
 export type DeploymentStatus =
   | "pending_build"
   | "building"

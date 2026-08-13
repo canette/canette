@@ -93,7 +93,7 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
   const app = appRows.rows[0]
   if (!app) throw new ServiceError("App not found", "NOT_FOUND", 404)
 
-  const [envRows, volumeRows] = await Promise.all([
+  const [envRows, volumeRows, hostnameRows] = await Promise.all([
     db
       .selectFrom("env_vars")
       .select(["key", "value"])
@@ -106,6 +106,12 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
       .where("app_id", "=", appId)
       .orderBy("created_at", "asc")
       .execute(),
+    db
+      .selectFrom("app_hostnames")
+      .select(["hostname"])
+      .where("app_id", "=", appId)
+      .orderBy("created_at", "asc")
+      .execute(),
   ])
   const envVars = envRows.map((r) => ({ key: r.key, value: r.value }))
   const volumes = volumeRows.map((r) => {
@@ -113,6 +119,7 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
     try { config = JSON.parse(r.config) as Record<string, unknown> } catch { /* use empty */ }
     return { id: r.id, name: r.name, type: r.type, mount_path: r.mount_path, config }
   })
+  const extraHostnames = hostnameRows.map((r) => r.hostname)
 
   return JSON.stringify({
     app: {
@@ -134,6 +141,7 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
     },
     env_vars: envVars,
     volumes,
+    extra_hostnames: extraHostnames,
     resource_defaults: {
       cpu_request: process.env.DEFAULT_CPU_REQUEST ?? "100m",
       memory_request: process.env.DEFAULT_MEMORY_REQUEST ?? "128Mi",

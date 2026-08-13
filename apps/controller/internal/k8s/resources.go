@@ -42,9 +42,9 @@ type VolumeSpec struct {
 type DeployConfig struct {
 	ProjectID           string
 	ProjectSlug         string
-	ProjectOwner        string            // user ID who created the project (may be empty)
+	ProjectOwner        string // user ID who created the project (may be empty)
 	AppSlug             string
-	ImageRef            string            // full image reference including digest, e.g. "registry/proj/app@sha256:..."
+	ImageRef            string // full image reference including digest, e.g. "registry/proj/app@sha256:..."
 	Port                int
 	Replicas            int
 	Resources           Resources
@@ -54,14 +54,15 @@ type DeployConfig struct {
 	GatewayNamespace    string
 	ClusterDomain       string
 	Command             []string // optional command override (canette.yaml runtime.command)
-	SkipHTTPRoute       bool   // true when deployment_type == "private" or ingress.enabled == false
-	IsCronJob           bool   // true when deployment_type == "cronjob"
-	Schedule            string // cron expression, only used when IsCronJob
-	ImagePullSecretName string // Name of the imagePullSecret to reference in pod spec
-	ImagePullSecretData []byte // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
+	SkipHTTPRoute       bool     // true when deployment_type == "private" or ingress.enabled == false
+	IsCronJob           bool     // true when deployment_type == "cronjob"
+	Schedule            string   // cron expression, only used when IsCronJob
+	ImagePullSecretName string   // Name of the imagePullSecret to reference in pod spec
+	ImagePullSecretData []byte   // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
 	Volumes             []VolumeSpec
-	CommitSha           string // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
-	DeploymentID        string // deployments.id row that triggered this apply, surfaced as an annotation
+	ExtraHostnames      []string // admin-assigned custom hostnames, added to the HTTPRoute alongside the platform-generated one
+	CommitSha           string   // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
+	DeploymentID        string   // deployments.id row that triggered this apply, surfaced as an annotation
 }
 
 // shortSHA returns the first 7 characters of a commit SHA for display as a version label,
@@ -110,10 +111,10 @@ func BuildResources(cfg DeployConfig) AppResources {
 	// Deployment.spec.selector.matchLabels and Service.spec.selector, both of which must
 	// never contain a per-deploy value (selector is immutable once a Deployment is created).
 	selectorLabels := map[string]interface{}{
-		libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
-		libk8s.LabelProject:    cfg.ProjectSlug,
-		libk8s.LabelProjectID:  cfg.ProjectID,
-		libk8s.LabelApp:        cfg.AppSlug,
+		libk8s.LabelManagedBy:   libk8s.LabelManagedByVal,
+		libk8s.LabelProject:     cfg.ProjectSlug,
+		libk8s.LabelProjectID:   cfg.ProjectID,
+		libk8s.LabelApp:         cfg.AppSlug,
 		libk8s.LabelK8sName:     cfg.AppSlug,
 		libk8s.LabelK8sInstance: cfg.AppSlug,
 	}
@@ -136,9 +137,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 	}
 
 	nsLabels := map[string]interface{}{
-		libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
-		libk8s.LabelProject:    cfg.ProjectSlug,
-		libk8s.LabelProjectID:  cfg.ProjectID,
+		libk8s.LabelManagedBy: libk8s.LabelManagedByVal,
+		libk8s.LabelProject:   cfg.ProjectSlug,
+		libk8s.LabelProjectID: cfg.ProjectID,
 	}
 	if cfg.ProjectOwner != "" {
 		nsLabels[libk8s.LabelOwner] = cfg.ProjectOwner
@@ -266,7 +267,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 				},
 			})
 			podVolumes = append(podVolumes, map[string]interface{}{
-				"name": v.Name,
+				"name":                  v.Name,
 				"persistentVolumeClaim": map[string]interface{}{"claimName": pvcName},
 			})
 			volumeMounts = append(volumeMounts, map[string]interface{}{
@@ -336,10 +337,10 @@ func BuildResources(cfg DeployConfig) AppResources {
 			"kind":       "CronJob",
 			"metadata":   resourceMeta(cfg.AppSlug, ns, labels, annotations),
 			"spec": map[string]interface{}{
-				"schedule":                    cfg.Schedule,
-				"concurrencyPolicy":           "Forbid",
-				"failedJobsHistoryLimit":      3,
-				"successfulJobsHistoryLimit":  3,
+				"schedule":                   cfg.Schedule,
+				"concurrencyPolicy":          "Forbid",
+				"failedJobsHistoryLimit":     3,
+				"successfulJobsHistoryLimit": 3,
 				"jobTemplate": map[string]interface{}{
 					"spec": map[string]interface{}{
 						"template": map[string]interface{}{
@@ -389,6 +390,16 @@ func BuildResources(cfg DeployConfig) AppResources {
 
 		if !cfg.SkipHTTPRoute {
 			hostname := fmt.Sprintf("%s-%s.%s", cfg.AppSlug, cfg.ProjectSlug, cfg.ClusterDomain)
+			// Extra hostnames route to the same backend via the same HTTPRoute — Gateway
+			// API matches on any listed hostname, so no separate route objects are needed.
+			// TLS is out of scope: canette only writes spec.hostnames here, never touches
+			// the Gateway's listener certificates, so HTTPS for a custom hostname requires
+			// a matching cert to already exist on the Gateway (admin's responsibility).
+			hostnames := make([]interface{}, 0, 1+len(cfg.ExtraHostnames))
+			hostnames = append(hostnames, hostname)
+			for _, h := range cfg.ExtraHostnames {
+				hostnames = append(hostnames, h)
+			}
 			httpRoute = map[string]interface{}{
 				"apiVersion": "gateway.networking.k8s.io/v1",
 				"kind":       "HTTPRoute",
@@ -406,7 +417,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 							"namespace": cfg.GatewayNamespace,
 						},
 					},
-					"hostnames": []interface{}{hostname},
+					"hostnames": hostnames,
 					"rules": []interface{}{
 						map[string]interface{}{
 							"matches": []interface{}{

@@ -210,6 +210,13 @@ export interface Database {
     claimed_at: string | null
   }
 
+  app_hostnames: {
+    id: string
+    app_id: string
+    hostname: string
+    created_at: string
+  }
+
   // ── DB Migration tracking ──────────────────────────
 
   schema_migrations: {

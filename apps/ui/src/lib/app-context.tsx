@@ -1,12 +1,13 @@
 "use client"
 
 import { createContext, useContext } from "react"
-import type { App, Project } from "@canette/types"
+import type { App, AppHostname, Project } from "@canette/types"
 
 interface AppContextValue {
   app: App
   project: Project
   refresh: () => void
+  hostnames: AppHostname[]
 }
 
 const AppContext = createContext<AppContextValue | null>(null)

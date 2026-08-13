@@ -47,6 +47,7 @@ type deploymentSnapshot struct {
 		MountPath string          `json:"mount_path"`
 		Config    json.RawMessage `json:"config"`
 	} `json:"volumes"`
+	ExtraHostnames   []string `json:"extra_hostnames"`
 	ResourceDefaults struct {
 		CPURequest    string `json:"cpu_request"`
 		MemoryRequest string `json:"memory_request"`
@@ -112,6 +113,7 @@ type AppConfig struct {
 	Resources      Resources
 	Env            map[string]string
 	Volumes        []VolumeSpec
+	ExtraHostnames []string
 }
 
 // Secret is an encrypted secret row.
@@ -270,7 +272,6 @@ func (s *Store) ClaimDeploying(ctx context.Context, limit int) ([]DeployingDeplo
 	return deps, rows.Err()
 }
 
-
 // GetAppConfig builds the full app config for reconciliation.
 // Resource defaults, port, and env vars come from the deployment snapshot (captured at
 // trigger time). The canette.yaml in the repo (stored in CanetteConfig after the build)
@@ -372,6 +373,7 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		Resources:      res,
 		Env:            envMap,
 		Volumes:        volumes,
+		ExtraHostnames: snap.ExtraHostnames,
 	}, parseErr
 }
 
