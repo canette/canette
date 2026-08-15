@@ -38,6 +38,10 @@ apps/controller/controller
 apps/builder/builder
 *.exe
 
+# Go workspace checksum file — regenerated locally by workspace-mode commands,
+# not needed since each service's own go.sum covers its build
+go.work.sum
+
 # OS
 .DS_Store
 Thumbs.db
