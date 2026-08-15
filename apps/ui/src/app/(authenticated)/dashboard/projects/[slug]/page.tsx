@@ -43,6 +43,7 @@ export default function ProjectPage() {
         <SkeletonText />
       ) : apps.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-center rounded-lg border border-dashed border-border">
+          <p className="text-sm font-medium">Get your first app running</p>
           <p className="text-sm text-muted-foreground max-w-sm">
             An app is a deployable service — built from a Git repository or Docker image and served at its own URL.
           </p>

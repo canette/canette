@@ -127,11 +127,11 @@ trivy image \
   --exit-code 0 \
   "${IMAGE_REF}" || { echo "[canette] trivy scan step failed"; exit 1; }
 %s
-CRITICAL=$(grep -c '"Severity": "CRITICAL"' /results/findings.json || echo 0)
-HIGH=$(grep -c '"Severity": "HIGH"' /results/findings.json || echo 0)
-MEDIUM=$(grep -c '"Severity": "MEDIUM"' /results/findings.json || echo 0)
-LOW=$(grep -c '"Severity": "LOW"' /results/findings.json || echo 0)
-UNKNOWN=$(grep -c '"Severity": "UNKNOWN"' /results/findings.json || echo 0)
+CRITICAL=$(grep -c '"Severity": "CRITICAL"' /results/findings.json || true)
+HIGH=$(grep -c '"Severity": "HIGH"' /results/findings.json || true)
+MEDIUM=$(grep -c '"Severity": "MEDIUM"' /results/findings.json || true)
+LOW=$(grep -c '"Severity": "LOW"' /results/findings.json || true)
+UNKNOWN=$(grep -c '"Severity": "UNKNOWN"' /results/findings.json || true)
 
 echo "CAN_SCAN_SUMMARY={\"critical\":${CRITICAL},\"high\":${HIGH},\"medium\":${MEDIUM},\"low\":${LOW},\"unknown\":${UNKNOWN}}"
 echo "Scan complete: critical=${CRITICAL} high=${HIGH} medium=${MEDIUM} low=${LOW} unknown=${UNKNOWN}"

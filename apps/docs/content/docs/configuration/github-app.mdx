@@ -48,6 +48,16 @@ On the GitHub App settings page, scroll to **Private keys** and click **Generate
 
 ### Step 3 — Helm configuration
 
+Before filling in values, decide which mode fits your deployment — you can also configure both together (see below).
+
+**Choose system credential mode (set `installationId`)** if a small, trusted group of teams shares the same repos, or if you — the admin — want to control exactly which repositories canette can access. One installation, one place to manage access; teams don't do anything extra.
+
+**Choose per-team installation mode (leave `installationId` empty, set `publicLink`)** if teams belong to different GitHub orgs/accounts, or you don't want every team implicitly able to deploy from every repo the admin's installation can see. Each team connects their own GitHub account or org via the in-app wizard, so access stays scoped to what that team explicitly installed the App on.
+
+<Callout type="info">
+  Not sure? Start with system credential mode — it's the fastest to set up. You can add the per-team wizard later by setting `publicLink` and configuring the Setup URL, without disrupting the existing system credential.
+</Callout>
+
 #### System credential mode (admin installs once)
 
 ```yaml

@@ -6,6 +6,17 @@ import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App,
 
 const base = "/api/v1"
 
+export class ApiError extends Error {
+  status: number
+  code?: string
+
+  constructor(status: number, message: string, code?: string) {
+    super(message)
+    this.status = status
+    this.code = code
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
     ...init,
@@ -20,10 +31,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (typeof window !== "undefined") {
         window.location.replace("/login")
       }
-      throw new Error("Session expired")
+      throw new ApiError(401, "Session expired")
     }
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error ?? `HTTP ${res.status}`)
+    throw new ApiError(res.status, body.error ?? `HTTP ${res.status}`, body.code)
   }
   if (res.status === 204) return undefined as T
   return res.json()

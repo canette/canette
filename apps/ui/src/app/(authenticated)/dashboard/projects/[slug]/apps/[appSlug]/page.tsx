@@ -15,8 +15,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { ManifestDialog } from "@/components/manifest-dialog"
 import { AppMetricsSummary } from "@/components/app-metrics-summary"
 import { HostnameAltMenu } from "@/components/hostname-alt-menu"
+import { FormError } from "@/components/ui/form-error"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
+import { ApiError } from "@/lib/api"
 import { shortSha, timeAgo, formatHistoricalStatus } from "@/lib/deployment-format"
 import type { Deployment } from "@canette/types"
 
@@ -79,6 +81,7 @@ export default function AppOverviewPage() {
 
   const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
   const [loadingDeps, setLoadingDeps] = useState(true)
+  const [loadDepsError, setLoadDepsError] = useState("")
 
   const [deploying, setDeploying] = useState(false)
   const [redeploying, setRedeploying] = useState(false)
@@ -92,7 +95,11 @@ export default function AppOverviewPage() {
     try {
       const data = await api.deployments.list(app.id)
       setDeploymentList(data.items)
-    } catch { /* ignore */ } finally {
+      setLoadDepsError("")
+    } catch (e: unknown) {
+      const status = e instanceof ApiError ? ` (HTTP ${e.status})` : ""
+      setLoadDepsError(`Failed to load deployments${status}: ${e instanceof Error ? e.message : "unknown error"}`)
+    } finally {
       setLoadingDeps(false)
     }
   }, [app.id])
@@ -184,6 +191,7 @@ export default function AppOverviewPage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+          {loadDepsError && <FormError message={loadDepsError} />}
           {!currentDeployment && (
             <div className="flex flex-col gap-2 rounded-md border border-border px-3 py-2.5">
               <p className="text-xs text-muted-foreground">
