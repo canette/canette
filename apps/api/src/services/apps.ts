@@ -6,6 +6,7 @@ import { sql } from "kysely"
 import { ServiceError } from "./errors"
 import { getReplicasFromCanetteConfig } from "./canette-config"
 import { supportsForUpdate } from "../db/dialect"
+import { CADDY_SIDECAR_PORT } from "./reserved-ports"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
@@ -247,6 +248,9 @@ export async function createApp(
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new ServiceError("port must be an integer between 1 and 65535", "VALIDATION_ERROR", 400)
   }
+  if (port === CADDY_SIDECAR_PORT) {
+    throw new ServiceError(`port ${CADDY_SIDECAR_PORT} is reserved for the password-gate sidecar`, "VALIDATION_ERROR", 400)
+  }
   if (input.canetteConfig) validateCanetteConfig(input.canetteConfig)
 
   const membership = await db
@@ -296,6 +300,9 @@ export async function createApp(
         image_tag: sourceType === "image" ? (input.imageTag?.trim() ?? "latest") : "",
         port,
         schedule: deploymentType === "cronjob" ? (input.schedule?.trim() ?? null) : null,
+        password_gate_enabled: false,
+        password_gate_username: null,
+        password_gate_password_hash: null,
         canette_config: input.canetteConfig ?? null,
         created_at: now,
         updated_at: now,
@@ -365,6 +372,9 @@ export async function updateApp(
   if (patch.schedule != null && patch.schedule.trim()) validateSchedule(patch.schedule.trim())
   if (patch.port !== undefined && (!Number.isInteger(patch.port) || patch.port < 1 || patch.port > 65535)) {
     throw new ServiceError("port must be an integer between 1 and 65535", "VALIDATION_ERROR", 400)
+  }
+  if (patch.port === CADDY_SIDECAR_PORT) {
+    throw new ServiceError(`port ${CADDY_SIDECAR_PORT} is reserved for the password-gate sidecar`, "VALIDATION_ERROR", 400)
   }
   if (patch.gitUrl !== undefined && patch.gitUrl.trim()) validateGitUrl(patch.gitUrl.trim())
   if (patch.canetteConfig) validateCanetteConfig(patch.canetteConfig)

@@ -217,5 +217,10 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		ExtraHostnames:      cfg.ExtraHostnames,
 		CommitSha:           cfg.CommitSha,
 		DeploymentID:        deploymentID,
+		PasswordGate: k8sres.PasswordGateConfig{
+			Enabled:      cfg.PasswordGate.Enabled,
+			Username:     cfg.PasswordGate.Username,
+			PasswordHash: cfg.PasswordGate.PasswordHash,
+		},
 	}
 }

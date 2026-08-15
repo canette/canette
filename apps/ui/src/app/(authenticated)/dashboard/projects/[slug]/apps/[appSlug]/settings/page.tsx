@@ -21,6 +21,7 @@ import { DeploymentTypeField } from "@/components/app-form-fields"
 import { useAppContext } from "@/lib/app-context"
 import { useSession } from "@/lib/auth-client"
 import { HostnameManager } from "@/components/hostname-manager"
+import { PasswordGateManager } from "@/components/password-gate-manager"
 import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
 import type { AppSecret, AppVolume, EnvVar, GitCredential, VolumeType, WebhookConfig } from "@canette/types"
@@ -46,13 +47,16 @@ const SETTINGS_SECTIONS = [
   { id: "environment", label: "Environment" },
   { id: "volumes", label: "Volumes" },
   { id: "hostnames", label: "Custom domains" },
+  { id: "access", label: "Password protection" },
   { id: "webhook", label: "Webhook" },
   { id: "advanced", label: "Advanced" },
   { id: "danger", label: "Danger zone" },
 ]
 
-function SectionNav({ showHostnames }: { showHostnames: boolean }) {
-  const sections = showHostnames ? SETTINGS_SECTIONS : SETTINGS_SECTIONS.filter((s) => s.id !== "hostnames")
+function SectionNav({ showHostnames, showAccessControl }: { showHostnames: boolean; showAccessControl: boolean }) {
+  const sections = SETTINGS_SECTIONS
+    .filter((s) => showHostnames || s.id !== "hostnames")
+    .filter((s) => showAccessControl || s.id !== "access")
   return (
     <nav className="hidden lg:flex flex-col gap-px w-44 shrink-0 sticky top-6 self-start">
       {sections.map((s) => (
@@ -789,7 +793,7 @@ export default function SettingsPage() {
 
   return (
     <div className="flex gap-6 items-start">
-      <SectionNav showHostnames={isAdmin} />
+      <SectionNav showHostnames={isAdmin} showAccessControl={app.deploymentType === "web"} />
       <div className="flex-1 min-w-0 flex flex-col gap-6">
       {/* General */}
       <Section id="general" title="General">
@@ -895,6 +899,13 @@ export default function SettingsPage() {
       {isAdmin && (
         <Section id="hostnames" title="Custom domains" description="Attach additional hostnames to this app's HTTPRoute, beyond the platform-generated URL.">
           <HostnameManager appId={app.id} />
+        </Section>
+      )}
+
+      {/* Password protection */}
+      {app.deploymentType === "web" && (
+        <Section id="access" title="Password protection" description="Require a username and password before the public URL is reachable.">
+          <PasswordGateManager appId={app.id} />
         </Section>
       )}
 
