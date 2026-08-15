@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -78,6 +79,121 @@ func TestBuildResources_ExtraHostnamesIgnoredWhenSkipHTTPRoute(t *testing.T) {
 	res := BuildResources(cfg)
 	if res.HTTPRoute != nil {
 		t.Error("expected HTTPRoute to be nil when SkipHTTPRoute is set, even with ExtraHostnames present")
+	}
+}
+
+func TestBuildResources_PasswordGateAddsSidecarAndSecret(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	res := BuildResources(cfg)
+
+	if res.CaddySecret == nil {
+		t.Fatal("expected CaddySecret to be set, got nil")
+	}
+	meta, _ := res.CaddySecret["metadata"].(map[string]interface{})
+	if got := meta["name"]; got != "my-app-caddy-gate" {
+		t.Errorf("CaddySecret name = %q, want %q", got, "my-app-caddy-gate")
+	}
+
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	if len(containers) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(containers))
+	}
+	caddy, _ := containers[1].(map[string]interface{})
+	if got := caddy["name"]; got != caddyContainerName {
+		t.Errorf("second container name = %q, want %q", got, caddyContainerName)
+	}
+	if got := caddy["image"]; got != "caddy:2-alpine" {
+		t.Errorf("caddy image = %q, want %q", got, "caddy:2-alpine")
+	}
+
+	vols, _ := podSpec["volumes"].([]interface{})
+	if len(vols) != 1 {
+		t.Fatalf("expected 1 pod volume, got %d", len(vols))
+	}
+	vol, _ := vols[0].(map[string]interface{})
+	if got := vol["name"]; got != "caddy-config" {
+		t.Errorf("volume name = %q, want %q", got, "caddy-config")
+	}
+}
+
+func TestBuildResources_PasswordGateDisabledNoSidecar(t *testing.T) {
+	cfg := baseDeployConfig() // PasswordGate zero-value (disabled)
+	res := BuildResources(cfg)
+
+	if res.CaddySecret != nil {
+		t.Error("expected CaddySecret to be nil when gate is disabled, got non-nil")
+	}
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	if len(containers) != 1 {
+		t.Fatalf("expected 1 container when gate is disabled, got %d", len(containers))
+	}
+}
+
+func TestBuildResources_PasswordGateServiceTargetPort(t *testing.T) {
+	enabled := baseDeployConfig()
+	enabled.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	res := BuildResources(enabled)
+	spec, _ := res.Service["spec"].(map[string]interface{})
+	ports, _ := spec["ports"].([]interface{})
+	port, _ := ports[0].(map[string]interface{})
+	if got := port["targetPort"]; got != caddySidecarPort {
+		t.Errorf("targetPort = %v, want %v", got, caddySidecarPort)
+	}
+	if got := port["port"]; got != 3000 {
+		t.Errorf("port = %v, want %v", got, 3000)
+	}
+
+	disabled := baseDeployConfig()
+	res = BuildResources(disabled)
+	spec, _ = res.Service["spec"].(map[string]interface{})
+	ports, _ = spec["ports"].([]interface{})
+	port, _ = ports[0].(map[string]interface{})
+	if got := port["targetPort"]; got != 3000 {
+		t.Errorf("targetPort = %v, want %v", got, 3000)
+	}
+}
+
+func TestBuildResources_PasswordGateCaddyfileContent(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	res := BuildResources(cfg)
+
+	data, _ := res.CaddySecret["data"].(map[string]interface{})
+	caddyfile, _ := data["Caddyfile"].([]byte)
+	content := string(caddyfile)
+
+	for _, want := range []string{"basic_auth", "admin $2b$10$fakehash", "reverse_proxy localhost:3000", "admin off"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("Caddyfile does not contain %q:\n%s", want, content)
+		}
+	}
+}
+
+func TestBuildResources_PasswordGateIgnoredForCronJob(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.IsCronJob = true
+	cfg.Schedule = "0 2 * * *"
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	res := BuildResources(cfg)
+
+	if res.CaddySecret != nil {
+		t.Error("expected CaddySecret to be nil for a CronJob even with PasswordGate.Enabled set, got non-nil")
+	}
+	jobSpec, _ := res.CronJob["spec"].(map[string]interface{})
+	jobTmpl, _ := jobSpec["jobTemplate"].(map[string]interface{})
+	tmplSpec, _ := jobTmpl["spec"].(map[string]interface{})
+	podTmpl, _ := tmplSpec["template"].(map[string]interface{})
+	podSpec, _ := podTmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	if len(containers) != 1 {
+		t.Fatalf("expected 1 container for CronJob, got %d", len(containers))
 	}
 }
 
@@ -338,4 +454,3 @@ func TestBuildResources_NoVolumes(t *testing.T) {
 		t.Error("expected no volumeMounts in container, got one")
 	}
 }
-

@@ -109,6 +109,9 @@ export interface Database {
     port: number
     deployment_type: string
     schedule: string | null
+    password_gate_enabled: boolean
+    password_gate_username: string | null
+    password_gate_password_hash: string | null
     live_url: string | null
     canette_config: string | null
     created_at: string

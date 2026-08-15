@@ -127,6 +127,11 @@ export interface AppHostname {
   createdAt: string
 }
 
+export interface AppPasswordGate {
+  enabled: boolean
+  username?: string // present only when enabled; password/hash is never returned by the API
+}
+
 export type DeploymentStatus =
   | "pending_build"
   | "building"

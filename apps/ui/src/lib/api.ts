@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppHostname, AppMetricsUsage, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppHostname, AppMetricsUsage, AppPasswordGate, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -148,6 +148,17 @@ export const hostnames = {
     request<AppHostname>(`/apps/${appId}/hostnames`, { method: "POST", body: JSON.stringify({ hostname }) }),
   delete: (appId: string, hostnameId: string) =>
     request<void>(`/apps/${appId}/hostnames/${hostnameId}`, { method: "DELETE" }),
+}
+
+// Password protection
+export const passwordGate = {
+  get: (appId: string) => request<AppPasswordGate>(`/apps/${appId}/password-gate`),
+  enable: (appId: string, username: string, password: string) =>
+    request<AppPasswordGate>(`/apps/${appId}/password-gate`, {
+      method: "PUT",
+      body: JSON.stringify({ username, password }),
+    }),
+  disable: (appId: string) => request<AppPasswordGate>(`/apps/${appId}/password-gate`, { method: "DELETE" }),
 }
 
 // Webhooks

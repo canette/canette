@@ -81,6 +81,9 @@ interface SnapshotAppRow {
   git_credential_id: string | null
   port: number
   schedule: string | null
+  password_gate_enabled: boolean
+  password_gate_username: string | null
+  password_gate_password_hash: string | null
   project_id: string
   project_slug: string
   project_owner: string
@@ -93,6 +96,7 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
   const appRows = await sql<SnapshotAppRow>`
     SELECT a.id, a.slug, a.source_type, a.deployment_type, a.git_url, a.git_branch,
            a.app_path, a.git_credential_id, a.port, a.schedule,
+           a.password_gate_enabled, a.password_gate_username, a.password_gate_password_hash,
            p.id AS project_id, p.slug AS project_slug,
            COALESCE(p.created_by, '') AS project_owner
     FROM apps a
@@ -142,6 +146,11 @@ async function buildSnapshot(db: DB, appId: string): Promise<string> {
       git_credential_id: app.git_credential_id ?? null,
       port: app.port,
       schedule: app.schedule ?? null,
+      password_gate: {
+        enabled: !!app.password_gate_enabled,
+        username: app.password_gate_username ?? "",
+        password_hash: app.password_gate_password_hash ?? "",
+      },
     },
     project: {
       id: app.project_id,

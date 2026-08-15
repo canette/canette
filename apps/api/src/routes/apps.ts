@@ -27,6 +27,7 @@ import {
   updateVolume,
 } from "../services/volumes"
 import { addHostname, deleteHostname, listHostnames } from "../services/hostnames"
+import { disablePasswordGate, enablePasswordGate, getPasswordGateStatus } from "../services/password-gate"
 import type { VolumeConfig, VolumeType } from "@canette/types"
 
 export const appsRouter = new Hono<AppEnv>()
@@ -291,6 +292,51 @@ appsRouter.delete("/apps/:id/hostnames/:hostnameId", requireAdmin, async (c) => 
   try {
     await deleteHostname(db, c.req.param("id"), c.req.param("hostnameId"))
     return c.body(null, 204)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// ── Password protection ──────────────────────────────────────────────────────
+// Team-scoped, not admin-gated — unlike custom hostnames this is an operational
+// per-app setting (like Volumes), not a DNS/TLS authority grant.
+
+// GET /api/v1/apps/:id/password-gate
+appsRouter.get("/apps/:id/password-gate", async (c) => {
+  const session = c.get("session")
+  try {
+    const status = await getPasswordGateStatus(db, c.req.param("id"), session.user.id)
+    return c.json(status)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// Enable/replace credentials — always a full replace, never a partial update.
+// PUT /api/v1/apps/:id/password-gate
+appsRouter.put("/apps/:id/password-gate", async (c) => {
+  const session = c.get("session")
+  const body = await c.req.json<{ username: string; password: string }>()
+  try {
+    const status = await enablePasswordGate(db, c.req.param("id"), session.user.id, {
+      username: body.username,
+      password: body.password,
+    })
+    return c.json(status)
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
+    throw e
+  }
+})
+
+// DELETE /api/v1/apps/:id/password-gate
+appsRouter.delete("/apps/:id/password-gate", async (c) => {
+  const session = c.get("session")
+  try {
+    const status = await disablePasswordGate(db, c.req.param("id"), session.user.id)
+    return c.json(status)
   } catch (e) {
     if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
     throw e

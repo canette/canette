@@ -30,6 +30,11 @@ type deploymentSnapshot struct {
 		GitCredentialID string `json:"git_credential_id"`
 		Port            int    `json:"port"`
 		Schedule        string `json:"schedule"`
+		PasswordGate    struct {
+			Enabled      bool   `json:"enabled"`
+			Username     string `json:"username"`
+			PasswordHash string `json:"password_hash"`
+		} `json:"password_gate"`
 	} `json:"app"`
 	Project struct {
 		ID      string `json:"id"`
@@ -95,6 +100,13 @@ type VolumeSpec struct {
 	Config    VolumeConfig
 }
 
+// PasswordGateSpec describes the optional HTTP Basic Auth gate for a web app.
+type PasswordGateSpec struct {
+	Enabled      bool
+	Username     string
+	PasswordHash string // bcrypt hash, e.g. "$2b$10$..." — never a plaintext password
+}
+
 // AppConfig is the full config for an app needed during reconciliation.
 type AppConfig struct {
 	AppID          string
@@ -114,6 +126,7 @@ type AppConfig struct {
 	Env            map[string]string
 	Volumes        []VolumeSpec
 	ExtraHostnames []string
+	PasswordGate   PasswordGateSpec
 }
 
 // Secret is an encrypted secret row.
@@ -374,6 +387,15 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		Env:            envMap,
 		Volumes:        volumes,
 		ExtraHostnames: snap.ExtraHostnames,
+		// Enabled is additionally guarded on DeploymentType == "web" here as
+		// defense-in-depth: if an app's type is later switched away from "web"
+		// while gate columns are still set on the row, the controller must never
+		// build the sidecar for a non-web app, independent of the API layer.
+		PasswordGate: PasswordGateSpec{
+			Enabled:      snap.App.PasswordGate.Enabled && dep.DeploymentType == "web",
+			Username:     snap.App.PasswordGate.Username,
+			PasswordHash: snap.App.PasswordGate.PasswordHash,
+		},
 	}, parseErr
 }
 
