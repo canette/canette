@@ -13,6 +13,15 @@ type BuildLogRow = Selectable<Database["build_logs"]>
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
 
+function parseScanSummary(raw: string | null): Deployment["scanSummary"] {
+  if (!raw) return undefined
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+}
+
 function mapDeployment(row: DeploymentRow, hasSbom = false): Deployment {
   return {
     id: row.id,
@@ -24,7 +33,7 @@ function mapDeployment(row: DeploymentRow, hasSbom = false): Deployment {
     triggeredBy: row.triggered_by ?? undefined,
     errorMessage: row.error_message ?? undefined,
     scanStatus: (row.scan_status ?? undefined) as Deployment["scanStatus"],
-    scanSummary: row.scan_summary ? JSON.parse(row.scan_summary) : undefined,
+    scanSummary: parseScanSummary(row.scan_summary),
     hasSbom,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

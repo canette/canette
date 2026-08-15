@@ -90,7 +90,7 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
   const [dialogKnownHosts, setDialogKnownHosts] = useState("")
   const [dialogKnownHostsOpen, setDialogKnownHostsOpen] = useState(false)
   const [dialogSubmitting, setDialogSubmitting] = useState(false)
-  const [dialogError, setDialogError] = useState("")
+  const [dialogError, setDialogError] = useState<React.ReactNode>("")
 
   // GitHub App
   const [connectingGithubApp, setConnectingGithubApp] = useState(false)
@@ -224,7 +224,15 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
     try {
       const result = await api.githubApp.getInstallUrl(teamId)
       if (!result.available || !result.url) {
-        setDialogError("Per-Team GitHub App support is not configured on this instance. Ask your admin to set it up.")
+        setDialogError(
+          <>
+            <a href="https://canette.dev/docs/configuration/github-app#per-team-installation-mode-users-connect-their-own-accounts"
+              target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">
+              Per-Team GitHub App support
+            </a>{" "}
+            is not configured on this instance. Ask your admin to set it up.
+          </>
+        )
         return
       }
       window.location.href = result.url

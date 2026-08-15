@@ -6,10 +6,12 @@ import { Button } from "@/components/ui/button"
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Terminal } from "@/components/ui/terminal"
+import { FormError } from "@/components/ui/form-error"
 import { Download, Loader2, RefreshCw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
+import { ApiError } from "@/lib/api"
 import { shortSha, timeAgo, formatDuration } from "@/lib/deployment-format"
 import type { BuildLog, Deployment } from "@canette/types"
 
@@ -23,6 +25,7 @@ export default function LogsPage() {
 
   const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
   const [loadingDeps, setLoadingDeps] = useState(true)
+  const [loadDepsError, setLoadDepsError] = useState("")
   const [mode, setMode] = useState<Mode>("build")
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -42,8 +45,11 @@ export default function LogsPage() {
 
   useEffect(() => {
     api.deployments.list(app.id, 20)
-      .then((r) => setDeploymentList(r.items))
-      .catch(() => {})
+      .then((r) => { setDeploymentList(r.items); setLoadDepsError("") })
+      .catch((e: unknown) => {
+        const status = e instanceof ApiError ? ` (HTTP ${e.status})` : ""
+        setLoadDepsError(`Failed to load deployments${status}: ${e instanceof Error ? e.message : "unknown error"}`)
+      })
       .finally(() => setLoadingDeps(false))
   }, [app.id])
 
@@ -128,6 +134,10 @@ export default function LogsPage() {
 
   if (loadingDeps) {
     return <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading…</div>
+  }
+
+  if (loadDepsError) {
+    return <FormError message={loadDepsError} />
   }
 
   if (deploymentList.length === 0) {

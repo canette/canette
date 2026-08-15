@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog } from "@/components/ui/dialog"
+import { FormError } from "@/components/ui/form-error"
 import { Separator } from "@/components/ui/separator"
 import { Loader2, ShieldAlert, ShieldCheck } from "lucide-react"
 import { StatusDot, StatusLabel } from "@/components/ui/status-badge"
@@ -14,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { ManifestDialog } from "@/components/manifest-dialog"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
+import { ApiError } from "@/lib/api"
 import { shortSha, timeAgo, formatHistoricalStatus } from "@/lib/deployment-format"
 import type { Deployment } from "@canette/types"
 
@@ -47,12 +49,16 @@ export default function DeploymentsPage() {
   const { app } = useAppContext()
   const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
   const [manifestDeployment, setManifestDeployment] = useState<Deployment | null>(null)
 
   useEffect(() => {
     api.deployments.list(app.id, 50)
-      .then((r) => setDeploymentList(r.items))
-      .catch(() => {})
+      .then((r) => { setDeploymentList(r.items); setLoadError("") })
+      .catch((e: unknown) => {
+        const status = e instanceof ApiError ? ` (HTTP ${e.status})` : ""
+        setLoadError(`Failed to load deployments${status}: ${e instanceof Error ? e.message : "unknown error"}`)
+      })
       .finally(() => setLoading(false))
   }, [app.id])
 
@@ -60,6 +66,7 @@ export default function DeploymentsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {loadError && <FormError message={loadError} />}
       <Card>
         <CardHeader><CardTitle className="text-base">History</CardTitle></CardHeader>
         <CardContent className="p-0">
