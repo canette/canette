@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { ChevronDown, ChevronUp } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { cn } from "@/lib/utils"
@@ -16,6 +17,7 @@ export default function ProjectPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [moving, setMoving] = useState<Set<string>>(new Set())
+  const [reordering, setReordering] = useState(false)
 
   async function handleMove(appId: string, direction: "up" | "down") {
     setMoving((s) => new Set(s).add(appId))
@@ -91,7 +93,21 @@ export default function ProjectPage() {
           </p>
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <>
+          {apps.length > 1 && (
+            <div className="flex justify-end mb-3">
+              <Button
+                type="button"
+                variant={reordering ? "secondary" : "outline"}
+                size="sm"
+                aria-pressed={reordering}
+                onClick={() => setReordering((v) => !v)}
+              >
+                {reordering ? "Done reordering" : "Reorder"}
+              </Button>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2">
           {apps.map((app, index) => (
             <div key={app.id} className="relative group/card">
               <Link href={`/dashboard/projects/${slug}/apps/${app.slug}`} className="block h-full">
@@ -117,8 +133,8 @@ export default function ProjectPage() {
                   </div>
                 </div>
               </Link>
-              {apps.length > 1 && (
-                <div className="absolute top-1.5 right-1.5 flex flex-col opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 transition-opacity">
+              {reordering && apps.length > 1 && (
+                <div className="absolute top-1.5 right-1.5 flex flex-col">
                   <button
                     type="button"
                     aria-label={`Move ${app.name} up`}
@@ -155,7 +171,8 @@ export default function ProjectPage() {
               )}
             </div>
           ))}
-        </div>
+          </div>
+        </>
       )}
     </div>
   )
