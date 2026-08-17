@@ -25,6 +25,13 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # Mounted volumes — PVC and ConfigMap volume types
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["create", "get", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "patch", "delete"]
   # Gateway API — HTTPRoute resources for app ingress
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["httproutes"]
