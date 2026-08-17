@@ -32,7 +32,7 @@ function formValueFromTemplate(app: AppTemplate["apps"][number]): AppFormValue {
     slugState: "idle",
     sourceType: app.sourceType,
     deploymentType: app.deploymentType ?? "web",
-    schedule: "",
+    schedule: app.schedule ?? "",
     gitUrl: app.gitUrl ?? "",
     gitBranch: app.gitBranch ?? "main",
     appPath: app.appPath ?? "",

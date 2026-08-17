@@ -9,7 +9,7 @@ const MAX_TEMPLATE_SIZE = 50 * 1024
 const APP_ROW_FIELDS = new Set([
   "name", "slug", "source_type", "deployment_type", "git_url", "git_branch",
   "git_credential_id", "app_path", "image_url", "image_tag",
-  "port", "env", "secrets",
+  "port", "schedule", "env", "secrets",
 ])
 
 function parseTemplateApp(raw: Record<string, unknown>, index: number): TemplateApp {
@@ -37,7 +37,7 @@ function parseTemplateApp(raw: Record<string, unknown>, index: number): Template
 
   const deploymentType = raw.deployment_type
   if (deploymentType !== undefined && deploymentType !== "web" && deploymentType !== "private" && deploymentType !== "cronjob") {
-    throw new ServiceError(`App '${name}': deployment_type must be 'web' or 'private'`, "INVALID_TEMPLATE", 400)
+    throw new ServiceError(`App '${name}': deployment_type must be 'web', 'private', or 'cronjob'`, "INVALID_TEMPLATE", 400)
   }
 
   const env = raw.env
@@ -81,6 +81,7 @@ function parseTemplateApp(raw: Record<string, unknown>, index: number): Template
     imageUrl: typeof raw.image_url === "string" ? raw.image_url : undefined,
     imageTag: typeof raw.image_tag === "string" ? raw.image_tag : undefined,
     port: typeof raw.port === "number" ? raw.port : undefined,
+    schedule: typeof raw.schedule === "string" ? raw.schedule : undefined,
     env: env as Record<string, string> | undefined,
     secrets: secrets
       ? (secrets as Array<string | { name: string; description?: string }>).map((s) =>
