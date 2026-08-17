@@ -231,6 +231,16 @@ export async function createDeployment(
     .where("id", "=", appId)
     .executeTakeFirst()
 
+  // Cancel any pending teardown from a previous stop. The new deployment is about to
+  // (re)create the same named K8s resources, so a stale teardown claim for an older
+  // stopped deployment must not be left to delete them out from under it later.
+  await db
+    .updateTable("deployments")
+    .set({ applied_manifest: null })
+    .where("app_id", "=", appId)
+    .where("status", "=", "stopped")
+    .execute()
+
   const snapshot = await buildSnapshot(db, appId)
 
   const id = crypto.randomUUID()
@@ -375,6 +385,16 @@ export async function redeployDeployment(
     .executeTakeFirst()
   const canetteConfig = appRow?.canette_config ?? null
   const snapshot = await buildSnapshot(db, access.app_id)
+
+  // Cancel any pending teardown from a previous stop. The new deployment is about to
+  // (re)create the same named K8s resources, so a stale teardown claim for an older
+  // stopped deployment must not be left to delete them out from under it later.
+  await db
+    .updateTable("deployments")
+    .set({ applied_manifest: null })
+    .where("app_id", "=", access.app_id)
+    .where("status", "=", "stopped")
+    .execute()
 
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
