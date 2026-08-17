@@ -114,6 +114,7 @@ export interface Database {
     password_gate_password_hash: string | null
     live_url: string | null
     canette_config: string | null
+    position: number
     created_at: string
     updated_at: string
   }

@@ -80,6 +80,8 @@ export interface App {
   liveUrl?: string
   latestDeploymentStatus?: DeploymentStatus
   canetteConfig?: string
+  // Manual sort order within the project, shared across the team — lower sorts first.
+  position: number
   createdAt: string
   updatedAt: string
 }

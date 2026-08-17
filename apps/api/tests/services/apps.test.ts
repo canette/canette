@@ -6,7 +6,7 @@ import { createTestDb } from "../utils/sqlite"
 
 const db = createTestDb()
 
-import { createApp, updateApp } from "../../src/services/apps";
+import { createApp, listApps, moveApp, updateApp } from "../../src/services/apps";
 
 describe("services/apps", () => {
 
@@ -103,6 +103,7 @@ describe("services/apps", () => {
       name: "Existing App",
       slug: "existing-app",
       source_type: "git",
+      deployment_type: "web",
       git_url: "https://github.com/canette/canette",
       git_branch: "main",
       git_credential_id: null,
@@ -110,8 +111,10 @@ describe("services/apps", () => {
       image_url: "",
       image_tag: "",
       port: 3000,
+      password_gate_enabled: false,
       live_url: null,
       canette_config: null,
+      position: 0,
       created_at: now,
       updated_at: now,
     }).execute()
@@ -351,6 +354,101 @@ describe("services/apps", () => {
         gitCredentialId: null,
       })
       expect(result).toMatchObject({ gitCredentialId: undefined })
+    })
+  })
+
+  describe("ordering", () => {
+    const orderProjectId = "orderProjectId"
+
+    beforeAll(async () => {
+      const now = new Date().toISOString()
+      await db.insertInto("projects").values({
+        id: orderProjectId,
+        team_id: "teamId",
+        name: "Order Project",
+        slug: "order-project",
+        description: null,
+        created_by: "userId",
+        created_at: now,
+        updated_at: now,
+      }).execute()
+    })
+
+    it("createApp: assigns increasing positions within a project", async () => {
+      const a = await createApp(db, orderProjectId, "userId", {
+        name: "A", slug: "order-a", sourceType: "git", gitUrl: "https://github.com/canette/canette",
+      })
+      const b = await createApp(db, orderProjectId, "userId", {
+        name: "B", slug: "order-b", sourceType: "git", gitUrl: "https://github.com/canette/canette",
+      })
+      const c = await createApp(db, orderProjectId, "userId", {
+        name: "C", slug: "order-c", sourceType: "git", gitUrl: "https://github.com/canette/canette",
+      })
+      expect(a.position).toBe(0)
+      expect(b.position).toBe(1)
+      expect(c.position).toBe(2)
+
+      const list = await listApps(db, orderProjectId, "userId")
+      expect(list?.items.map((i) => i.slug)).toEqual(["order-a", "order-b", "order-c"])
+    })
+
+    it("moveApp: swaps with the previous app on 'up'", async () => {
+      const list = await listApps(db, orderProjectId, "userId")
+      const c = list!.items[2]
+      const updated = await moveApp(db, c.id, "userId", "up")
+      expect(updated?.map((i) => i.slug)).toEqual(["order-a", "order-c", "order-b"])
+    })
+
+    it("moveApp: swaps with the next app on 'down'", async () => {
+      const list = await listApps(db, orderProjectId, "userId")
+      const first = list!.items[0]
+      const updated = await moveApp(db, first.id, "userId", "down")
+      expect(updated?.[1].slug).toBe(first.slug)
+    })
+
+    it("moveApp: no-ops at the top edge", async () => {
+      const list = await listApps(db, orderProjectId, "userId")
+      const before = list!.items.map((i) => i.slug)
+      const updated = await moveApp(db, list!.items[0].id, "userId", "up")
+      expect(updated?.map((i) => i.slug)).toEqual(before)
+    })
+
+    it("moveApp: no-ops at the bottom edge", async () => {
+      const list = await listApps(db, orderProjectId, "userId")
+      const before = list!.items.map((i) => i.slug)
+      const bottom = list!.items[list!.items.length - 1]
+      const updated = await moveApp(db, bottom.id, "userId", "down")
+      expect(updated?.map((i) => i.slug)).toEqual(before)
+    })
+
+    it("moveApp: returns null when the user has no access to the app", async () => {
+      const list = await listApps(db, orderProjectId, "userId")
+      const result = await moveApp(db, list!.items[0].id, "someOtherUserId", "up")
+      expect(result).toBeNull()
+    })
+
+    it("createApp: positions are scoped per project, not global", async () => {
+      const now = new Date().toISOString()
+      await db.insertInto("projects").values({
+        id: "otherOrderProjectId",
+        team_id: "teamId",
+        name: "Other Order Project",
+        slug: "other-order-project",
+        description: null,
+        created_by: "userId",
+        created_at: now,
+        updated_at: now,
+      }).execute()
+      const other = await createApp(db, "otherOrderProjectId", "userId", {
+        name: "Other", slug: "other-order-app", sourceType: "git", gitUrl: "https://github.com/canette/canette",
+      })
+      expect(other.position).toBe(0)
+
+      // moving the only app in its own project is a no-op and must not touch orderProjectId
+      const before = await listApps(db, orderProjectId, "userId")
+      await moveApp(db, other.id, "userId", "down")
+      const after = await listApps(db, orderProjectId, "userId")
+      expect(after?.items.map((i) => i.slug)).toEqual(before?.items.map((i) => i.slug))
     })
   })
 });

@@ -468,13 +468,16 @@ export async function resetStuckBuilds(db: DB): Promise<SyncResult> {
 
 export async function forceSyncLiveApps(db: DB): Promise<SyncResult> {
   const now = new Date().toISOString()
-  // Reset the latest-live deployment for every app back to 'deploying'.
-  // The controller picks it up on the next poll and re-applies K8s manifests.
+  // Reset the latest-live deployment for every app back to 'pending_deployment'.
+  // The controller's ClaimDeploying query only claims rows in that state (it
+  // atomically transitions pending_deployment -> deploying itself); setting
+  // 'deploying' directly here would never be picked up and the row would be
+  // stuck forever.
   // Server-side apply is idempotent — if resources are already correct this is a no-op.
   // The self-referential subquery is kept as sql tag for clarity.
   const result = await sql<{ count: string }>`
     UPDATE deployments
-    SET status = 'deploying', error_message = NULL, updated_at = ${now}
+    SET status = 'pending_deployment', error_message = NULL, updated_at = ${now}
     WHERE status = 'live'
       AND id IN (
         SELECT id FROM deployments d2

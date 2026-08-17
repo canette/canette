@@ -3,6 +3,7 @@ import type { EnvVar } from "@canette/types"
 import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { ServiceError } from "./errors"
+import { RESERVED_ENV_KEYS } from "./reserved-env-keys"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
@@ -48,6 +49,13 @@ export async function upsertEnvVar(
     throw new ServiceError(
       "Key must be uppercase letters, digits, and underscores, starting with a letter or underscore",
       "VALIDATION_ERROR",
+      400
+    )
+  }
+  if (RESERVED_ENV_KEYS.has(key)) {
+    throw new ServiceError(
+      `${key} is set automatically by canette and can't be overridden — configure the runtime port instead`,
+      "RESERVED_KEY",
       400
     )
   }

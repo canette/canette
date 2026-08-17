@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
+import { ChevronDown, ChevronUp } from "lucide-react"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui/status-badge"
+import { cn } from "@/lib/utils"
 import type { App, Project } from "@canette/types"
 
 export default function ProjectPage() {
@@ -13,6 +15,30 @@ export default function ProjectPage() {
   const [apps, setApps] = useState<App[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [moving, setMoving] = useState<Set<string>>(new Set())
+
+  async function handleMove(appId: string, direction: "up" | "down") {
+    setMoving((s) => new Set(s).add(appId))
+    try {
+      const r = await fetch(`/api/v1/apps/${appId}/move`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direction }),
+      })
+      if (!r.ok) throw new Error("Failed to reorder")
+      const data = await r.json()
+      setApps(data.items ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to reorder")
+    } finally {
+      setMoving((s) => {
+        const n = new Set(s)
+        n.delete(appId)
+        return n
+      })
+    }
+  }
 
   useEffect(() => {
     fetch(`/api/v1/projects/${slug}`, { credentials: "include" })
@@ -66,30 +92,68 @@ export default function ProjectPage() {
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {apps.map((app) => (
-            <Link key={app.id} href={`/dashboard/projects/${slug}/apps/${app.slug}`} className="block group">
-              <div className="h-full rounded-lg border border-border bg-card p-[15px] transition-colors group-hover:border-border-strong">
-                <div className="flex items-center gap-3">
-                  <div className="size-[34px] rounded-md bg-muted flex items-center justify-center font-mono text-xs font-medium text-muted-foreground shrink-0">
-                    {app.slug.slice(0, 2)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold font-mono tracking-tight truncate">{app.name}</div>
-                    <div className="text-[11.5px] text-tertiary truncate">
-                      {app.sourceType === "image"
-                        ? `image · ${app.imageTag || "latest"}`
-                        : `git · ${app.gitBranch}`}
-                      {app.deploymentType !== "web" && ` · ${app.deploymentType}`}
+          {apps.map((app, index) => (
+            <div key={app.id} className="relative group/card">
+              <Link href={`/dashboard/projects/${slug}/apps/${app.slug}`} className="block h-full">
+                <div className="h-full rounded-lg border border-border bg-card p-[15px] transition-colors group-hover/card:border-border-strong">
+                  <div className="flex items-center gap-3">
+                    <div className="size-[34px] rounded-md bg-muted flex items-center justify-center font-mono text-xs font-medium text-muted-foreground shrink-0">
+                      {app.slug.slice(0, 2)}
                     </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold font-mono tracking-tight truncate">{app.name}</div>
+                      <div className="text-[11.5px] text-tertiary truncate">
+                        {app.sourceType === "image"
+                          ? `image · ${app.imageTag || "latest"}`
+                          : `git · ${app.gitBranch}`}
+                        {app.deploymentType !== "web" && ` · ${app.deploymentType}`}
+                      </div>
+                    </div>
+                    <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
                   </div>
-                  <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
+                  <div className="flex items-center gap-1.5 mt-2.5 text-xs text-tertiary font-mono truncate">
+                    <span className="shrink-0">{app.sourceType === "image" ? "⛁" : "↗"}</span>
+                    <span className="truncate">{app.sourceType === "image" ? app.imageUrl : app.gitUrl}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 mt-2.5 text-xs text-tertiary font-mono truncate">
-                  <span className="shrink-0">{app.sourceType === "image" ? "⛁" : "↗"}</span>
-                  <span className="truncate">{app.sourceType === "image" ? app.imageUrl : app.gitUrl}</span>
+              </Link>
+              {apps.length > 1 && (
+                <div className="absolute top-1.5 right-1.5 flex flex-col opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    aria-label={`Move ${app.name} up`}
+                    disabled={index === 0 || moving.has(app.id)}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      handleMove(app.id, "up")
+                    }}
+                    className={cn(
+                      "h-4 w-5 flex items-center justify-center rounded-t-sm border border-border bg-card text-tertiary",
+                      "hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
+                    )}
+                  >
+                    <ChevronUp className="size-3" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${app.name} down`}
+                    disabled={index === apps.length - 1 || moving.has(app.id)}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      handleMove(app.id, "down")
+                    }}
+                    className={cn(
+                      "h-4 w-5 flex items-center justify-center rounded-b-sm border border-t-0 border-border bg-card text-tertiary",
+                      "hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
+                    )}
+                  >
+                    <ChevronDown className="size-3" />
+                  </button>
                 </div>
-              </div>
-            </Link>
+              )}
+            </div>
           ))}
         </div>
       )}
