@@ -197,7 +197,7 @@ apps:
 
 ### Full-stack with resource limits and health checks
 
-Demonstrates most template fields at once.
+Demonstrates most template fields at once, including a `cronjob` app alongside the always-on ones.
 
 ```yaml
 name: "Full-stack starter"
@@ -266,4 +266,24 @@ apps:
       limits:
         cpu: 500m
         memory: 1Gi
+
+  - name: DB Backup
+    slug: db-backup
+    source_type: git
+    git_url: https://github.com/org/db-backup
+    git_branch: main
+    deployment_type: cronjob
+    schedule: "0 3 * * *"   # every day at 03:00
+    env:
+      DATABASE_URL: "postgresql://app:secret@{{apps.db.slug}}:5432/app"
+    secrets:
+      - name: BACKUP_BUCKET_KEY
+        description: "Write access key for the off-site backup bucket"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
 ```
