@@ -1,0 +1,64 @@
+---
+title: Volumes
+description: Mount persistent storage, ephemeral scratch space, or a config file into an app's container.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+A **volume** mounts storage into an app's container at a given path. canette supports three types, covering persistent data, scratch space, and single-file configuration.
+
+<Callout type="info">
+  Volumes are configured after an app exists, on its settings page. They cannot be set during app creation, in `canette.yaml`, or in a [template](/docs/configuration/templates) — see [Not available at creation time](#not-available-at-creation-time) below.
+</Callout>
+
+## Volume types
+
+| Type | Backed by | Persistence | Config |
+|------|-----------|-------------|--------|
+| **Persistent Volume** (`pvc`) | Kubernetes `PersistentVolumeClaim` | Survives restarts and redeploys | `size` (required, e.g. `5Gi`) |
+| **Ephemeral** (`emptyDir`) | Kubernetes `emptyDir` | Cleared on every pod restart | `size` (optional limit, e.g. `1Gi`) |
+| **Config File** (`configmap`) | Kubernetes `ConfigMap`, mounted via `subPath` | Survives restarts; updated by editing the volume | `content` (required, ≤1 MiB of text) |
+
+Use **Persistent Volume** for databases and anything that needs to survive a redeploy, **Ephemeral** for scratch/cache directories, and **Config File** for mounting a single generated file (e.g. an nginx config or a service account JSON) without baking it into the image.
+
+<Callout type="warn">
+  Adding a **Persistent Volume** locks the app to 1 replica — the underlying disk (e.g. an EBS volume) is `ReadWriteOnce` and can only be attached to one pod at a time. canette rejects the volume if `replicas` in `canette.yaml` is already greater than 1, and rejects raising `replicas` while a PVC is attached.
+</Callout>
+
+## Mount path rules
+
+- Must be an absolute path (starts with `/`), 253 characters or fewer, and must not contain `..` or `//`
+- System directories (`/`, `/etc`, `/usr`, `/var`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/boot`, `/run`, `/root`, `/home`) cannot be used as a **directory** mount point for a Persistent Volume or Ephemeral volume — mounting a directory there would shadow the system tree
+- A **Config File** volume is exempt from that restriction (aside from `/proc`, `/sys`, `/dev`, which are always blocked) since it mounts a single file via `subPath` — e.g. `/etc/nginx/nginx.conf` is fine for a config file but not for a PVC or emptyDir
+- Mount path and volume name must each be unique within the app
+
+## Adding a volume
+
+1. Open the app → **Settings** → **Volumes** tab
+2. Click **Add volume**
+3. Choose a type (**Persistent Volume**, **Ephemeral**, or **Config File**) and enter the mount path
+4. For a Persistent Volume, enter a size (e.g. `5Gi`). For Ephemeral, size is optional. For a Config File, paste the file contents
+5. Click **Add volume**
+
+The volume name used for the underlying Kubernetes resource is derived automatically from the mount path.
+
+<Callout type="info">
+  Volume changes (add, edit, delete) take effect on the next deployment — trigger a redeploy to see them in the running app.
+</Callout>
+
+## Editing and deleting
+
+- **Config File** contents can be edited in place from the Volumes tab (the underlying `ConfigMap` is updated)
+- **Ephemeral** size limits can be changed via the API, but the settings page does not currently expose an edit control for it — remove and re-add the volume to change its size from the UI
+- **Persistent Volume** configuration (size) is immutable after creation — the underlying `PersistentVolumeClaim` already exists and cannot be resized through canette
+- Deleting a Persistent Volume or Config File volume permanently deletes the underlying Kubernetes resource and its data; deleting an Ephemeral volume has no separate cleanup since it never persisted anything
+
+## Not available at creation time
+
+Volumes are intentionally a post-creation, settings-page-only feature:
+
+- The app creation form has no volumes step
+- `canette.yaml` has no `volumes` field — unknown fields there are silently ignored, so adding one has no effect
+- A [`canette-template.yaml`](/docs/configuration/templates) app entry cannot declare volumes either
+
+Create the app first, then add volumes from its settings page.
