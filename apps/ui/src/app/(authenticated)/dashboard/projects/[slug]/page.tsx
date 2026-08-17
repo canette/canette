@@ -4,7 +4,6 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { ArrowUpDown, ChevronDown, ChevronUp } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { cn } from "@/lib/utils"
@@ -161,16 +160,21 @@ export default function ProjectPage() {
           </div>
           {apps.length > 1 && (
             <div className="flex justify-end mt-3">
-              <Button
+              <button
                 type="button"
-                variant={reordering ? "secondary" : "outline"}
-                size="icon"
+                onClick={() => setReordering((v) => !v)}
+                title="Toggle reorder"
                 aria-pressed={reordering}
                 aria-label={reordering ? "Done reordering" : "Reorder apps"}
-                onClick={() => setReordering((v) => !v)}
+                className={cn(
+                  "flex items-center justify-center size-7 rounded-md transition-colors shrink-0",
+                  reordering
+                    ? "text-foreground bg-muted"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                )}
               >
-                <ArrowUpDown className="size-4" />
-              </Button>
+                <ArrowUpDown size={14} />
+              </button>
             </div>
           )}
         </>
