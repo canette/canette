@@ -353,6 +353,13 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 	for k, v := range cfg.Env {
 		envMap[k] = v
 	}
+	// PORT is always injected explicitly from the resolved port above (see
+	// resources.go), so strip any user-supplied PORT here — from a DB env var
+	// or a committed canette.yaml `env:` section — regardless of how it got
+	// into the map. Leaving it in produces two "PORT" entries in the
+	// container's env list, which server-side apply rejects outright (the
+	// list is keyed by name and must be unique).
+	delete(envMap, "PORT")
 
 	volumes := make([]VolumeSpec, 0, len(snap.Volumes))
 	for _, v := range snap.Volumes {

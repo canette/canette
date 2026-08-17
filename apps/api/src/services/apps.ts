@@ -34,6 +34,7 @@ function mapApp(row: AppRow): App {
     liveUrl: row.live_url ?? undefined,
     latestDeploymentStatus: (row.latest_deployment_status as App["latestDeploymentStatus"]) ?? undefined,
     canetteConfig: row.canette_config ?? undefined,
+    position: row.position,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -91,6 +92,7 @@ export async function listApps(
         .as("latest_deployment_status")
     )
     .where("a.project_id", "=", projectId)
+    .orderBy("a.position", "asc")
     .orderBy("a.created_at", "desc")
     .execute()
   const items = rows.map(mapApp)
@@ -266,6 +268,14 @@ export async function createApp(
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
 
+  // New apps append to the end of the project's manual order.
+  const maxPosition = await db
+    .selectFrom("apps")
+    .select((eb) => eb.fn.max("position").as("maxPosition"))
+    .where("project_id", "=", projectId)
+    .executeTakeFirst()
+  const position = (maxPosition?.maxPosition ?? -1) + 1
+
   if (input.gitCredentialId) {
     const credential = await db
       .selectFrom("git_credentials")
@@ -300,6 +310,7 @@ export async function createApp(
         image_tag: sourceType === "image" ? (input.imageTag?.trim() ?? "latest") : "",
         port,
         schedule: deploymentType === "cronjob" ? (input.schedule?.trim() ?? null) : null,
+        position,
         password_gate_enabled: false,
         password_gate_username: null,
         password_gate_password_hash: null,
@@ -473,6 +484,43 @@ export async function updateApp(
     .where("id", "=", appId)
     .executeTakeFirstOrThrow()
   return mapApp(row)
+}
+
+// Swaps an app with its adjacent neighbor in the project's manual order (the
+// order returned by listApps). Renumbers every app in the project to dense
+// 0..N-1 positions in the same transaction — cheap at realistic project sizes,
+// and it's what resolves the all-zero position tie new/pre-existing apps start
+// with, without needing a dialect-sensitive backfill migration.
+export async function moveApp(
+  db: DB,
+  appId: string,
+  userId: string,
+  direction: "up" | "down"
+): Promise<App[] | null> {
+  const app = await getAppById(db, appId, userId)
+  if (!app) return null
+
+  const rows = await db
+    .selectFrom("apps")
+    .select("id")
+    .where("project_id", "=", app.projectId)
+    .orderBy("position", "asc")
+    .orderBy("created_at", "desc")
+    .execute()
+  const ids = rows.map((r) => r.id)
+  const idx = ids.indexOf(appId)
+  const swapIdx = direction === "up" ? idx - 1 : idx + 1
+
+  if (swapIdx >= 0 && swapIdx < ids.length) {
+    ;[ids[idx], ids[swapIdx]] = [ids[swapIdx], ids[idx]]
+    await db.transaction().execute(async (tx) => {
+      for (let i = 0; i < ids.length; i++) {
+        await tx.updateTable("apps").set({ position: i }).where("id", "=", ids[i]).execute()
+      }
+    })
+  }
+
+  return (await listApps(db, app.projectId, userId))?.items ?? []
 }
 
 export async function deleteApp(

@@ -11,6 +11,7 @@ import {
   getAppByRef,
   isAppSlugAvailable,
   listApps,
+  moveApp,
   updateApp,
 } from "../services/apps"
 import {
@@ -131,6 +132,19 @@ appsRouter.patch("/apps/:id", async (c) => {
     if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)
     throw e
   }
+})
+
+// Move an app up or down in its project's manual order (swaps with the adjacent app)
+// POST /api/v1/apps/:id/move
+appsRouter.post("/apps/:id/move", async (c) => {
+  const session = c.get("session")
+  const body = await c.req.json<{ direction: "up" | "down" }>()
+  if (body.direction !== "up" && body.direction !== "down") {
+    return c.json({ error: "direction must be 'up' or 'down'", code: "VALIDATION_ERROR" }, 400)
+  }
+  const items = await moveApp(db, c.req.param("id"), session.user.id, body.direction)
+  if (!items) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  return c.json({ items })
 })
 
 // Delete an app
