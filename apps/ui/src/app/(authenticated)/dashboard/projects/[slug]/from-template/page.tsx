@@ -321,6 +321,7 @@ export default function FromTemplatePage() {
                       updateApp(i, patch)
                     }}
                     projectId={project.id}
+                    projectSlug={project.slug}
                     credentials={credentials}
                     teamId={project.teamId}
                     slugMap={slugMap}

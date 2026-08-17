@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { useSelectedTeam } from "@/lib/team-context"
+import { useDomain } from "@/lib/domain-context"
 import * as api from "@/lib/api"
 import type { Team } from "@canette/types"
 
@@ -34,6 +35,7 @@ export default function NewProjectPage() {
   const [submitting, setSubmitting] = useState(false)
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const domain = useDomain()
   const { selectedTeamId } = useSelectedTeam()
   const [teams, setTeams] = useState<Team[]>([])
   const [teamId, setTeamId] = useState<string>("")
@@ -150,6 +152,11 @@ export default function NewProjectPage() {
                   slugState === "available" ? "border-success" : "",
                 )} />
               <p className="text-xs min-h-[1rem]">{slugHint}</p>
+              {slug && domain && (
+                <p className="text-xs text-muted-foreground pl-1">
+                  Your apps' URLs will look like: <code className="font-mono"><span className="italic">&lt;app&gt;</span>-{slug}.{domain}</code>
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col gap-1.5">

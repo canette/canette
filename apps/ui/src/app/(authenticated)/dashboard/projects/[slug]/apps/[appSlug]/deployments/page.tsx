@@ -1,72 +1,73 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import Link from "next/link"
+import { useState } from "react"
 import { useParams } from "next/navigation"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog } from "@/components/ui/dialog"
 import { FormError } from "@/components/ui/form-error"
 import { Separator } from "@/components/ui/separator"
-import { Loader2, ShieldAlert, ShieldCheck } from "lucide-react"
-import { StatusDot, StatusLabel } from "@/components/ui/status-badge"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Loader2 } from "lucide-react"
 import { ManifestDialog } from "@/components/manifest-dialog"
+import { DeploymentRow } from "@/components/deployment-row"
+import { DeployActionBar } from "@/components/deploy-action-bar"
+import { StopAppDialog } from "@/components/stop-app-dialog"
 import { useAppContext } from "@/lib/app-context"
-import * as api from "@/lib/api"
-import { ApiError } from "@/lib/api"
-import { shortSha, timeAgo, formatHistoricalStatus } from "@/lib/deployment-format"
+import { useDeploymentActions } from "@/lib/use-deployment-actions"
+import { formatHistoricalStatus } from "@/lib/deployment-format"
 import type { Deployment } from "@canette/types"
-
-function ScanBadge({ deployment }: { deployment: Deployment }) {
-  const summary = deployment.scanSummary
-  if (!deployment.scanStatus || deployment.scanStatus === "skipped") return null
-
-  if (deployment.scanStatus === "error")
-    return <Badge variant="muted" className="gap-1"><ShieldAlert className="h-3 w-3" />Scan error</Badge>
-
-  if (deployment.scanStatus === "fail") {
-    const badge = <Badge variant="failed" className="gap-1"><ShieldAlert className="h-3 w-3" />Scan failed</Badge>
-    if (!summary) return badge
-    return (
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild><span>{badge}</span></TooltipTrigger>
-          <TooltipContent>
-            {summary.critical} critical · {summary.high} high · {summary.medium} medium · {summary.low} low · {summary.unknown} unknown
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    )
-  }
-
-  return <Badge variant="live" className="gap-1"><ShieldCheck className="h-3 w-3" />Scan clean</Badge>
-}
 
 export default function DeploymentsPage() {
   const { slug, appSlug } = useParams<{ slug: string; appSlug: string }>()
-  const { app } = useAppContext()
-  const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
+  const { app, refresh } = useAppContext()
+
+  const {
+    deploymentList,
+    loading,
+    loadError,
+    hasActiveDeployment,
+    liveDeployment,
+    currentDeployment,
+    canRedeploy,
+    canRedeployDeployment,
+    deploy,
+    redeploy,
+    stop,
+    deploying,
+    redeployingId,
+    stopping,
+    actionError,
+  } = useDeploymentActions(app.id, { limit: 50, onSettled: refresh })
+
+  const [showStopConfirm, setShowStopConfirm] = useState(false)
   const [manifestDeployment, setManifestDeployment] = useState<Deployment | null>(null)
 
-  useEffect(() => {
-    api.deployments.list(app.id, 50)
-      .then((r) => { setDeploymentList(r.items); setLoadError("") })
-      .catch((e: unknown) => {
-        const status = e instanceof ApiError ? ` (HTTP ${e.status})` : ""
-        setLoadError(`Failed to load deployments${status}: ${e instanceof Error ? e.message : "unknown error"}`)
-      })
-      .finally(() => setLoading(false))
-  }, [app.id])
+  async function handleStop() {
+    await stop()
+    setShowStopConfirm(false)
+  }
 
   const appBase = `/dashboard/projects/${slug}/apps/${appSlug}`
 
   return (
     <div className="flex flex-col gap-6">
+      {actionError && <p className="text-sm text-destructive">{actionError}</p>}
       {loadError && <FormError message={loadError} />}
+
+      <div className="flex gap-2 flex-wrap">
+        <DeployActionBar
+          sourceType={app.sourceType}
+          canRedeploy={canRedeploy}
+          currentDeployment={currentDeployment}
+          hasActiveDeployment={hasActiveDeployment}
+          deploying={deploying}
+          redeployingId={redeployingId}
+          stopping={stopping}
+          onDeploy={deploy}
+          onRedeploy={redeploy}
+          onStopClick={() => setShowStopConfirm(true)}
+        />
+      </div>
+
       <Card>
         <CardHeader><CardTitle className="text-base">History</CardTitle></CardHeader>
         <CardContent className="p-0">
@@ -80,48 +81,26 @@ export default function DeploymentsPage() {
             deploymentList.map((d, i) => (
               <div key={d.id}>
                 {i > 0 && <Separator />}
-                <div className="flex items-center gap-3.5 px-6 py-3">
-                  <StatusDot status={d.status} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium truncate">
-                        {d.commitMessage || shortSha(d.commitSha)}
-                      </span>
-                      <ScanBadge deployment={d} />
-                    </div>
-                    <div className="text-[11.5px] text-tertiary font-mono truncate">
-                      {shortSha(d.commitSha)} · {timeAgo(d.createdAt)}
-                    </div>
-                  </div>
-                  <StatusLabel status={d.status} label={formatHistoricalStatus(d.status)} className="shrink-0" />
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button size="sm" variant="ghost" className="h-7 px-2" asChild>
-                      <Link href={`${appBase}/logs?mode=build&deployment=${d.id}`}>Logs</Link>
-                    </Button>
-                    {d.status === "live" && (
-                      <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setManifestDeployment(d)}>Manifest</Button>
-                    )}
-                    {d.hasSbom && (d.scanStatus === "pass" || d.scanStatus === "fail") && (
-                      <Button size="sm" variant="ghost" className="h-7 px-2" onClick={async () => {
-                        try {
-                          const { sbom } = await api.deployments.sbom(d.id)
-                          const blob = new Blob([sbom], { type: "application/json" })
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement("a")
-                          a.href = url
-                          a.download = `sbom-${shortSha(d.commitSha)}.json`
-                          a.click()
-                          URL.revokeObjectURL(url)
-                        } catch { /* no sbom */ }
-                      }}>SBOM</Button>
-                    )}
-                  </div>
-                </div>
+                <DeploymentRow
+                  deployment={d}
+                  appBase={appBase}
+                  isCurrent={d.id === liveDeployment?.id}
+                  formatStatusLabel={formatHistoricalStatus}
+                  onManifest={setManifestDeployment}
+                  showSbom
+                  onRedeploy={redeploy}
+                  canRedeploy={canRedeployDeployment(d)}
+                  redeploying={redeployingId === d.id}
+                />
               </div>
             ))
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={showStopConfirm} onOpenChange={(o) => { if (!o) setShowStopConfirm(false) }}>
+        <StopAppDialog onConfirm={handleStop} onClose={() => setShowStopConfirm(false)} stopping={stopping} />
+      </Dialog>
 
       <Dialog open={!!manifestDeployment} onOpenChange={(o) => { if (!o) setManifestDeployment(null) }}>
         {manifestDeployment && <ManifestDialog deploymentId={manifestDeployment.id} onClose={() => setManifestDeployment(null)} />}

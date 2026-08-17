@@ -118,6 +118,7 @@ export default function NewAppPage() {
                 value={form}
                 onChange={handleChange}
                 projectId={project.id}
+                projectSlug={project.slug}
                 credentials={credentials}
                 teamId={project.teamId}
                 parseGitUrl

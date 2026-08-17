@@ -269,3 +269,8 @@ export const env = {
   deleteSecret: (appId: string, key: string) =>
     request<void>(`/apps/${appId}/secrets/${encodeURIComponent(key)}`, { method: "DELETE" }),
 }
+
+// Platform config
+export const config = {
+  get: () => request<{ domain: string }>("/config"),
+}

@@ -57,6 +57,11 @@ export function createApp() {
       return c.json({ mode, magicLinkEnabled: emailProviderConfigured })
     })
 
+    // Public: platform base domain, so the UI can preview app URLs before deploy.
+    app.get("/api/v1/config", (c) => {
+      return c.json({ domain: process.env.DOMAIN ?? "" })
+    })
+
     // Signup interceptor — always registered before better-auth's catch-all.
     // getSignupMode folds in the DISABLE_EMAIL_SIGNUP Helm override so callers
     // only need to check the returned mode.
