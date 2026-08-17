@@ -1,166 +1,54 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
-import { ExternalLink, Info, ShieldAlert, ShieldCheck } from "lucide-react"
-import { StatusBadge, StatusDot, StatusLabel, formatStatus } from "@/components/ui/status-badge"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { ManifestDialog } from "@/components/manifest-dialog"
+import { Info } from "lucide-react"
+import { StatusBadge } from "@/components/ui/status-badge"
 import { AppMetricsSummary } from "@/components/app-metrics-summary"
-import { HostnameAltMenu } from "@/components/hostname-alt-menu"
+import { DeploymentRow } from "@/components/deployment-row"
+import { DeployActionBar } from "@/components/deploy-action-bar"
+import { StopAppDialog } from "@/components/stop-app-dialog"
 import { FormError } from "@/components/ui/form-error"
 import { useAppContext } from "@/lib/app-context"
-import * as api from "@/lib/api"
-import { ApiError } from "@/lib/api"
+import { useDeploymentActions } from "@/lib/use-deployment-actions"
 import { shortSha, timeAgo, formatHistoricalStatus } from "@/lib/deployment-format"
-import type { Deployment } from "@canette/types"
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function ScanBadge({ deployment }: { deployment: Deployment }) {
-  const summary = deployment.scanSummary
-  if (!deployment.scanStatus || deployment.scanStatus === "skipped") return null
-
-  if (deployment.scanStatus === "error")
-    return <Badge variant="muted" className="gap-1"><ShieldAlert className="h-3 w-3" />Scan error</Badge>
-
-  if (deployment.scanStatus === "fail") {
-    const badge = <Badge variant="failed" className="gap-1"><ShieldAlert className="h-3 w-3" />Scan failed</Badge>
-    if (!summary) return badge
-    return (
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild><span>{badge}</span></TooltipTrigger>
-          <TooltipContent>
-            {summary.critical} critical · {summary.high} high · {summary.medium} medium · {summary.low} low · {summary.unknown} unknown
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    )
-  }
-
-  return <Badge variant="live" className="gap-1"><ShieldCheck className="h-3 w-3" />Scan clean</Badge>
-}
-
-// ── stop confirm dialog ───────────────────────────────────────────────────────
-
-function StopDialog({ onConfirm, onClose, stopping }: { onConfirm: () => void; onClose: () => void; stopping: boolean }) {
-  const [confirmed, setConfirmed] = useState(false)
-  return (
-    <DialogContent aria-describedby={undefined}>
-      <DialogHeader><DialogTitle>Stop app?</DialogTitle></DialogHeader>
-      <div className="px-6 pb-6 flex flex-col gap-4">
-        <p className="text-sm text-muted-foreground">This will terminate the running deployment. The app will be unavailable until you redeploy.</p>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <Checkbox checked={confirmed} onCheckedChange={(v) => setConfirmed(!!v)} />
-          <span className="text-sm">Yes, stop this app</span>
-        </label>
-        <div className="flex gap-2 justify-end">
-          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button variant="destructive" size="sm" disabled={!confirmed || stopping} onClick={onConfirm}>
-            {stopping ? "Stopping…" : "Stop app"}
-          </Button>
-        </div>
-      </div>
-    </DialogContent>
-  )
-}
-
-// ── overview page ─────────────────────────────────────────────────────────────
 
 export default function AppOverviewPage() {
   const { slug: projectSlug, appSlug } = useParams<{ slug: string; appSlug: string }>()
-  const { app, project, refresh, hostnames } = useAppContext()
+  const { app, project, refresh } = useAppContext()
 
-  const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
-  const [loadingDeps, setLoadingDeps] = useState(true)
-  const [loadDepsError, setLoadDepsError] = useState("")
+  const {
+    deploymentList,
+    loading: loadingDeps,
+    loadError: loadDepsError,
+    hasActiveDeployment,
+    liveDeployment,
+    latestDeployment,
+    currentDeployment,
+    canRedeploy,
+    deploy,
+    redeploy,
+    stop,
+    deploying,
+    redeployingId,
+    stopping,
+    actionError,
+  } = useDeploymentActions(app.id, { onSettled: refresh })
 
-  const [deploying, setDeploying] = useState(false)
-  const [redeploying, setRedeploying] = useState(false)
-  const [stopping, setStopping] = useState(false)
-  const [actionError, setActionError] = useState("")
   const [showStopConfirm, setShowStopConfirm] = useState(false)
 
-  const [manifestDeployment, setManifestDeployment] = useState<Deployment | null>(null)
-
-  const loadDeployments = useCallback(async () => {
-    try {
-      const data = await api.deployments.list(app.id)
-      setDeploymentList(data.items)
-      setLoadDepsError("")
-    } catch (e: unknown) {
-      const status = e instanceof ApiError ? ` (HTTP ${e.status})` : ""
-      setLoadDepsError(`Failed to load deployments${status}: ${e instanceof Error ? e.message : "unknown error"}`)
-    } finally {
-      setLoadingDeps(false)
-    }
-  }, [app.id])
-
-  useEffect(() => { loadDeployments() }, [loadDeployments])
-
-  const hasActiveDeployment = deploymentList.some(
-    (d) => ["pending_build", "building", "scanning", "pending_deployment", "deploying"].includes(d.status)
-  )
-  const liveDeployment = deploymentList.find((d) => d.status === "live")
-  const latestDeployment = deploymentList[0]
-  const currentDeployment = liveDeployment ?? latestDeployment
   const showLatestBuildRow = !!(liveDeployment && latestDeployment && latestDeployment.id !== liveDeployment.id)
-  const canRedeploy = !!(
-    currentDeployment?.imageDigest &&
-    !hasActiveDeployment &&
-    ["live", "failed", "stopped"].includes(currentDeployment.status)
-  )
-
-  // Auto-refresh while active
-  useEffect(() => {
-    if (!hasActiveDeployment) return
-    const interval = setInterval(() => { loadDeployments(); refresh() }, 3000)
-    return () => clearInterval(interval)
-  }, [hasActiveDeployment, loadDeployments, refresh])
-
-  async function handleDeploy() {
-    setActionError("")
-    setDeploying(true)
-    try {
-      await api.deployments.trigger(app.id)
-      await Promise.all([loadDeployments(), refresh()])
-    } catch (e: unknown) {
-      setActionError(e instanceof Error ? e.message : "Deploy failed")
-    } finally { setDeploying(false) }
-  }
-
-  async function handleRedeploy(deploymentId: string) {
-    setActionError("")
-    setRedeploying(true)
-    try {
-      await api.deployments.redeploy(deploymentId)
-      await Promise.all([loadDeployments(), refresh()])
-    } catch (e: unknown) {
-      setActionError(e instanceof Error ? e.message : "Redeploy failed")
-    } finally { setRedeploying(false) }
-  }
 
   async function handleStop() {
-    setActionError("")
-    setStopping(true)
-    try {
-      await api.apps.stop(app.id)
-      setShowStopConfirm(false)
-      await Promise.all([loadDeployments(), refresh()])
-    } catch (e: unknown) {
-      setActionError(e instanceof Error ? e.message : "Stop failed")
-    } finally { setStopping(false) }
+    await stop()
+    setShowStopConfirm(false)
   }
 
-  const recentDeployments = deploymentList
   const appBase = `/dashboard/projects/${projectSlug}/apps/${appSlug}`
   const sourceSummary = app.sourceType === "git"
     ? [app.gitUrl.replace(/^https?:\/\//, ""), app.gitBranch, app.appPath].filter(Boolean).join(" · ")
@@ -173,21 +61,16 @@ export default function AppOverviewPage() {
       {/* Status card */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col gap-1">
-              <CardTitle className="text-base">Status</CardTitle>
-              {currentDeployment ? (
-                <CardDescription>
-                  <span className="font-mono">{shortSha(currentDeployment.commitSha)}</span>
-                  {currentDeployment.commitMessage && ` — ${currentDeployment.commitMessage}`}
-                  <span className="ml-2 text-xs">{timeAgo(currentDeployment.createdAt)}</span>
-                </CardDescription>
-              ) : (
-                <CardDescription>Not deployed yet</CardDescription>
-              )}
-            </div>
-            <StatusBadge status={currentDeployment?.status} label={currentDeployment ? formatStatus(currentDeployment.status) : "Not deployed"} />
-          </div>
+          <CardTitle className="text-base">Status</CardTitle>
+          {currentDeployment ? (
+            <CardDescription>
+              <span className="font-mono">{shortSha(currentDeployment.commitSha)}</span>
+              {currentDeployment.commitMessage && ` — ${currentDeployment.commitMessage}`}
+              <span className="ml-2 text-xs">{timeAgo(currentDeployment.createdAt)}</span>
+            </CardDescription>
+          ) : (
+            <CardDescription>Not deployed yet</CardDescription>
+          )}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {actionError && <p className="text-sm text-destructive">{actionError}</p>}
@@ -215,17 +98,6 @@ export default function AppOverviewPage() {
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5">
               <p className="text-xs font-medium text-destructive mb-1">Build failed</p>
               <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">{currentDeployment.errorMessage}</p>
-            </div>
-          )}
-          {liveDeployment && app.liveUrl && app.deploymentType !== "private" && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <a href={app.liveUrl} target="_blank" rel="noopener noreferrer"
-                className="group flex items-center gap-2 w-fit rounded-md border border-border px-3 py-1.5 text-sm font-mono hover:border-foreground/30 transition-colors">
-                <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
-                {app.liveUrl}
-                <ExternalLink size={12} className="text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
-              </a>
-              <HostnameAltMenu primaryUrl={app.liveUrl} hostnames={hostnames} />
             </div>
           )}
           {app.deploymentType === "private" && app.liveUrl && (
@@ -259,24 +131,18 @@ export default function AppOverviewPage() {
             </div>
           )}
           <div className="flex gap-2 flex-wrap">
-            {canRedeploy ? (
-              <>
-                <Button size="sm" onClick={() => handleRedeploy(currentDeployment!.id)} disabled={redeploying}>
-                  {redeploying ? "Redeploying…" : "Redeploy"}
-                </Button>
-                <Button size="sm" variant="outline" onClick={handleDeploy} disabled={deploying}>
-                  {app.sourceType === "git" ? "Rebuild" : "Deploy new"}
-                </Button>
-              </>
-            ) : (
-              <Button size="sm" onClick={handleDeploy} disabled={deploying || hasActiveDeployment}>
-                {deploying ? "Deploying…" : hasActiveDeployment ? "In progress…" : "Deploy"}
-              </Button>
-            )}
-            <Button size="sm" variant="outline" onClick={() => setShowStopConfirm(true)}
-              disabled={stopping || !currentDeployment || !["live", "failed"].includes(currentDeployment.status)}>
-              Stop
-            </Button>
+            <DeployActionBar
+              sourceType={app.sourceType}
+              canRedeploy={canRedeploy}
+              currentDeployment={currentDeployment}
+              hasActiveDeployment={hasActiveDeployment}
+              deploying={deploying}
+              redeployingId={redeployingId}
+              stopping={stopping}
+              onDeploy={deploy}
+              onRedeploy={redeploy}
+              onStopClick={() => setShowStopConfirm(true)}
+            />
             {latestDeployment && (
               <Button size="sm" variant="ghost" asChild>
                 <Link href={`${appBase}/logs?mode=build&deployment=${latestDeployment.id}`}>Deploy logs</Link>
@@ -294,7 +160,7 @@ export default function AppOverviewPage() {
       </Card>
 
       {/* Recent deployments */}
-      {!loadingDeps && recentDeployments.length > 0 && (
+      {!loadingDeps && deploymentList.length > 0 && (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -305,35 +171,16 @@ export default function AppOverviewPage() {
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            {recentDeployments.map((d, i) => (
+            {deploymentList.map((d, i) => (
               <div key={d.id}>
                 {i > 0 && <Separator />}
-                <div className="flex items-center gap-3.5 px-6 py-3">
-                  <StatusDot status={d.status} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium truncate">
-                        {d.commitMessage || shortSha(d.commitSha)}
-                      </span>
-                      {d.id === liveDeployment?.id && (
-                        <span className="text-[10.5px] font-medium text-success-text bg-success-soft px-1.5 py-px rounded-sm shrink-0">Current</span>
-                      )}
-                      <ScanBadge deployment={d} />
-                    </div>
-                    <div className="text-[11.5px] text-tertiary font-mono truncate">
-                      {shortSha(d.commitSha)} · {timeAgo(d.createdAt)}
-                    </div>
-                  </div>
-                  <StatusLabel status={d.status} label={formatHistoricalStatus(d.status)} className="shrink-0" />
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button size="sm" variant="ghost" className="h-7 px-2" asChild>
-                      <Link href={`${appBase}/logs?mode=build&deployment=${d.id}`}>Logs</Link>
-                    </Button>
-                    {d.status === "live" && (
-                      <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setManifestDeployment(d)}>Manifest</Button>
-                    )}
-                  </div>
-                </div>
+                <DeploymentRow
+                  deployment={d}
+                  appBase={appBase}
+                  isCurrent={d.id === liveDeployment?.id}
+                  formatStatusLabel={formatHistoricalStatus}
+                  showLogs={false}
+                />
               </div>
             ))}
           </CardContent>
@@ -342,11 +189,7 @@ export default function AppOverviewPage() {
 
       {/* Dialogs */}
       <Dialog open={showStopConfirm} onOpenChange={(o) => { if (!o) setShowStopConfirm(false) }}>
-        <StopDialog onConfirm={handleStop} onClose={() => setShowStopConfirm(false)} stopping={stopping} />
-      </Dialog>
-
-      <Dialog open={!!manifestDeployment} onOpenChange={(o) => { if (!o) setManifestDeployment(null) }}>
-        {manifestDeployment && <ManifestDialog deploymentId={manifestDeployment.id} onClose={() => setManifestDeployment(null)} />}
+        <StopAppDialog onConfirm={handleStop} onClose={() => setShowStopConfirm(false)} stopping={stopping} />
       </Dialog>
     </div>
   )

@@ -2,6 +2,7 @@
 
 import { useSession } from "@/lib/auth-client"
 import { SessionProvider } from "@/lib/session-context"
+import { DomainProvider } from "@/lib/domain-context"
 import { AppLayout } from "@/components/app-layout"
 
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
@@ -39,9 +40,11 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
 
   return (
     <SessionProvider value={session.user}>
-      <AppLayout>
-        {children}
-      </AppLayout>
+      <DomainProvider>
+        <AppLayout>
+          {children}
+        </AppLayout>
+      </DomainProvider>
     </SessionProvider>
   )
 }

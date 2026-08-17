@@ -21,3 +21,8 @@ export function formatDuration(startedAt: string, finishedAt: string): string {
   if (secs < 60) return `${secs}s`
   return `${Math.floor(secs / 60)}m ${secs % 60}s`
 }
+
+/** Mirrors the hostname the controller assigns web apps (apps/controller/internal/k8s/resources.go). */
+export function computeAppUrl(appSlug: string, projectSlug: string, domain: string) {
+  return `https://${appSlug}-${projectSlug}.${domain}`
+}

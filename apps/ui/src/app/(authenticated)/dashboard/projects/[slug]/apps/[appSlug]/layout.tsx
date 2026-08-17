@@ -8,12 +8,15 @@ import { StatusBadge } from "@/components/ui/status-badge"
 import { HostnameAltMenu } from "@/components/hostname-alt-menu"
 import { ExternalLink } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
+import { useDomain } from "@/lib/domain-context"
+import { computeAppUrl } from "@/lib/deployment-format"
 import * as api from "@/lib/api"
 import type { App, AppHostname, Project } from "@canette/types"
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { slug, appSlug } = useParams<{ slug: string; appSlug: string }>()
   const pathname = usePathname()
+  const domain = useDomain()
   const [app, setApp] = useState<App | null>(null)
   const [project, setProject] = useState<Project | null>(null)
   const [hostnames, setHostnames] = useState<AppHostname[]>([])
@@ -39,6 +42,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { load() }, [load])
 
+  const computedUrl = app && project && domain && app.deploymentType === "web"
+    ? computeAppUrl(app.slug, project.slug, domain)
+    : null
+  const isLive = app?.latestDeploymentStatus === "live"
+
   const appBase = `/dashboard/projects/${slug}/apps/${appSlug}`
   const isOverview = pathname === appBase || pathname === `${appBase}/`
   const isDeployments = pathname.startsWith(`${appBase}/deployments`)
@@ -58,18 +66,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <h1 className="text-xl font-semibold font-mono tracking-tight truncate">{app.name}</h1>
                 <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
               </div>
-              {app.liveUrl && app.deploymentType !== "private" && (
+              {computedUrl && (
                 <div className="flex items-center gap-1.5">
-                  <a
-                    href={app.liveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[13px] font-mono text-accent-text hover:underline"
-                  >
-                    {app.liveUrl.replace(/^https?:\/\//, "")}
-                    <ExternalLink size={11} className="shrink-0" />
-                  </a>
-                  <HostnameAltMenu primaryUrl={app.liveUrl} hostnames={hostnames} />
+                  {isLive ? (
+                    <a
+                      href={computedUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center gap-1.5 w-fit rounded-md border border-border px-2 py-0.5 text-[13px] font-mono hover:border-foreground/30 transition-colors"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
+                      {computedUrl.replace(/^https?:\/\//, "")}
+                      <ExternalLink size={11} className="text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
+                    </a>
+                  ) : (
+                    <span className="flex items-center gap-1.5 w-fit rounded-md border border-dashed border-border px-2 py-0.5 text-[13px] font-mono text-muted-foreground">
+                      <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 shrink-0" />
+                      {computedUrl.replace(/^https?:\/\//, "")}
+                    </span>
+                  )}
+                  {isLive && <HostnameAltMenu primaryUrl={computedUrl} hostnames={hostnames} />}
                 </div>
               )}
             </div>

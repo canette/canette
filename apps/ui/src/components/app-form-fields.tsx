@@ -12,6 +12,8 @@ import { HelpTooltip } from "@/components/ui/tooltip"
 import { CredentialSelect } from "@/components/credential-select"
 import { cn } from "@/lib/utils"
 import { resolveTemplateVars, hasTemplateVars } from "@/lib/template"
+import { useDomain } from "@/lib/domain-context"
+import { computeAppUrl } from "@/lib/deployment-format"
 import type { GitCredential } from "@canette/types"
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -128,6 +130,7 @@ type AppFormFieldsProps = {
   value: AppFormValue
   onChange: (patch: Partial<AppFormValue>) => void
   projectId: string
+  projectSlug: string
   credentials: GitCredential[]
   teamId?: string
   // Template-only: slugMap for {{apps.X.slug}} resolution display in env values
@@ -148,6 +151,7 @@ export function AppFormFields({
   value,
   onChange,
   projectId,
+  projectSlug,
   credentials,
   teamId,
   slugMap,
@@ -156,6 +160,7 @@ export function AppFormFields({
   autoFocus = false,
   hideSourceToggle = false,
 }: AppFormFieldsProps) {
+  const domain = useDomain()
   const slugEdited = useRef(false)
   const [urlParsed, setUrlParsed] = useState(false)
   const [envOpen, setEnvOpen] = useState(() => value.envRows.length > 0)
@@ -261,6 +266,11 @@ export function AppFormFields({
           )}
         />
         <p className="text-xs min-h-[1rem]">{slugHint}</p>
+        {value.slug && domain && value.deploymentType === "web" && (
+          <p className="text-xs text-muted-foreground pl-1">
+            URL: <code className="font-mono">{computeAppUrl(value.slug, projectSlug, domain).replace(/^https?:\/\//, "")}</code>
+          </p>
+        )}
       </div>
 
       {/* Source type toggle */}
