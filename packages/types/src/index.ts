@@ -304,6 +304,7 @@ export interface TemplateApp {
   imageUrl?: string
   imageTag?: string
   port?: number
+  schedule?: string
   env?: Record<string, string>
   secrets?: TemplateSecret[]
   canetteConfig?: string

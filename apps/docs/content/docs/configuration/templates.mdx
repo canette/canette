@@ -36,10 +36,16 @@ apps:
     # image_url: nginx
     # image_tag: latest
 
-    deployment_type: web       # "web" (default) or "private" — see below
-    port: 3000
+    deployment_type: web       # "web" (default), "private", or "cronjob" — see below
+    port: 3000                 # not used for deployment_type: cronjob
+
+    # Only for deployment_type: cronjob — a standard 5-field cron expression
+    # or a predefined schedule (@hourly, @daily, @weekly, @monthly, @yearly, @midnight)
+    # schedule: "0 2 * * *"
 
     # Env vars (plaintext, shown and editable in the wizard)
+    # PORT is reserved — canette injects it automatically from `port` above,
+    # so it cannot be set here or as a secret.
     env:
       KEY: value
 
@@ -73,10 +79,13 @@ The wizard shows a live preview of the resolved value as you type. At creation t
 
 - **`name`** and **`slug`** are the only required fields per app.
 - **`slug`** is a suggestion — the wizard pre-fills it and lets you edit. If a slug is already taken in the project you will be asked to choose another.
-- **`deployment_type`** controls whether a public URL is created. `web` (default) creates a `Deployment` + `Service` + `HTTPRoute`. `private` creates only `Deployment` + `Service` — the app is reachable inside the cluster at `<slug>.<namespace>.svc.cluster.local` but has no public URL. Use `private` for databases, internal APIs, and background services. See [Apps — Visibility](/docs/concepts/apps#visibility-deployment-type).
+- **`deployment_type`** controls what gets created. `web` (default) creates a `Deployment` + `Service` + `HTTPRoute`. `private` creates only `Deployment` + `Service` — the app is reachable inside the cluster at `<slug>.<namespace>.svc.cluster.local` but has no public URL. `cronjob` creates a `CronJob` instead of a `Deployment` and requires `schedule`; `port` is ignored and `PORT` is not injected for cronjob apps. Use `private` for databases and internal APIs, and `cronjob` for scheduled batch jobs. See [Apps — Deployment type](/docs/concepts/apps#deployment-type).
+- **`schedule`** is required when `deployment_type: cronjob` and ignored otherwise. It's a standard 5-field cron expression (e.g. `0 2 * * *`) or a predefined schedule (`@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`, `@midnight`).
+- **`PORT` is a reserved env var.** canette sets it automatically on the container from the app's `port` (for `web`/`private` apps) — it cannot be set via `env` or `secrets` in a template, and the API rejects it the same way it does outside of templates.
 - **Env vars** are shown in the wizard as editable key-value pairs. Values containing `{{apps.X.slug}}` show a resolved preview.
 - **Secrets** listed under `secrets` appear as required password fields in the wizard. Values are encrypted at rest and are never returned by the API. Each entry can be a plain string or an object with `name` and an optional `description` shown as hint text in the wizard.
 - Any field not recognised as an app-row field (`source_type`, `deployment_type`, `git_url`, etc.) is passed through as `canette.yaml` content and stored as the app's advanced configuration. Unknown fields are silently ignored for forward compatibility.
+- **Volumes are not supported in templates.** [Volumes](/docs/configuration/volumes) (PVC / emptyDir / configmap mounts) are always configured after the app exists, on its settings page — there's no `volumes` field in either a template or `canette.yaml`. Add volumes to each app individually after running the wizard.
 
 ---
 
@@ -113,6 +122,30 @@ apps:
     image_url: nginx
     image_tag: "1.27"
     port: 80
+```
+
+---
+
+### Scheduled job (CronJob)
+
+A batch job that runs on a schedule instead of serving traffic. `port` and `env.PORT` don't apply here — cronjob apps never get a `PORT` injected.
+
+```yaml
+name: "Nightly report"
+
+apps:
+  - name: Nightly Report
+    slug: nightly-report
+    source_type: git
+    git_url: https://github.com/org/nightly-report
+    git_branch: main
+    deployment_type: cronjob
+    schedule: "0 2 * * *"   # every day at 02:00
+    env:
+      REPORT_RECIPIENTS: "team@example.com"
+    secrets:
+      - name: SMTP_PASSWORD
+        description: "SMTP relay password for sending the report"
 ```
 
 ---
@@ -164,7 +197,7 @@ apps:
 
 ### Full-stack with resource limits and health checks
 
-Demonstrates most template fields at once.
+Demonstrates most template fields at once, including a `cronjob` app alongside the always-on ones.
 
 ```yaml
 name: "Full-stack starter"
@@ -233,4 +266,24 @@ apps:
       limits:
         cpu: 500m
         memory: 1Gi
+
+  - name: DB Backup
+    slug: db-backup
+    source_type: git
+    git_url: https://github.com/org/db-backup
+    git_branch: main
+    deployment_type: cronjob
+    schedule: "0 3 * * *"   # every day at 03:00
+    env:
+      DATABASE_URL: "postgresql://app:secret@{{apps.db.slug}}:5432/app"
+    secrets:
+      - name: BACKUP_BUCKET_KEY
+        description: "Write access key for the off-site backup bucket"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
 ```

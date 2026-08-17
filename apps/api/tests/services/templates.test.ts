@@ -83,6 +83,22 @@ apps:
     expect(result.apps[0].canetteConfig).toContain("some_future_field")
   })
 
+  it("parses a cronjob app with a schedule", async () => {
+    const yaml = `
+name: test
+apps:
+  - name: Nightly Report
+    slug: nightly-report
+    source_type: git
+    git_url: https://github.com/org/report
+    deployment_type: cronjob
+    schedule: "0 2 * * *"
+`
+    const result = await parseTemplate({ yaml })
+    expect(result.apps[0].deploymentType).toBe("cronjob")
+    expect(result.apps[0].schedule).toBe("0 2 * * *")
+  })
+
   it("defaults source_type to git when omitted", async () => {
     const yaml = `
 name: test
