@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
-import { ChevronDown, ChevronUp } from "lucide-react"
+import { ArrowUpDown, ChevronDown, ChevronUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui/status-badge"
@@ -94,19 +94,6 @@ export default function ProjectPage() {
         </div>
       ) : (
         <>
-          {apps.length > 1 && (
-            <div className="flex justify-end mb-3">
-              <Button
-                type="button"
-                variant={reordering ? "secondary" : "outline"}
-                size="sm"
-                aria-pressed={reordering}
-                onClick={() => setReordering((v) => !v)}
-              >
-                {reordering ? "Done reordering" : "Reorder"}
-              </Button>
-            </div>
-          )}
           <div className="grid gap-3 sm:grid-cols-2">
           {apps.map((app, index) => (
             <div key={app.id} className="relative group/card">
@@ -172,6 +159,20 @@ export default function ProjectPage() {
             </div>
           ))}
           </div>
+          {apps.length > 1 && (
+            <div className="flex justify-end mt-3">
+              <Button
+                type="button"
+                variant={reordering ? "secondary" : "outline"}
+                size="icon"
+                aria-pressed={reordering}
+                aria-label={reordering ? "Done reordering" : "Reorder apps"}
+                onClick={() => setReordering((v) => !v)}
+              >
+                <ArrowUpDown className="size-4" />
+              </Button>
+            </div>
+          )}
         </>
       )}
     </div>
