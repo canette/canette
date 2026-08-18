@@ -46,6 +46,7 @@ data:
     # gzip would happily compress empty stdin, exit 0, and mask a failed dump.
     pg_dump "$DATABASE_URL" "$@" > "$sql_file"
     gzip "$sql_file"
+    echo "pg_dump complete: $(du -h "$dump_file" | cut -f1) written to $dump_file"
 
     if [ -n "${AWS_ENDPOINT_URL:-}" ]; then
       aws --endpoint-url "$AWS_ENDPOINT_URL" s3 cp "$dump_file" "$dest"
