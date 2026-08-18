@@ -64,6 +64,10 @@ spec:
                       key: DATABASE_URL
                 - name: BACKUP_S3_URI
                   value: {{ .Values.backup.s3.uri | quote }}
+                {{- if .Values.backup.excludeTableData }}
+                - name: EXCLUDE_TABLE_DATA
+                  value: {{ .Values.backup.excludeTableData | join " " | quote }}
+                {{- end }}
                 {{- if .Values.backup.s3.region }}
                 - name: AWS_DEFAULT_REGION
                   value: {{ .Values.backup.s3.region | quote }}

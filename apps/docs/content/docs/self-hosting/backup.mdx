@@ -49,6 +49,24 @@ Configure a [lifecycle rule](https://docs.aws.amazon.com/AmazonS3/latest/usergui
 on the bucket (or your provider's equivalent) to expire objects older than however long you
 want to retain backups for.
 
+## Excluding high-volume tables
+
+By default the backup excludes row data (but keeps the schema) for `build_logs` and
+`scan_sboms` — both are high-volume, regenerable, and not part of the platform's actual
+desired/runtime state, so excluding them keeps backups small and fast without weakening
+disaster recovery. Restoring a backup still leaves those tables intact and empty rather than
+missing, so no schema errors on restore.
+
+```yaml
+backup:
+  excludeTableData:
+    - "public.build_logs"
+    - "public.scan_sboms"
+```
+
+Set to `[]` to include every table's data. Uses `pg_dump --exclude-table-data`, so entries
+must be `schema.table`.
+
 ## Credentials
 
 Prefer `backup.s3.secretRef` over plain `accessKey`/`secretKey` values so credentials don't

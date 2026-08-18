@@ -34,10 +34,17 @@ data:
     dump_file="${sql_file}.gz"
     dest="${BACKUP_S3_URI%/}/canette-${timestamp}.sql.gz"
 
+    # Build --exclude-table-data flags from EXCLUDE_TABLE_DATA (space-separated
+    # "schema.table" entries) using positional params — POSIX sh has no arrays.
+    set --
+    for table in ${EXCLUDE_TABLE_DATA:-}; do
+      set -- "$@" "--exclude-table-data=${table}"
+    done
+
     # pg_dump and gzip run as separate commands (not piped) so `set -e` catches a pg_dump
     # failure directly — in a pipeline, only the last command's exit status is checked, so
     # gzip would happily compress empty stdin, exit 0, and mask a failed dump.
-    pg_dump "$DATABASE_URL" > "$sql_file"
+    pg_dump "$DATABASE_URL" "$@" > "$sql_file"
     gzip "$sql_file"
 
     if [ -n "${AWS_ENDPOINT_URL:-}" ]; then

@@ -173,6 +173,13 @@ backup:
   timeZone: ""
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
+  # Tables to exclude row data from (pg_dump --exclude-table-data — the table's schema is
+  # still included, so restores don't break on missing tables/FKs). Useful for high-volume,
+  # non-critical tables where losing history on restore is an acceptable trade-off for a
+  # much smaller/faster backup. Format: "schema.table". Set to [] to dump everything.
+  excludeTableData:
+    - "public.build_logs"
+    - "public.scan_sboms"
   resources:
     requests:
       cpu: 100m
