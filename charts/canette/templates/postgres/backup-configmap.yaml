@@ -30,10 +30,15 @@ data:
     aws() { python3 "$aws_bin" "$@"; }
 
     timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-    dump_file="/tmp/canette-${timestamp}.sql.gz"
+    sql_file="/tmp/canette-${timestamp}.sql"
+    dump_file="${sql_file}.gz"
     dest="${BACKUP_S3_URI%/}/canette-${timestamp}.sql.gz"
 
-    pg_dump "$DATABASE_URL" | gzip > "$dump_file"
+    # pg_dump and gzip run as separate commands (not piped) so `set -e` catches a pg_dump
+    # failure directly — in a pipeline, only the last command's exit status is checked, so
+    # gzip would happily compress empty stdin, exit 0, and mask a failed dump.
+    pg_dump "$DATABASE_URL" > "$sql_file"
+    gzip "$sql_file"
 
     if [ -n "${AWS_ENDPOINT_URL:-}" ]; then
       aws --endpoint-url "$AWS_ENDPOINT_URL" s3 cp "$dump_file" "$dest"
