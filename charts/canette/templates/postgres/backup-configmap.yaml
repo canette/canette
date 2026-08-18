@@ -21,6 +21,14 @@ data:
     : "${DATABASE_URL:?DATABASE_URL is required}"
     : "${BACKUP_S3_URI:?BACKUP_S3_URI is required, e.g. s3://bucket/canette}"
 
+    # aws-cli's launcher script has an absolute "#!/usr/bin/python3" shebang baked in at
+    # package-build time, which only resolves on the root filesystem it was installed into.
+    # It was installed into the shared /tools volume by the init container, not this
+    # container's own root, so it must be invoked via python3 explicitly rather than executed
+    # directly.
+    aws_bin="$(command -v aws)"
+    aws() { python3 "$aws_bin" "$@"; }
+
     timestamp=$(date -u +%Y%m%dT%H%M%SZ)
     dump_file="/tmp/canette-${timestamp}.sql.gz"
     dest="${BACKUP_S3_URI%/}/canette-${timestamp}.sql.gz"

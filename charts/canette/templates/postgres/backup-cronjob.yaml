@@ -37,7 +37,7 @@ spec:
                 - |
                   mkdir -p /tools/etc/apk
                   cp /etc/apk/repositories /tools/etc/apk/repositories
-                  apk add --no-cache --root /tools --initdb aws-cli
+                  apk add --no-cache --root /tools --initdb --keys-dir /etc/apk/keys aws-cli
               volumeMounts:
                 - name: tools
                   mountPath: /tools
