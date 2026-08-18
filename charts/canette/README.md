@@ -73,6 +73,10 @@ The encryption key is auto-generated on first install and reused on every subseq
 | `registry.password` | `""` | Password for the in-cluster registry |
 | `externalRegistry.username` | `""` | Username for an external registry (when `registry.enabled=false`) |
 | `externalRegistry.password` | `""` | Password for an external registry |
+| `backup.enabled` | `false` | Deploy a nightly CronJob that dumps the in-cluster PostgreSQL database to S3 |
+| `backup.schedule` | `0 3 * * *` | Cron schedule for the backup Job |
+| `backup.s3.uri` | `""` | Destination URI, e.g. `s3://my-bucket/canette-backups` — required when `backup.enabled=true` |
+| `backup.s3.secretRef.name` | `""` | Existing Secret holding S3 credentials (preferred over `accessKey`/`secretKey` values) |
 
 ### BuildKit
 
@@ -132,6 +136,27 @@ builder:
 ```
 
 The chart creates a `canette-registry-auth` docker config Secret scoped to the registry host derived from `builder.imageRepo`.
+
+## Backups
+
+Set `backup.enabled=true` to deploy a nightly `CronJob` that dumps the in-cluster PostgreSQL
+database and uploads it (gzip-compressed) to an S3(-compatible) bucket. Only supported when
+`postgres.enabled=true` — external databases are expected to manage their own backups.
+
+```yaml
+backup:
+  enabled: true
+  s3:
+    uri: s3://my-bucket/canette-backups
+    region: us-west-2
+    secretRef:
+      name: canette-backup-s3-credentials
+      accessKeyKey: access-key
+      secretKeyKey: secret-key
+```
+
+See [Backups](../../apps/docs/content/docs/self-hosting/backup.mdx) in the docs site for
+provider-specific S3 examples, credential management, and restore instructions.
 
 ## Encryption key
 

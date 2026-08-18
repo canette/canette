@@ -163,6 +163,47 @@ registry:
     # storageClass: "" # Leave empty to use the cluster default StorageClass.
 
 # ---------------------------------------------------------------------------
+# PostgreSQL backup to S3 (optional — requires postgres.enabled=true)
+# ---------------------------------------------------------------------------
+backup:
+  enabled: false
+  # Cron schedule. UTC unless timeZone is set.
+  schedule: "0 3 * * *"
+  # Optional IANA time zone (e.g. "America/New_York"). Requires Kubernetes 1.27+.
+  timeZone: ""
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # Tables to exclude row data from (pg_dump --exclude-table-data — the table's schema is
+  # still included, so restores don't break on missing tables/FKs). Useful for high-volume,
+  # non-critical tables where losing history on restore is an acceptable trade-off for a
+  # much smaller/faster backup. Format: "schema.table". Set to [] to dump everything.
+  excludeTableData:
+    - "public.build_logs"
+    - "public.scan_sboms"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  s3:
+    # Full destination URI, e.g. s3://my-bucket/canette-backups
+    uri: ""
+    region: ""
+    # Optional: S3-compatible endpoint (MinIO, R2, Spaces, Wasabi, B2, etc.)
+    # Leave empty for AWS S3.
+    endpoint: ""
+    accessKey: ""
+    secretKey: ""
+    # Optional: read credentials from an existing Kubernetes Secret instead of plain values
+    # (takes precedence over accessKey/secretKey values above).
+    secretRef:
+      name: ""
+      accessKeyKey: "access-key"
+      secretKeyKey: "secret-key"
+
+# ---------------------------------------------------------------------------
 # BuildKit daemon (always deployed — required by the builder)
 # ---------------------------------------------------------------------------
 buildkit:

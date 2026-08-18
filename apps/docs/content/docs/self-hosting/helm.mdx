@@ -138,6 +138,9 @@ These values are snapshotted into each deployment at trigger time. Changing them
 | `controller.pullRepo` | `""` | Registry URL for kubelet image pulls. Auto-derives to `registry.<domain>/` when `registry.enabled=true`. Required when `registry.enabled=false`. |
 | `externalRegistry.username` | `""` | Username for an external registry (when `registry.enabled=false`) |
 | `externalRegistry.password` | `""` | Password for an external registry |
+| `backup.enabled` | `false` | Deploy a nightly CronJob that backs up PostgreSQL to S3. Requires `postgres.enabled=true`. See [Backups](/docs/self-hosting/backup). |
+| `backup.schedule` | `0 3 * * *` | Cron schedule for the backup Job |
+| `backup.s3.uri` | `""` | Destination URI, e.g. `s3://my-bucket/canette-backups`. Required when `backup.enabled=true`. |
 
 ### Gateway
 
@@ -371,6 +374,19 @@ api:
     name: my-github-secret
     key: client-secret
 ```
+
+### Backup S3 credentials
+
+```yaml
+backup:
+  s3:
+    secretRef:
+      name: canette-backup-s3-credentials
+      accessKeyKey: access-key
+      secretKeyKey: secret-key
+```
+
+See [Backups](/docs/self-hosting/backup#credentials) for the full setup, including the IAM policy.
 
 ## Encryption key
 
