@@ -1,0 +1,158 @@
+---
+title: Backups
+description: Nightly PostgreSQL backups to S3, and how to restore from one.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+canette can back up its in-cluster PostgreSQL database to an S3-compatible bucket on a
+schedule. This is opt-in and only supports the bundled database (`postgres.enabled=true`) —
+if you're using `externalDatabase`, back it up through your provider instead.
+
+## How it works
+
+When `backup.enabled=true`, the Helm chart deploys a `CronJob` in `canette-system` that,
+on each run:
+
+1. Runs `pg_dump` against the same database the API and controller use (via the existing
+   `postgres-credentials` Secret — no separate credentials to manage)
+2. Gzip-compresses the dump
+3. Uploads it to `backup.s3.uri` as `canette-<UTC timestamp>.sql.gz`
+
+No dedicated backup image is built or published — the CronJob runs on the same
+`postgres.image` already used for the database itself. An init container installs the AWS
+CLI into a shared volume ahead of time so the main backup container can run fully
+non-root (`runAsNonRoot: true`).
+
+```yaml
+backup:
+  enabled: true
+  schedule: "0 3 * * *"  # nightly at 03:00 UTC (default)
+  s3:
+    uri: s3://my-bucket/canette-backups
+    region: us-west-2
+    secretRef:
+      name: canette-backup-s3-credentials
+      accessKeyKey: access-key
+      secretKeyKey: secret-key
+```
+
+<Callout type="info">
+  **Prerequisites:** the S3 bucket must exist before installing canette. The backup Job will
+  not create it automatically.
+</Callout>
+
+## Retention
+
+The chart does not delete old backups — every run adds a new object, nothing is pruned.
+Configure a [lifecycle rule](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html)
+on the bucket (or your provider's equivalent) to expire objects older than however long you
+want to retain backups for.
+
+## Credentials
+
+Prefer `backup.s3.secretRef` over plain `accessKey`/`secretKey` values so credentials don't
+end up in `values.yaml` or Helm release history:
+
+```bash
+kubectl create secret generic canette-backup-s3-credentials \
+  --namespace canette-system \
+  --from-literal=access-key=AKIA... \
+  --from-literal=secret-key=...
+```
+
+```yaml
+backup:
+  s3:
+    secretRef:
+      name: canette-backup-s3-credentials
+      accessKeyKey: access-key
+      secretKeyKey: secret-key
+```
+
+**IAM policy** (attach to the IAM user, scoped to just the backup prefix):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::my-bucket/canette-backups/*"
+    }
+  ]
+}
+```
+
+## S3-compatible providers
+
+Any S3-compatible endpoint works by setting `backup.s3.endpoint`:
+
+```yaml
+# MinIO
+backup:
+  s3:
+    uri: s3://canette-backups/canette
+    region: us-east-1  # MinIO requires a region, any value works
+    endpoint: https://minio.example.com
+    accessKey: minioadmin
+    secretKey: minioadmin
+```
+
+```yaml
+# Cloudflare R2
+backup:
+  s3:
+    uri: s3://canette-backups/canette
+    region: auto
+    endpoint: https://<account-id>.r2.cloudflarestorage.com
+    secretRef:
+      name: canette-backup-s3-credentials
+      accessKeyKey: access-key
+      secretKeyKey: secret-key
+```
+
+Leave `endpoint` empty for AWS S3.
+
+## Restoring a backup
+
+Download the dump and pipe it into `psql` against the running database:
+
+```bash
+aws s3 cp s3://my-bucket/canette-backups/canette-20260818T030000Z.sql.gz - | \
+  gunzip | \
+  kubectl exec -i -n canette-system deploy/postgres -- \
+    psql "postgresql://canette:<password>@localhost:5432/canette"
+```
+
+<Callout type="warn">
+  **This overwrites current data.** `pg_dump`'s default output re-creates rows on top of an
+  existing schema and will fail on conflicting primary keys rather than cleanly replacing
+  data. Restore into an empty database (or drop and recreate the `canette` database first)
+  unless you specifically want to merge.
+</Callout>
+
+Get the current password from the `postgres-credentials` Secret if needed:
+
+```bash
+kubectl get secret -n canette-system postgres-credentials -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d
+```
+
+## Manually triggering a backup
+
+To run a backup outside the schedule, create a one-off Job from the CronJob:
+
+```bash
+kubectl create job -n canette-system manual-backup --from=cronjob/postgres-backup
+kubectl logs -n canette-system job/manual-backup -f
+```
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `CrashLoopBackOff` on `install-aws-cli` init container | No egress to the Alpine package mirror | Check the pod's outbound network access; the init container needs internet access to run `apk add` |
+| `AccessDenied` from the `backup` container | IAM policy doesn't cover the bucket/prefix or credentials are wrong | Verify the IAM policy's `Resource` matches `backup.s3.uri`, and that the Secret keys match `secretRef.accessKeyKey`/`secretKeyKey` |
+| `command not found: aws` in the `backup` container logs | `/tools` volume from the init container wasn't mounted, or `PATH` wasn't set | Confirm both containers mount the shared `tools` `emptyDir` and the main container's `PATH` includes `/tools/usr/bin` |
+| Job never runs | `concurrencyPolicy: Forbid` skips a run if the previous one is still active | Check `kubectl get jobs -n canette-system` for a stuck prior run |

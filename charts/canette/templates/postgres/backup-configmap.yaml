@@ -1,0 +1,38 @@
+{{- if .Values.backup.enabled }}
+{{- if not .Values.postgres.enabled }}
+{{- fail "backup.enabled requires postgres.enabled=true — backups only support the in-cluster default database" }}
+{{- end }}
+{{- if not .Values.backup.s3.uri }}
+{{- fail "backup.s3.uri is required when backup.enabled=true, e.g. s3://my-bucket/canette-backups" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-backup-script
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: postgres-backup
+    {{- include "canette.labels" . | nindent 4 }}
+data:
+  backup.sh: |
+    #!/bin/sh
+    set -eu
+
+    : "${DATABASE_URL:?DATABASE_URL is required}"
+    : "${BACKUP_S3_URI:?BACKUP_S3_URI is required, e.g. s3://bucket/canette}"
+
+    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+    dump_file="/tmp/canette-${timestamp}.sql.gz"
+    dest="${BACKUP_S3_URI%/}/canette-${timestamp}.sql.gz"
+
+    pg_dump "$DATABASE_URL" | gzip > "$dump_file"
+
+    if [ -n "${AWS_ENDPOINT_URL:-}" ]; then
+      aws --endpoint-url "$AWS_ENDPOINT_URL" s3 cp "$dump_file" "$dest"
+    else
+      aws s3 cp "$dump_file" "$dest"
+    fi
+
+    rm -f "$dump_file"
+    echo "Backup uploaded: $dest"
+{{- end }}
