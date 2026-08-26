@@ -148,6 +148,8 @@ Auth is handled by `better-auth` embedded in the API server. Supported providers
 - Not a standalone deployed service — a sidecar image the controller injects into an individual app's own pod when that app's password gate is enabled (see "Shipped since the original MVP plan" → Password gate)
 - No Kubernetes API access, no RBAC — a pure per-pod HTTP proxy in front of `localhost:<app port>`
 - Verifies the bcrypt hash from `apps.password_gate_password_hash` via either an `Authorization: Basic` header or a signed session cookie set by its own embedded login form; never talks to the database directly (credentials arrive as env vars via the pod's Secret)
+- Everything under the reserved `/.canette-gate/` path prefix (login, logout, healthz) is handled by the gate itself and must never fall through to the app — a catch-all on the prefix 404s for any method/path not explicitly matched, closing the gap where e.g. a `GET` on the (`POST`-registered) logout route used to be silently proxied upstream
+- `AUTHGATE_INSECURE_COOKIES` (drops the `Secure` cookie attribute for local HTTP testing) only exists in a separate source file built behind the `-tags=localdev` Go build tag — the Dockerfile never passes that tag, so the option is structurally compiled out of every shipped image, not merely env-gated off by default
 
 ---
 
