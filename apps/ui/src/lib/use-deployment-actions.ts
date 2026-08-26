@@ -36,7 +36,11 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
     } finally {
       setLoading(false)
     }
-  }, [appId, limit])
+    // Notify the parent (e.g. the app header's status/link) on every list refresh —
+    // not just after actions — so it stays in sync even when this hook remounts
+    // (switching tabs mid-deploy and back) rather than only via the action call sites.
+    onSettled?.()
+  }, [appId, limit, onSettled])
 
   useEffect(() => { load() }, [load])
 
@@ -54,9 +58,9 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
   // Auto-refresh while active
   useEffect(() => {
     if (!hasActiveDeployment) return
-    const interval = setInterval(() => { load(); onSettled?.() }, 3000)
+    const interval = setInterval(load, 3000)
     return () => clearInterval(interval)
-  }, [hasActiveDeployment, load, onSettled])
+  }, [hasActiveDeployment, load])
 
   async function deploy() {
     setActionError("")
@@ -64,7 +68,6 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
     try {
       await api.deployments.trigger(appId)
       await load()
-      onSettled?.()
     } catch (e: unknown) {
       setActionError(e instanceof Error ? e.message : "Deploy failed")
     } finally {
@@ -78,7 +81,6 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
     try {
       await api.deployments.redeploy(deploymentId)
       await load()
-      onSettled?.()
     } catch (e: unknown) {
       setActionError(e instanceof Error ? e.message : "Redeploy failed")
     } finally {
@@ -92,7 +94,6 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
     try {
       await api.apps.stop(appId)
       await load()
-      onSettled?.()
     } catch (e: unknown) {
       setActionError(e instanceof Error ? e.message : "Stop failed")
     } finally {

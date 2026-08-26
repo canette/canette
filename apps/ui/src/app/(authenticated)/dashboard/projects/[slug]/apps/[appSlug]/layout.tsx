@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { useParams, usePathname } from "next/navigation"
 import { AppProvider } from "@/lib/app-context"
 import { TabNavigation } from "@/components/tab-navigation"
@@ -21,8 +21,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [project, setProject] = useState<Project | null>(null)
   const [hostnames, setHostnames] = useState<AppHostname[]>([])
   const [error, setError] = useState("")
+  // Deploy/redeploy/stop trigger frequent reloads (polling while a deployment is
+  // active); guard against a slower in-flight request overwriting a fresher one.
+  const loadSeq = useRef(0)
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current
     try {
       const [p, a] = await Promise.all([
         fetch(`/api/v1/projects/${slug}`, { credentials: "include" }).then((r) => {
@@ -31,11 +35,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         }),
         api.apps.getBySlug(slug, appSlug),
       ])
+      if (seq !== loadSeq.current) return
       setProject(p)
       setApp(a)
       // Best-effort: hostnames are supplementary, don't block the rest of the page on it.
-      api.hostnames.list(a.id).then((h) => setHostnames(h.items)).catch(() => setHostnames([]))
+      api.hostnames.list(a.id).then((h) => {
+        if (seq === loadSeq.current) setHostnames(h.items)
+      }).catch(() => {
+        if (seq === loadSeq.current) setHostnames([])
+      })
     } catch (e: unknown) {
+      if (seq !== loadSeq.current) return
       setError(e instanceof Error ? e.message : "Failed to load")
     }
   }, [slug, appSlug])
