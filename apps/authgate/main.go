@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 
 	"canette.dev/lib/env"
@@ -43,6 +44,11 @@ func main() {
 }
 
 func run(log *zap.Logger) error {
+	// ── .env file (local dev only) ────────────────────────────────────────────
+	if _, err := os.Stat(".env"); err == nil {
+		_ = godotenv.Load()
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -51,7 +57,7 @@ func run(log *zap.Logger) error {
 		return err
 	}
 
-	gate := newGate(cfg)
+	gate := newGate(log, cfg)
 
 	addr := env.EnvOr("AUTHGATE_LISTEN_ADDR", ":39191")
 	srv := &http.Server{
@@ -75,22 +81,23 @@ func run(log *zap.Logger) error {
 }
 
 // config holds the sidecar's runtime configuration, sourced entirely from env
-// vars — username/password hash arrive as plain env vars via the container's
+// vars — the password hash arrives as a plain env var via the container's
 // envFrom.secretRef (see apps/controller/internal/k8s/resources.go), not a
 // mounted config file, so there is no config-syntax injection surface to
 // guard against the way the old rendered Caddyfile had to.
+//
+// There is no username field: this gates one shared password, not individual
+// accounts (there is no apps.password_gate_username column either — dropped
+// in migration 000014). The browser login form only ever asked for a
+// password; Basic Auth accepts any username alongside the correct password
+// to match.
 type config struct {
-	Username     string
 	PasswordHash string // bcrypt hash, e.g. "$2b$10$..." — never a plaintext password
 	UpstreamPort string
 	AppSlug      string
 }
 
 func loadConfig() (config, error) {
-	username, err := env.RequireEnv("AUTHGATE_USERNAME")
-	if err != nil {
-		return config{}, err
-	}
 	passwordHash, err := env.RequireEnv("AUTHGATE_PASSWORD_HASH")
 	if err != nil {
 		return config{}, err
@@ -100,7 +107,6 @@ func loadConfig() (config, error) {
 		return config{}, err
 	}
 	return config{
-		Username:     username,
 		PasswordHash: passwordHash,
 		UpstreamPort: upstreamPort,
 		AppSlug:      env.EnvOr("AUTHGATE_APP_SLUG", ""),

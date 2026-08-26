@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,7 +25,19 @@ func TestSessionExpired(t *testing.T) {
 func TestSessionTamperedSignature(t *testing.T) {
 	now := time.Now()
 	token := signSession("$2b$10$hash", now)
-	tampered := token[:len(token)-1] + "x"
+
+	// Flip the first character right after the "." separator, not the last
+	// character of the token: base64's trailing character can carry unused
+	// padding bits, so mutating it sometimes decodes to the exact same bytes
+	// (flaky pass). The leading bits of a base64 group are always
+	// significant, so this deterministically changes the decoded signature.
+	dot := strings.IndexByte(token, '.')
+	sigStart := dot + 1
+	replacement := byte('A')
+	if token[sigStart] == 'A' {
+		replacement = 'B'
+	}
+	tampered := token[:sigStart] + string(replacement) + token[sigStart+1:]
 	if tampered == token {
 		t.Fatal("test setup did not actually tamper the token")
 	}

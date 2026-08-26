@@ -130,8 +130,7 @@ export interface AppHostname {
 }
 
 export interface AppPasswordGate {
-  enabled: boolean
-  username?: string // present only when enabled; password/hash is never returned by the API
+  enabled: boolean // password/hash is never returned by the API
 }
 
 export type DeploymentStatus =

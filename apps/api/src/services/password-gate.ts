@@ -7,27 +7,9 @@ import { AUTHGATE_SIDECAR_PORT } from "./reserved-ports"
 
 export { AUTHGATE_SIDECAR_PORT }
 
-// The username ends up as a plain K8s Secret value (env var) consumed by the
-// authgate sidecar (apps/controller/internal/k8s/resources.go), not
-// interpolated into any config file, so this is general input hygiene rather
-// than a config-injection guard.
-const USERNAME_RE = /^[A-Za-z0-9_-]{1,63}$/
-
 // bcrypt silently truncates input beyond 72 bytes — reject rather than let a
 // user set a password that only its first 72 bytes actually protect against.
 const BCRYPT_MAX_BYTES = 72
-
-function validateUsername(raw: string): string {
-  const username = raw.trim()
-  if (!USERNAME_RE.test(username)) {
-    throw new ServiceError(
-      "Username must be 1-63 characters: letters, digits, underscores, and hyphens only",
-      "VALIDATION_ERROR",
-      400
-    )
-  }
-  return username
-}
 
 function validatePassword(password: string): void {
   if (!password) {
@@ -48,19 +30,20 @@ export async function getPasswordGateStatus(db: DB, appId: string, userId: strin
 
   const row = await db
     .selectFrom("apps")
-    .select(["password_gate_enabled", "password_gate_username"])
+    .select(["password_gate_enabled"])
     .where("id", "=", appId)
     .executeTakeFirstOrThrow()
 
-  if (!row.password_gate_enabled) return { enabled: false }
-  return { enabled: true, username: row.password_gate_username ?? undefined }
+  // SQLite has no native boolean type, so the test driver returns 0/1 here —
+  // coerce rather than pass the raw column value through.
+  return { enabled: !!row.password_gate_enabled }
 }
 
 export async function enablePasswordGate(
   db: DB,
   appId: string,
   userId: string,
-  input: { username: string; password: string }
+  input: { password: string }
 ): Promise<AppPasswordGate> {
   const app = await getAppById(db, appId, userId)
   if (!app) throw new ServiceError("Not found", "NOT_FOUND", 404)
@@ -69,7 +52,6 @@ export async function enablePasswordGate(
     throw new ServiceError("Password protection is only supported for web apps", "VALIDATION_ERROR", 422)
   }
 
-  const username = validateUsername(input.username)
   validatePassword(input.password)
 
   const passwordHash = await password.hash(input.password, { algorithm: "bcrypt", cost: 10 })
@@ -79,14 +61,13 @@ export async function enablePasswordGate(
     .updateTable("apps")
     .set({
       password_gate_enabled: true,
-      password_gate_username: username,
       password_gate_password_hash: passwordHash,
       updated_at: now,
     })
     .where("id", "=", appId)
     .execute()
 
-  return { enabled: true, username }
+  return { enabled: true }
 }
 
 export async function disablePasswordGate(db: DB, appId: string, userId: string): Promise<AppPasswordGate> {
@@ -98,7 +79,6 @@ export async function disablePasswordGate(db: DB, appId: string, userId: string)
     .updateTable("apps")
     .set({
       password_gate_enabled: false,
-      password_gate_username: null,
       password_gate_password_hash: null,
       updated_at: now,
     })

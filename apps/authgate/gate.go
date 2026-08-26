@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -14,10 +15,11 @@ import (
 // authenticated requests to the app container on localhost.
 type gate struct {
 	cfg   config
+	log   *zap.Logger
 	proxy *httputil.ReverseProxy
 }
 
-func newGate(cfg config) *gate {
+func newGate(log *zap.Logger, cfg config) *gate {
 	target, err := url.Parse(cfg.upstreamOrigin())
 	if err != nil {
 		// cfg.UpstreamPort is validated as non-empty by loadConfig; a malformed
@@ -31,12 +33,17 @@ func newGate(cfg config) *gate {
 			// meaningful to the gate, and the app has no use for it.
 			pr.Out.Header.Del("Cookie")
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-			// Never leak the upstream address or a Go error string to the browser.
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			// Log the real cause server-side (connection refused, timeout, ...) —
+			// the upstream port isn't secret, just noise the browser doesn't need
+			// and shouldn't be trusted to render safely. The client only ever
+			// gets the generic message.
+			log.Warn("upstream proxy error",
+				zap.Error(err), zap.String("upstreamPort", cfg.UpstreamPort))
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		},
 	}
-	return &gate{cfg: cfg, proxy: proxy}
+	return &gate{cfg: cfg, log: log, proxy: proxy}
 }
 
 func (g *gate) mux() http.Handler {
@@ -46,7 +53,17 @@ func (g *gate) mux() http.Handler {
 	})
 	mux.HandleFunc("GET "+gatePathPrefix+"login", g.handleLoginForm)
 	mux.HandleFunc("POST "+gatePathPrefix+"login", g.handleLoginSubmit)
+	mux.HandleFunc("GET "+gatePathPrefix+"logout", g.handleLogout)
 	mux.HandleFunc("POST "+gatePathPrefix+"logout", g.handleLogout)
+	// Catch-all for the reserved gate namespace: a method/path under
+	// gatePathPrefix that isn't one of the exact routes above (e.g. PUT on
+	// /login, or a typo'd subpath) must still never fall through to
+	// handleProxy below and reach the app — Go's ServeMux always prefers a
+	// more specific method+path match over this subtree pattern, so this
+	// only catches genuine gaps.
+	mux.HandleFunc(gatePathPrefix, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
 	mux.HandleFunc("/", g.handleProxy)
 	return mux
 }
@@ -54,8 +71,8 @@ func (g *gate) mux() http.Handler {
 // handleProxy is the catch-all: verify the request, then either proxy it
 // upstream or challenge for credentials.
 func (g *gate) handleProxy(w http.ResponseWriter, r *http.Request) {
-	if user, pass, ok := r.BasicAuth(); ok {
-		if g.verifyPassword(user, pass) {
+	if _, pass, ok := r.BasicAuth(); ok {
+		if g.verifyPassword(pass) {
 			g.proxy.ServeHTTP(w, r)
 			return
 		}
@@ -63,7 +80,7 @@ func (g *gate) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+	if cookie, err := r.Cookie(currentSessionCookieName()); err == nil {
 		if verifySession(cookie.Value, g.cfg.PasswordHash, time.Now()) == nil {
 			g.proxy.ServeHTTP(w, r)
 			return
@@ -87,16 +104,14 @@ func (g *gate) challengeBasicAuth(w http.ResponseWriter) {
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
-func (g *gate) verifyPassword(user, pass string) bool {
-	if user != g.cfg.Username {
-		return false
-	}
+// verifyPassword checks the password only — any username is accepted
+// alongside it (see the config doc comment for why).
+func (g *gate) verifyPassword(pass string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(g.cfg.PasswordHash), []byte(pass)) == nil
 }
 
 func (g *gate) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 	renderLoginPage(w, loginPageData{
-		AppSlug:    g.cfg.AppSlug,
 		ReturnPath: safeReturnPath(r.URL.Query().Get("return")),
 	})
 }
@@ -113,19 +128,18 @@ func (g *gate) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	// deliberately not adding a second, separate rate-limiting layer for v1.
 	if bcrypt.CompareHashAndPassword([]byte(g.cfg.PasswordHash), []byte(r.PostForm.Get("password"))) != nil {
 		renderLoginPage(w, loginPageData{
-			AppSlug:      g.cfg.AppSlug,
 			ReturnPath:   returnPath,
-			ErrorMessage: "That password wasn't accepted.",
+			ErrorMessage: "Incorrect password, please try again.",
 		})
 		return
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     currentSessionCookieName(),
 		Value:    signSession(g.cfg.PasswordHash, time.Now()),
 		Path:     "/",
 		MaxAge:   int(sessionTTL.Seconds()),
-		Secure:   true,
+		Secure:   !insecureCookiesEnabled(),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -134,11 +148,11 @@ func (g *gate) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 func (g *gate) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     currentSessionCookieName(),
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
-		Secure:   true,
+		Secure:   !insecureCookiesEnabled(),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})

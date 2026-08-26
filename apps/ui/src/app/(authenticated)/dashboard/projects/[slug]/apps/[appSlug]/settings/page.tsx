@@ -904,7 +904,7 @@ export default function SettingsPage() {
 
       {/* Password protection */}
       {app.deploymentType === "web" && (
-        <Section id="access" title="Password protection" description="Require a username and password before the public URL is reachable.">
+        <Section id="access" title="Password protection" description="Require a password before the public URL is reachable.">
           <PasswordGateManager appId={app.id} />
         </Section>
       )}

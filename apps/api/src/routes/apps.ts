@@ -332,10 +332,9 @@ appsRouter.get("/apps/:id/password-gate", async (c) => {
 // PUT /api/v1/apps/:id/password-gate
 appsRouter.put("/apps/:id/password-gate", async (c) => {
   const session = c.get("session")
-  const body = await c.req.json<{ username: string; password: string }>()
+  const body = await c.req.json<{ password: string }>()
   try {
     const status = await enablePasswordGate(db, c.req.param("id"), session.user.id, {
-      username: body.username,
       password: body.password,
     })
     return c.json(status)

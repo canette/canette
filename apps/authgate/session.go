@@ -13,6 +13,22 @@ import (
 
 const sessionCookieName = "__Host-canette_gate"
 
+// insecureSessionCookieName drops the __Host- prefix, which browsers only
+// honor on a cookie that also carries Secure — used instead of
+// sessionCookieName when insecureCookiesEnabled() (see insecure_prod.go /
+// insecure_local.go), otherwise the browser would silently discard the
+// cookie and insecure mode would do nothing.
+const insecureSessionCookieName = "canette_gate"
+
+// currentSessionCookieName returns whichever cookie name matches the
+// current Secure setting.
+func currentSessionCookieName() string {
+	if insecureCookiesEnabled() {
+		return insecureSessionCookieName
+	}
+	return sessionCookieName
+}
+
 const sessionTTL = 24 * time.Hour
 
 var errInvalidSession = errors.New("invalid session")

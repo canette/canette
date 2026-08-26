@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -26,16 +29,58 @@ func newTestGate(t *testing.T, upstream *httptest.Server) *gate {
 		t.Fatalf("parse upstream URL: %v", err)
 	}
 	cfg := config{
-		Username:     "demo",
 		PasswordHash: string(hash),
 		UpstreamPort: u.Port(),
 		AppSlug:      "my-app",
 	}
-	return newGate(cfg)
+	return newGate(zap.NewNop(), cfg)
 }
 
 func basicAuthHeader(user, pass string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
+}
+
+func TestGate_ProxyErrorIsLoggedNotLeaked(t *testing.T) {
+	// A closed server frees its port, so dialing it reliably fails (connection
+	// refused) — simulating a misconfigured/unreachable upstream, e.g. the
+	// wrong AUTHGATE_UPSTREAM_PORT.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	upstream.Close()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword: %v", err)
+	}
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	cfg := config{PasswordHash: string(hash), UpstreamPort: u.Port(), AppSlug: "my-app"}
+
+	core, logs := observer.New(zapcore.WarnLevel)
+	g := newGate(zap.New(core), cfg)
+
+	req := httptest.NewRequest("GET", "/anything", nil)
+	req.Header.Set("Authorization", basicAuthHeader("demo", testPassword))
+	rec := httptest.NewRecorder()
+	g.mux().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("got status=%d, want 502", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), u.Port()) {
+		t.Error("response body must never leak the upstream port to the client")
+	}
+	if logs.Len() != 1 {
+		t.Fatalf("expected exactly 1 warning log entry, got %d", logs.Len())
+	}
+	entry := logs.All()[0]
+	if entry.Message != "upstream proxy error" {
+		t.Errorf("log message = %q, want %q", entry.Message, "upstream proxy error")
+	}
+	if got := entry.ContextMap()["upstreamPort"]; got != u.Port() {
+		t.Errorf("logged upstreamPort = %v, want %q", got, u.Port())
+	}
 }
 
 func TestGate_BasicAuthSuccess(t *testing.T) {
@@ -205,7 +250,7 @@ func TestGate_LoginSubmitWrongPasswordShowsError(t *testing.T) {
 			t.Error("no session cookie should be set on a failed login")
 		}
 	}
-	if !strings.Contains(rec.Body.String(), "accepted") {
+	if !strings.Contains(rec.Body.String(), "Incorrect password") {
 		t.Error("expected a generic failure message in the response body")
 	}
 }
@@ -227,25 +272,31 @@ func TestGate_LoginSubmitRejectsUnsafeReturnPath(t *testing.T) {
 }
 
 func TestGate_Logout(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer upstream.Close()
-	g := newTestGate(t, upstream)
+	for _, method := range []string{"GET", "POST"} {
+		t.Run(method, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("logout must never be forwarded upstream")
+			}))
+			defer upstream.Close()
+			g := newTestGate(t, upstream)
 
-	req := httptest.NewRequest("POST", gatePathPrefix+"logout", nil)
-	rec := httptest.NewRecorder()
-	g.mux().ServeHTTP(rec, req)
+			req := httptest.NewRequest(method, gatePathPrefix+"logout", nil)
+			rec := httptest.NewRecorder()
+			g.mux().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("got status=%d, want 303", rec.Code)
-	}
-	var cleared bool
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == sessionCookieName && c.MaxAge < 0 {
-			cleared = true
-		}
-	}
-	if !cleared {
-		t.Error("expected logout to clear the session cookie")
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("got status=%d, want 303", rec.Code)
+			}
+			var cleared bool
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == sessionCookieName && c.MaxAge < 0 {
+					cleared = true
+				}
+			}
+			if !cleared {
+				t.Error("expected logout to clear the session cookie")
+			}
+		})
 	}
 }
 
@@ -270,17 +321,68 @@ func TestConfigUpstreamOrigin(t *testing.T) {
 	}
 }
 
-func TestVerifyPasswordRejectsWrongUsername(t *testing.T) {
+func TestVerifyPasswordIgnoresUsername(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatalf("GenerateFromPassword: %v", err)
 	}
-	g := &gate{cfg: config{Username: "demo", PasswordHash: string(hash)}}
-	if g.verifyPassword("someone-else", testPassword) {
-		t.Error("expected verifyPassword to reject a mismatched username")
+	g := &gate{cfg: config{PasswordHash: string(hash)}}
+	if !g.verifyPassword(testPassword) {
+		t.Error("expected verifyPassword to accept the correct password")
 	}
-	if !g.verifyPassword("demo", testPassword) {
-		t.Error("expected verifyPassword to accept the correct username/password")
+	if g.verifyPassword("wrong-password") {
+		t.Error("expected verifyPassword to reject an incorrect password")
+	}
+}
+
+func TestGate_BasicAuthAcceptsAnyUsername(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("upstream-ok"))
+	}))
+	defer upstream.Close()
+	g := newTestGate(t, upstream)
+
+	for _, user := range []string{"", "demo", "literally-anyone"} {
+		req := httptest.NewRequest("GET", "/anything", nil)
+		req.Header.Set("Authorization", basicAuthHeader(user, testPassword))
+		rec := httptest.NewRecorder()
+		g.mux().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("username %q: got status=%d, want 200 (only the password should matter)", user, rec.Code)
+		}
+	}
+}
+
+// TestGateReservedPathsNeverProxied covers combinations under gatePathPrefix
+// that aren't one of the explicitly registered routes (wrong method, or an
+// unknown subpath) — these must 404 from the gate itself, never fall through
+// to the catch-all "/" route and reach the app.
+func TestGateReservedPathsNeverProxied(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{"PUT", gatePathPrefix + "login"},
+		{"DELETE", gatePathPrefix + "logout"},
+		{"GET", gatePathPrefix + "healthz/../../whatever"},
+		{"GET", gatePathPrefix + "does-not-exist"},
+		{"POST", gatePathPrefix + "does-not-exist"},
+	}
+	for _, c := range cases {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("%s %s must never be forwarded upstream", c.method, c.path)
+		}))
+		g := newTestGate(t, upstream)
+
+		req := httptest.NewRequest(c.method, c.path, nil)
+		rec := httptest.NewRecorder()
+		g.mux().ServeHTTP(rec, req)
+		upstream.Close()
+
+		if rec.Code == http.StatusOK {
+			t.Errorf("%s %s: got 200 (looks proxied), want a gate-owned response", c.method, c.path)
+		}
 	}
 }
 

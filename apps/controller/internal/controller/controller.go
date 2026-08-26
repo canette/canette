@@ -220,7 +220,6 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		DeploymentID:        deploymentID,
 		PasswordGate: k8sres.PasswordGateConfig{
 			Enabled:      cfg.PasswordGate.Enabled,
-			Username:     cfg.PasswordGate.Username,
 			PasswordHash: cfg.PasswordGate.PasswordHash,
 		},
 		AuthgateImage: c.cfg.AuthgateImage,

@@ -40,10 +40,12 @@ type VolumeSpec struct {
 	Content   string // configmap only
 }
 
-// PasswordGateConfig describes the optional HTTP Basic Auth gate for a web app.
+// PasswordGateConfig describes the optional HTTP Basic Auth gate for a web
+// app — a single shared password, not individual accounts, so there is no
+// username: the authgate sidecar accepts any username alongside the correct
+// password.
 type PasswordGateConfig struct {
 	Enabled      bool
-	Username     string
 	PasswordHash string // bcrypt hash, e.g. "$2b$10$..." — never a plaintext password
 }
 
@@ -352,9 +354,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 	// upstream (defense-in-depth alongside the store-layer guard).
 	var authgateSecretObj map[string]interface{}
 	if cfg.PasswordGate.Enabled && !cfg.IsCronJob {
-		// Username/password hash are plain env var values (via envFrom below),
-		// never interpolated into a config file — unlike the old rendered
-		// Caddyfile, there is no config-syntax injection surface to guard here.
+		// The password hash is a plain env var value (via envFrom below), never
+		// interpolated into a config file — unlike the old rendered Caddyfile,
+		// there is no config-syntax injection surface to guard here.
 		authgateSecretObj = map[string]interface{}{
 			"apiVersion": "v1",
 			"kind":       "Secret",
@@ -364,7 +366,6 @@ func BuildResources(cfg DeployConfig) AppResources {
 				"labels":    labels,
 			},
 			"data": map[string]interface{}{
-				"USERNAME":      []byte(cfg.PasswordGate.Username),
 				"PASSWORD_HASH": []byte(cfg.PasswordGate.PasswordHash),
 			},
 		}
@@ -378,9 +379,12 @@ func BuildResources(cfg DeployConfig) AppResources {
 				map[string]interface{}{"name": "AUTHGATE_UPSTREAM_PORT", "value": fmt.Sprintf("%d", port)},
 				map[string]interface{}{"name": "AUTHGATE_APP_SLUG", "value": cfg.AppSlug},
 			},
+			// prefix: "AUTHGATE_" makes the Secret's PASSWORD_HASH key surface as
+			// the AUTHGATE_PASSWORD_HASH env var authgate's main.go reads.
 			"envFrom": []interface{}{
 				map[string]interface{}{
 					"secretRef": map[string]interface{}{"name": authgateSecretName(cfg.AppSlug)},
+					"prefix":    "AUTHGATE_",
 				},
 			},
 			"securityContext": map[string]interface{}{

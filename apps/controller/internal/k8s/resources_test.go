@@ -84,7 +84,7 @@ func TestBuildResources_ExtraHostnamesIgnoredWhenSkipHTTPRoute(t *testing.T) {
 
 func TestBuildResources_PasswordGateAddsSidecarAndSecret(t *testing.T) {
 	cfg := baseDeployConfig()
-	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
 	res := BuildResources(cfg)
 
 	if res.AuthgateSecret == nil {
@@ -95,11 +95,11 @@ func TestBuildResources_PasswordGateAddsSidecarAndSecret(t *testing.T) {
 		t.Errorf("AuthgateSecret name = %q, want %q", got, "my-app-authgate")
 	}
 	data, _ := res.AuthgateSecret["data"].(map[string]interface{})
-	if got := string(data["USERNAME"].([]byte)); got != "admin" {
-		t.Errorf("AuthgateSecret USERNAME = %q, want %q", got, "admin")
-	}
 	if got := string(data["PASSWORD_HASH"].([]byte)); got != "$2b$10$fakehash" {
 		t.Errorf("AuthgateSecret PASSWORD_HASH = %q, want %q", got, "$2b$10$fakehash")
+	}
+	if _, ok := data["USERNAME"]; ok {
+		t.Error("expected no USERNAME key in the authgate Secret — this gates one shared password, not accounts")
 	}
 
 	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
@@ -120,9 +120,16 @@ func TestBuildResources_PasswordGateAddsSidecarAndSecret(t *testing.T) {
 	if len(envFrom) != 1 {
 		t.Fatalf("expected 1 envFrom entry referencing the authgate secret, got %d", len(envFrom))
 	}
-	secretRef, _ := envFrom[0].(map[string]interface{})["secretRef"].(map[string]interface{})
+	envFromEntry, _ := envFrom[0].(map[string]interface{})
+	secretRef, _ := envFromEntry["secretRef"].(map[string]interface{})
 	if got := secretRef["name"]; got != "my-app-authgate" {
 		t.Errorf("envFrom secretRef name = %q, want %q", got, "my-app-authgate")
+	}
+	// Must match the AUTHGATE_ prefix authgate's main.go reads (AUTHGATE_PASSWORD_HASH) —
+	// envFrom otherwise injects the Secret's bare key name (PASSWORD_HASH), which the
+	// sidecar would never see and would crash-loop on startup.
+	if got := envFromEntry["prefix"]; got != "AUTHGATE_" {
+		t.Errorf("envFrom prefix = %q, want %q", got, "AUTHGATE_")
 	}
 	if _, ok := authgate["securityContext"]; !ok {
 		t.Error("expected authgate container to declare a securityContext")
@@ -153,7 +160,7 @@ func TestBuildResources_PasswordGateDisabledNoSidecar(t *testing.T) {
 
 func TestBuildResources_PasswordGateServiceTargetPort(t *testing.T) {
 	enabled := baseDeployConfig()
-	enabled.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	enabled.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
 	res := BuildResources(enabled)
 	spec, _ := res.Service["spec"].(map[string]interface{})
 	ports, _ := spec["ports"].([]interface{})
@@ -177,7 +184,7 @@ func TestBuildResources_PasswordGateServiceTargetPort(t *testing.T) {
 
 func TestBuildResources_PasswordGateUpstreamEnv(t *testing.T) {
 	cfg := baseDeployConfig()
-	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
 	res := BuildResources(cfg)
 
 	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
@@ -204,7 +211,7 @@ func TestBuildResources_PasswordGateIgnoredForCronJob(t *testing.T) {
 	cfg := baseDeployConfig()
 	cfg.IsCronJob = true
 	cfg.Schedule = "0 2 * * *"
-	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
 	res := BuildResources(cfg)
 
 	if res.AuthgateSecret != nil {

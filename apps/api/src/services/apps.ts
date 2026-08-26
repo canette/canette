@@ -312,7 +312,6 @@ export async function createApp(
         schedule: deploymentType === "cronjob" ? (input.schedule?.trim() ?? null) : null,
         position,
         password_gate_enabled: false,
-        password_gate_username: null,
         password_gate_password_hash: null,
         canette_config: input.canetteConfig ?? null,
         created_at: now,
