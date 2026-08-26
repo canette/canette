@@ -56,6 +56,9 @@ spec:
               value: {{ .Values.controller.gateway.name | quote }}
             - name: GATEWAY_NAMESPACE
               value: {{ .Values.controller.gateway.namespace | quote }}
+            - name: AUTHGATE_IMAGE
+              {{- $authgateImage := include "canette.serviceImage" (list . "canette-authgate" .Values.authgate.image) }}
+              value: {{ $authgateImage | quote }}
             - name: BUILDER_NAMESPACE
               value: {{ include "canette.buildNamespace" . | quote }}
             - name: POLL_INTERVAL

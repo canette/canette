@@ -36,6 +36,7 @@ values-development.yaml
 # Go binaries
 apps/controller/controller
 apps/builder/builder
+apps/authgate/authgate
 *.exe
 
 # Go workspace checksum file — regenerated locally by workspace-mode commands,

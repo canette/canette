@@ -1,7 +1,6 @@
 package k8s
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -28,6 +27,7 @@ func baseDeployConfig() DeployConfig {
 		GatewayName:      "main-gateway",
 		GatewayNamespace: "gateway-system",
 		ClusterDomain:    "apps.example.com",
+		AuthgateImage:    "registry.example.com/canette-authgate:test",
 	}
 }
 
@@ -84,15 +84,22 @@ func TestBuildResources_ExtraHostnamesIgnoredWhenSkipHTTPRoute(t *testing.T) {
 
 func TestBuildResources_PasswordGateAddsSidecarAndSecret(t *testing.T) {
 	cfg := baseDeployConfig()
-	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
 	res := BuildResources(cfg)
 
-	if res.CaddySecret == nil {
-		t.Fatal("expected CaddySecret to be set, got nil")
+	if res.AuthgateSecret == nil {
+		t.Fatal("expected AuthgateSecret to be set, got nil")
 	}
-	meta, _ := res.CaddySecret["metadata"].(map[string]interface{})
-	if got := meta["name"]; got != "my-app-caddy-gate" {
-		t.Errorf("CaddySecret name = %q, want %q", got, "my-app-caddy-gate")
+	meta, _ := res.AuthgateSecret["metadata"].(map[string]interface{})
+	if got := meta["name"]; got != "my-app-authgate" {
+		t.Errorf("AuthgateSecret name = %q, want %q", got, "my-app-authgate")
+	}
+	data, _ := res.AuthgateSecret["data"].(map[string]interface{})
+	if got := string(data["PASSWORD_HASH"].([]byte)); got != "$2b$10$fakehash" {
+		t.Errorf("AuthgateSecret PASSWORD_HASH = %q, want %q", got, "$2b$10$fakehash")
+	}
+	if _, ok := data["USERNAME"]; ok {
+		t.Error("expected no USERNAME key in the authgate Secret — this gates one shared password, not accounts")
 	}
 
 	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
@@ -102,21 +109,36 @@ func TestBuildResources_PasswordGateAddsSidecarAndSecret(t *testing.T) {
 	if len(containers) != 2 {
 		t.Fatalf("expected 2 containers, got %d", len(containers))
 	}
-	caddy, _ := containers[1].(map[string]interface{})
-	if got := caddy["name"]; got != caddyContainerName {
-		t.Errorf("second container name = %q, want %q", got, caddyContainerName)
+	authgate, _ := containers[1].(map[string]interface{})
+	if got := authgate["name"]; got != authgateContainerName {
+		t.Errorf("second container name = %q, want %q", got, authgateContainerName)
 	}
-	if got := caddy["image"]; got != "caddy:2-alpine" {
-		t.Errorf("caddy image = %q, want %q", got, "caddy:2-alpine")
+	if got := authgate["image"]; got != cfg.AuthgateImage {
+		t.Errorf("authgate image = %q, want %q", got, cfg.AuthgateImage)
 	}
-
-	vols, _ := podSpec["volumes"].([]interface{})
-	if len(vols) != 1 {
-		t.Fatalf("expected 1 pod volume, got %d", len(vols))
+	envFrom, _ := authgate["envFrom"].([]interface{})
+	if len(envFrom) != 1 {
+		t.Fatalf("expected 1 envFrom entry referencing the authgate secret, got %d", len(envFrom))
 	}
-	vol, _ := vols[0].(map[string]interface{})
-	if got := vol["name"]; got != "caddy-config" {
-		t.Errorf("volume name = %q, want %q", got, "caddy-config")
+	envFromEntry, _ := envFrom[0].(map[string]interface{})
+	secretRef, _ := envFromEntry["secretRef"].(map[string]interface{})
+	if got := secretRef["name"]; got != "my-app-authgate" {
+		t.Errorf("envFrom secretRef name = %q, want %q", got, "my-app-authgate")
+	}
+	// Must match the AUTHGATE_ prefix authgate's main.go reads (AUTHGATE_PASSWORD_HASH) —
+	// envFrom otherwise injects the Secret's bare key name (PASSWORD_HASH), which the
+	// sidecar would never see and would crash-loop on startup.
+	if got := envFromEntry["prefix"]; got != "AUTHGATE_" {
+		t.Errorf("envFrom prefix = %q, want %q", got, "AUTHGATE_")
+	}
+	if _, ok := authgate["securityContext"]; !ok {
+		t.Error("expected authgate container to declare a securityContext")
+	}
+	if _, ok := authgate["livenessProbe"]; !ok {
+		t.Error("expected authgate container to declare a livenessProbe")
+	}
+	if _, ok := authgate["readinessProbe"]; !ok {
+		t.Error("expected authgate container to declare a readinessProbe")
 	}
 }
 
@@ -124,8 +146,8 @@ func TestBuildResources_PasswordGateDisabledNoSidecar(t *testing.T) {
 	cfg := baseDeployConfig() // PasswordGate zero-value (disabled)
 	res := BuildResources(cfg)
 
-	if res.CaddySecret != nil {
-		t.Error("expected CaddySecret to be nil when gate is disabled, got non-nil")
+	if res.AuthgateSecret != nil {
+		t.Error("expected AuthgateSecret to be nil when gate is disabled, got non-nil")
 	}
 	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
 	tmpl, _ := depSpec["template"].(map[string]interface{})
@@ -138,13 +160,13 @@ func TestBuildResources_PasswordGateDisabledNoSidecar(t *testing.T) {
 
 func TestBuildResources_PasswordGateServiceTargetPort(t *testing.T) {
 	enabled := baseDeployConfig()
-	enabled.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	enabled.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
 	res := BuildResources(enabled)
 	spec, _ := res.Service["spec"].(map[string]interface{})
 	ports, _ := spec["ports"].([]interface{})
 	port, _ := ports[0].(map[string]interface{})
-	if got := port["targetPort"]; got != caddySidecarPort {
-		t.Errorf("targetPort = %v, want %v", got, caddySidecarPort)
+	if got := port["targetPort"]; got != authgateSidecarPort {
+		t.Errorf("targetPort = %v, want %v", got, authgateSidecarPort)
 	}
 	if got := port["port"]; got != 3000 {
 		t.Errorf("port = %v, want %v", got, 3000)
@@ -160,19 +182,28 @@ func TestBuildResources_PasswordGateServiceTargetPort(t *testing.T) {
 	}
 }
 
-func TestBuildResources_PasswordGateCaddyfileContent(t *testing.T) {
+func TestBuildResources_PasswordGateUpstreamEnv(t *testing.T) {
 	cfg := baseDeployConfig()
-	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
 	res := BuildResources(cfg)
 
-	data, _ := res.CaddySecret["data"].(map[string]interface{})
-	caddyfile, _ := data["Caddyfile"].([]byte)
-	content := string(caddyfile)
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	authgate, _ := containers[1].(map[string]interface{})
+	env, _ := authgate["env"].([]interface{})
 
-	for _, want := range []string{"basic_auth", "admin $2b$10$fakehash", "reverse_proxy localhost:3000", "admin off"} {
-		if !strings.Contains(content, want) {
-			t.Errorf("Caddyfile does not contain %q:\n%s", want, content)
-		}
+	got := map[string]string{}
+	for _, e := range env {
+		entry, _ := e.(map[string]interface{})
+		got[entry["name"].(string)] = entry["value"].(string)
+	}
+	if got["AUTHGATE_UPSTREAM_PORT"] != "3000" {
+		t.Errorf("AUTHGATE_UPSTREAM_PORT = %q, want %q", got["AUTHGATE_UPSTREAM_PORT"], "3000")
+	}
+	if got["AUTHGATE_APP_SLUG"] != "my-app" {
+		t.Errorf("AUTHGATE_APP_SLUG = %q, want %q", got["AUTHGATE_APP_SLUG"], "my-app")
 	}
 }
 
@@ -180,11 +211,11 @@ func TestBuildResources_PasswordGateIgnoredForCronJob(t *testing.T) {
 	cfg := baseDeployConfig()
 	cfg.IsCronJob = true
 	cfg.Schedule = "0 2 * * *"
-	cfg.PasswordGate = PasswordGateConfig{Enabled: true, Username: "admin", PasswordHash: "$2b$10$fakehash"}
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
 	res := BuildResources(cfg)
 
-	if res.CaddySecret != nil {
-		t.Error("expected CaddySecret to be nil for a CronJob even with PasswordGate.Enabled set, got non-nil")
+	if res.AuthgateSecret != nil {
+		t.Error("expected AuthgateSecret to be nil for a CronJob even with PasswordGate.Enabled set, got non-nil")
 	}
 	jobSpec, _ := res.CronJob["spec"].(map[string]interface{})
 	jobTmpl, _ := jobSpec["jobTemplate"].(map[string]interface{})

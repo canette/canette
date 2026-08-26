@@ -32,7 +32,6 @@ type deploymentSnapshot struct {
 		Schedule        string `json:"schedule"`
 		PasswordGate    struct {
 			Enabled      bool   `json:"enabled"`
-			Username     string `json:"username"`
 			PasswordHash string `json:"password_hash"`
 		} `json:"password_gate"`
 	} `json:"app"`
@@ -100,10 +99,10 @@ type VolumeSpec struct {
 	Config    VolumeConfig
 }
 
-// PasswordGateSpec describes the optional HTTP Basic Auth gate for a web app.
+// PasswordGateSpec describes the optional HTTP Basic Auth gate for a web
+// app — a single shared password, not individual accounts.
 type PasswordGateSpec struct {
 	Enabled      bool
-	Username     string
 	PasswordHash string // bcrypt hash, e.g. "$2b$10$..." — never a plaintext password
 }
 
@@ -400,7 +399,6 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		// build the sidecar for a non-web app, independent of the API layer.
 		PasswordGate: PasswordGateSpec{
 			Enabled:      snap.App.PasswordGate.Enabled && dep.DeploymentType == "web",
-			Username:     snap.App.PasswordGate.Username,
 			PasswordHash: snap.App.PasswordGate.PasswordHash,
 		},
 	}, parseErr

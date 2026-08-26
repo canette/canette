@@ -17,8 +17,8 @@ func RenderManifest(res AppResources) (string, error) {
 	if res.Secret != nil {
 		objs = append(objs, redactSecret(res.Secret))
 	}
-	if res.CaddySecret != nil {
-		objs = append(objs, redactSecret(res.CaddySecret))
+	if res.AuthgateSecret != nil {
+		objs = append(objs, redactSecret(res.AuthgateSecret))
 	}
 	// Match the apply ordering in ApplyAll: PVCs and ConfigMaps before the workload.
 	objs = append(objs, res.PVCs...)

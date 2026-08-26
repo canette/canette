@@ -50,6 +50,7 @@ CONTROLLER_IMAGE="${REPO}/canette-controller"
 GIT_INIT_IMAGE="${REPO}/canette-builder-git-init"
 IMAGE_BUILD_IMAGE="${REPO}/canette-builder-image-build"
 LOGSTREAMER_IMAGE="${REPO}/canette-logstreamer"
+AUTHGATE_IMAGE="${REPO}/canette-authgate"
 
 # Output flag: --push sends directly to the registry; --load puts into the local daemon
 OUTPUT_FLAG="--load"
@@ -65,6 +66,7 @@ t_controller=(-t "${CONTROLLER_IMAGE}:${TAG}")
 t_git_init=(-t "${GIT_INIT_IMAGE}:${TAG}")
 t_image_build=(-t "${IMAGE_BUILD_IMAGE}:${TAG}")
 t_logstreamer=(-t "${LOGSTREAMER_IMAGE}:${TAG}")
+t_authgate=(-t "${AUTHGATE_IMAGE}:${TAG}")
 
 if [ "${ADD_LATEST}" = "true" ]; then
   t_api+=(-t "${API_IMAGE}:latest")
@@ -74,9 +76,10 @@ if [ "${ADD_LATEST}" = "true" ]; then
   t_git_init+=(-t "${GIT_INIT_IMAGE}:latest")
   t_image_build+=(-t "${IMAGE_BUILD_IMAGE}:latest")
   t_logstreamer+=(-t "${LOGSTREAMER_IMAGE}:latest")
+  t_authgate+=(-t "${AUTHGATE_IMAGE}:latest")
 fi
 
-echo "==> Building canette images (7 total)"
+echo "==> Building canette images (8 total)"
 echo "    Repo:      ${REPO}"
 echo "    Tag:       ${TAG}"
 echo "    Platforms: ${PLATFORMS}"
@@ -139,12 +142,21 @@ docker buildx build \
   "${REPO_ROOT}"
 
 # ── logstreamer ──────────────────────────────────────────────────────────────
-echo "==> [7/7] logstreamer: ${LOGSTREAMER_IMAGE}:${TAG}"
+echo "==> [7/8] logstreamer: ${LOGSTREAMER_IMAGE}:${TAG}"
 docker buildx build \
   --platform "${PLATFORMS}" \
   "${OUTPUT_FLAG}" \
   "${t_logstreamer[@]}" \
   -f "${REPO_ROOT}/apps/logstreamer/Dockerfile" \
+  "${REPO_ROOT}"
+
+# ── authgate ─────────────────────────────────────────────────────────────────
+echo "==> [8/8] authgate: ${AUTHGATE_IMAGE}:${TAG}"
+docker buildx build \
+  --platform "${PLATFORMS}" \
+  "${OUTPUT_FLAG}" \
+  "${t_authgate[@]}" \
+  -f "${REPO_ROOT}/apps/authgate/Dockerfile" \
   "${REPO_ROOT}"
 
 # ── summary ──────────────────────────────────────────────────────────────────
@@ -157,3 +169,4 @@ echo "    ${GIT_INIT_IMAGE}:${TAG}"
 echo "    ${CONTROLLER_IMAGE}:${TAG}"
 echo "    ${IMAGE_BUILD_IMAGE}:${TAG}"
 echo "    ${LOGSTREAMER_IMAGE}:${TAG}"
+echo "    ${AUTHGATE_IMAGE}:${TAG}"

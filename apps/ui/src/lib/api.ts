@@ -153,10 +153,10 @@ export const hostnames = {
 // Password protection
 export const passwordGate = {
   get: (appId: string) => request<AppPasswordGate>(`/apps/${appId}/password-gate`),
-  enable: (appId: string, username: string, password: string) =>
+  enable: (appId: string, password: string) =>
     request<AppPasswordGate>(`/apps/${appId}/password-gate`, {
       method: "PUT",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ password }),
     }),
   disable: (appId: string) => request<AppPasswordGate>(`/apps/${appId}/password-gate`, { method: "DELETE" }),
 }
