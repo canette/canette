@@ -19,8 +19,8 @@ type AppResources struct {
 	CronJob         map[string]interface{} // nil unless IsCronJob
 	PVCs            []map[string]interface{}
 	ConfigMaps      []map[string]interface{}
-	CaddySecret     map[string]interface{} // nil unless PasswordGate is enabled (never set for CronJobs)
-	AppSlug         string                 // needed by apply.go to clean up a stale CaddySecret when CaddySecret is nil
+	AuthgateSecret  map[string]interface{} // nil unless PasswordGate is enabled (never set for CronJobs)
+	AppSlug         string                 // needed by apply.go to clean up a stale AuthgateSecret when AuthgateSecret is nil
 }
 
 // Resources holds resolved Kubernetes resource requests and limits.
@@ -73,6 +73,7 @@ type DeployConfig struct {
 	CommitSha           string   // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
 	DeploymentID        string   // deployments.id row that triggered this apply, surfaced as an annotation
 	PasswordGate        PasswordGateConfig
+	AuthgateImage       string // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
 }
 
 // shortSHA returns the first 7 characters of a commit SHA for display as a version label,
@@ -113,39 +114,20 @@ func secretName(appSlug string) string {
 	return appSlug + "-secrets"
 }
 
-// caddySidecarPort is the internal-only port the password-gate Caddy sidecar
-// listens on. MUST stay in sync with apps/api/src/services/reserved-ports.ts'
-// CADDY_SIDECAR_PORT — the Service's targetPort switches to this value when the
-// gate is enabled, and apps may never declare this as their own runtime port
-// (enforced in the API's createApp/updateApp port validation).
-const caddySidecarPort = 39191
+// authgateSidecarPort is the internal-only port the password-gate authgate
+// sidecar listens on. MUST stay in sync with
+// apps/api/src/services/reserved-ports.ts' AUTHGATE_SIDECAR_PORT — the
+// Service's targetPort switches to this value when the gate is enabled, and
+// apps may never declare this as their own runtime port (enforced in the
+// API's createApp/updateApp port validation).
+const authgateSidecarPort = 39191
 
-const caddyContainerName = "caddy-gate"
+const authgateContainerName = "authgate"
 
-func caddySecretName(appSlug string) string {
-	return appSlug + "-caddy-gate"
-}
+const authgateHealthzPath = "/.canette-gate/healthz"
 
-// renderCaddyfile builds the Caddyfile served by the password-gate sidecar.
-// username/passwordHash are assumed pre-validated by the API layer
-// (apps/api/src/services/password-gate.ts) — username is restricted to
-// [A-Za-z0-9_-] there specifically to prevent Caddyfile injection via this
-// exact interpolation. passwordHash is a machine-generated bcrypt string,
-// inherently safe to interpolate. "admin off" disables Caddy's admin API
-// (unnecessary attack surface — nobody administers this instance). Plain
-// "http://" explicitly opts out of Caddy's auto-HTTPS, matching the app's own
-// container: TLS terminates at the Gateway, not in the pod.
-func renderCaddyfile(username, passwordHash string, appPort, caddyPort int) string {
-	return fmt.Sprintf(`{
-	admin off
-}
-http://:%d {
-	basic_auth {
-		%s %s
-	}
-	reverse_proxy localhost:%d
-}
-`, caddyPort, username, passwordHash, appPort)
+func authgateSecretName(appSlug string) string {
+	return appSlug + "-authgate"
 }
 
 // BuildResources constructs all K8s resource manifests for an app deployment.
@@ -368,40 +350,53 @@ func BuildResources(cfg DeployConfig) AppResources {
 	// Password-gate sidecar: only meaningful for apps with a Service/HTTPRoute,
 	// so it's skipped entirely for CronJobs even if PasswordGate.Enabled is set
 	// upstream (defense-in-depth alongside the store-layer guard).
-	var caddySecretObj map[string]interface{}
+	var authgateSecretObj map[string]interface{}
 	if cfg.PasswordGate.Enabled && !cfg.IsCronJob {
-		caddyfile := renderCaddyfile(cfg.PasswordGate.Username, cfg.PasswordGate.PasswordHash, port, caddySidecarPort)
-		caddySecretObj = map[string]interface{}{
+		// Username/password hash are plain env var values (via envFrom below),
+		// never interpolated into a config file — unlike the old rendered
+		// Caddyfile, there is no config-syntax injection surface to guard here.
+		authgateSecretObj = map[string]interface{}{
 			"apiVersion": "v1",
 			"kind":       "Secret",
 			"metadata": map[string]interface{}{
-				"name":      caddySecretName(cfg.AppSlug),
+				"name":      authgateSecretName(cfg.AppSlug),
 				"namespace": ns,
 				"labels":    labels,
 			},
 			"data": map[string]interface{}{
-				"Caddyfile": []byte(caddyfile),
+				"USERNAME":      []byte(cfg.PasswordGate.Username),
+				"PASSWORD_HASH": []byte(cfg.PasswordGate.PasswordHash),
 			},
 		}
-		podVolumes = append(podVolumes, map[string]interface{}{
-			"name": "caddy-config",
-			"secret": map[string]interface{}{
-				"secretName": caddySecretName(cfg.AppSlug),
-			},
-		})
-		// The official caddy:2-alpine image's default entrypoint already runs
-		// `caddy run --config /etc/caddy/Caddyfile`, so no command override is needed.
-		caddyContainer := map[string]interface{}{
-			"name":  caddyContainerName,
-			"image": "caddy:2-alpine",
+		authgateContainer := map[string]interface{}{
+			"name":  authgateContainerName,
+			"image": cfg.AuthgateImage,
 			"ports": []interface{}{
-				map[string]interface{}{"containerPort": caddySidecarPort, "protocol": "TCP"},
+				map[string]interface{}{"containerPort": authgateSidecarPort, "protocol": "TCP"},
 			},
-			"volumeMounts": []interface{}{
-				map[string]interface{}{"name": "caddy-config", "mountPath": "/etc/caddy", "readOnly": true},
+			"env": []interface{}{
+				map[string]interface{}{"name": "AUTHGATE_UPSTREAM_PORT", "value": fmt.Sprintf("%d", port)},
+				map[string]interface{}{"name": "AUTHGATE_APP_SLUG", "value": cfg.AppSlug},
+			},
+			"envFrom": []interface{}{
+				map[string]interface{}{
+					"secretRef": map[string]interface{}{"name": authgateSecretName(cfg.AppSlug)},
+				},
+			},
+			"securityContext": map[string]interface{}{
+				"runAsNonRoot":             true,
+				"allowPrivilegeEscalation": false,
+				"readOnlyRootFilesystem":   true,
+				"capabilities":             map[string]interface{}{"drop": []interface{}{"ALL"}},
+			},
+			"livenessProbe": map[string]interface{}{
+				"httpGet": map[string]interface{}{"path": authgateHealthzPath, "port": authgateSidecarPort},
+			},
+			"readinessProbe": map[string]interface{}{
+				"httpGet": map[string]interface{}{"path": authgateHealthzPath, "port": authgateSidecarPort},
 			},
 		}
-		podSpec["containers"] = append(podSpec["containers"].([]interface{}), caddyContainer)
+		podSpec["containers"] = append(podSpec["containers"].([]interface{}), authgateContainer)
 	}
 
 	if len(podVolumes) > 0 {
@@ -453,12 +448,12 @@ func BuildResources(cfg DeployConfig) AppResources {
 			},
 		}
 
-		// targetPort routes through the Caddy sidecar when the password gate is
-		// enabled; the external port (and thus the HTTPRoute, which targets the
-		// Service by name/port and needs no changes) is unaffected.
+		// targetPort routes through the authgate sidecar when the password gate
+		// is enabled; the external port (and thus the HTTPRoute, which targets
+		// the Service by name/port and needs no changes) is unaffected.
 		targetPort := port
 		if cfg.PasswordGate.Enabled {
-			targetPort = caddySidecarPort
+			targetPort = authgateSidecarPort
 		}
 		service = map[string]interface{}{
 			"apiVersion": "v1",
@@ -543,7 +538,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 		CronJob:         cronJob,
 		PVCs:            pvcs,
 		ConfigMaps:      configMaps,
-		CaddySecret:     caddySecretObj,
+		AuthgateSecret:  authgateSecretObj,
 		AppSlug:         cfg.AppSlug,
 	}
 }

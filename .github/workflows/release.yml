@@ -83,7 +83,8 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           for image in canette-api canette-ui canette-builder canette-controller \
-                       canette-builder-git-init canette-builder-image-build canette-logstreamer; do
+                       canette-builder-git-init canette-builder-image-build canette-logstreamer \
+                       canette-authgate; do
             docker buildx imagetools create \
               -t ${REPO}/${image}:${VERSION} \
               -t ${REPO}/${image}:latest \

@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - apps/authgate/**
       - apps/builder/**
       - apps/controller/**
       - apps/logstreamer/**
@@ -69,7 +70,8 @@ jobs:
           REPO: ghcr.io/${{ github.repository_owner }}
         run: |
           for image in canette-api canette-ui canette-builder canette-controller \
-                       canette-builder-git-init canette-builder-image-build canette-logstreamer; do
+                       canette-builder-git-init canette-builder-image-build canette-logstreamer \
+                       canette-authgate; do
             docker buildx imagetools create \
               -t ${REPO}/${image}:edge \
               ${REPO}/${image}:edge-amd64 \

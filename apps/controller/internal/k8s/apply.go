@@ -78,17 +78,17 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 			return fmt.Errorf("apply imagepullsecret: %w", err)
 		}
 	}
-	if res.CaddySecret != nil {
-		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.CaddySecret); err != nil {
-			return fmt.Errorf("apply caddy secret: %w", err)
+	if res.AuthgateSecret != nil {
+		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.AuthgateSecret); err != nil {
+			return fmt.Errorf("apply authgate secret: %w", err)
 		}
 	} else {
 		// Gate disabled (never enabled, was just disabled, or this is a CronJob
-		// which never has one) — delete any stale Caddy secret left over from a
-		// previous deployment with the gate enabled. Idempotent (DeleteResource
+		// which never has one) — delete any stale authgate secret left over from
+		// a previous deployment with the gate enabled. Idempotent (DeleteResource
 		// ignores not-found), mirrors the stale-HTTPRoute cleanup below.
-		if err := DeleteResource(ctx, dyn, gvrSecret, ns, caddySecretName(res.AppSlug)); err != nil {
-			return fmt.Errorf("delete stale caddy secret: %w", err)
+		if err := DeleteResource(ctx, dyn, gvrSecret, ns, authgateSecretName(res.AppSlug)); err != nil {
+			return fmt.Errorf("delete stale authgate secret: %w", err)
 		}
 	}
 	for i, pvc := range res.PVCs {

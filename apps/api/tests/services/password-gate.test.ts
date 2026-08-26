@@ -6,7 +6,7 @@ import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
 import { createApp } from "../../src/services/apps"
 import {
-  CADDY_SIDECAR_PORT,
+  AUTHGATE_SIDECAR_PORT,
   disablePasswordGate,
   enablePasswordGate,
   getPasswordGateStatus,
@@ -160,7 +160,7 @@ describe("services/password-gate", () => {
     await expect(
       createApp(db, "projId", "userId", {
         name: "gate-port-app", slug: "gate-port-app", sourceType: "git",
-        gitUrl: "https://github.com/example/repo", port: CADDY_SIDECAR_PORT,
+        gitUrl: "https://github.com/example/repo", port: AUTHGATE_SIDECAR_PORT,
       })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR", status: 400 })
   })

@@ -3,15 +3,14 @@ import type { AppPasswordGate } from "@canette/types"
 import { password } from "bun"
 import { ServiceError } from "./errors"
 import { getAppById } from "./apps"
-import { CADDY_SIDECAR_PORT } from "./reserved-ports"
+import { AUTHGATE_SIDECAR_PORT } from "./reserved-ports"
 
-export { CADDY_SIDECAR_PORT }
+export { AUTHGATE_SIDECAR_PORT }
 
-// Load-bearing: this value is interpolated directly into the rendered Caddyfile
-// text as `basic_auth { <username> <hash> }` (apps/controller/internal/k8s/resources.go).
-// Restricting to a safe character set is what prevents Caddyfile-directive
-// injection via the username field — do not relax this without also reviewing
-// how the Go side renders the Caddyfile.
+// The username ends up as a plain K8s Secret value (env var) consumed by the
+// authgate sidecar (apps/controller/internal/k8s/resources.go), not
+// interpolated into any config file, so this is general input hygiene rather
+// than a config-injection guard.
 const USERNAME_RE = /^[A-Za-z0-9_-]{1,63}$/
 
 // bcrypt silently truncates input beyond 72 bytes — reject rather than let a

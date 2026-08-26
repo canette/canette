@@ -26,6 +26,7 @@ type Config struct {
 	ImagePullSecretsEnabled bool   // Enable automatic imagePullSecret creation in app namespaces
 	RegistryAuthConfigFile  string // Path to mounted .dockerconfigjson file
 	RegistryHost            string // Registry host extracted from PullRepo (e.g., "registry.example.com")
+	AuthgateImage           string // canette-authgate sidecar image ref, only used when an app's password gate is enabled
 }
 
 // Controller polls for deploying deployments and reconciles them.
@@ -222,5 +223,6 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 			Username:     cfg.PasswordGate.Username,
 			PasswordHash: cfg.PasswordGate.PasswordHash,
 		},
+		AuthgateImage: c.cfg.AuthgateImage,
 	}
 }

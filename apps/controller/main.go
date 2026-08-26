@@ -112,6 +112,11 @@ func run(log *zap.Logger) error {
 		return err
 	}
 
+	authgateImage, err := env.RequireEnv("AUTHGATE_IMAGE")
+	if err != nil {
+		return err
+	}
+
 	// Extract registry host from pullRepo for imagePullSecret matching
 	// e.g., "registry.example.com/" → "registry.example.com"
 	registryHost := strings.TrimSuffix(pullRepo, "/")
@@ -133,6 +138,7 @@ func run(log *zap.Logger) error {
 		ImagePullSecretsEnabled: imagePullSecretsEnabled,
 		RegistryAuthConfigFile:  registryAuthConfigFile,
 		RegistryHost:            registryHost,
+		AuthgateImage:           authgateImage,
 	}
 
 	// ── Run ───────────────────────────────────────────────────────────────────

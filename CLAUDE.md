@@ -22,7 +22,8 @@ canette/
 │   ├── docs/        # Fumadocs documentation site (TypeScript/MDX)
 │   ├── controller/  # K8s reconciliation controller (Go)
 │   ├── builder/     # Build job manager (Go)
-│   └── logstreamer/ # Live pod log streaming service (Go)
+│   ├── logstreamer/ # Live pod log streaming service (Go)
+│   └── authgate/    # Per-app password-gate sidecar (Go)
 ├── charts/
 │   └── canette/     # Helm chart (all services in one chart)
 ├── packages/
@@ -142,6 +143,11 @@ Auth is handled by `better-auth` embedded in the API server. Supported providers
 - Metrics: `GET /metrics/usage` reads pod health (ready/restart count) and declared resources from the core Pods API (always available), and current CPU/memory usage from `metrics.k8s.io` (metrics-server) when installed — degrades gracefully (`usageAvailable: false`) when it isn't. No Prometheus or time-series history yet; see [canette/canette#168](https://github.com/canette/canette/issues/168) for the staged rollout (bundled/external Prometheus, Traefik traffic adapter)
 - Authenticated via a shared secret (`LOGSTREAMER_SECRET`) passed as `Authorization: Bearer` — must match the value configured in the API
 - Restricted to in-cluster traffic only via NetworkPolicy (only the API pod may reach port 8080)
+
+### `apps/authgate` (Go)
+- Not a standalone deployed service — a sidecar image the controller injects into an individual app's own pod when that app's password gate is enabled (see "Shipped since the original MVP plan" → Password gate)
+- No Kubernetes API access, no RBAC — a pure per-pod HTTP proxy in front of `localhost:<app port>`
+- Verifies the bcrypt hash from `apps.password_gate_password_hash` via either an `Authorization: Basic` header or a signed session cookie set by its own embedded login form; never talks to the database directly (credentials arrive as env vars via the pod's Secret)
 
 ---
 
@@ -283,6 +289,7 @@ These were previously listed under "Planned features" below but are now fully im
 - **Mounted volumes**: three types (`pvc`, `emptyDir`, `configmap`) on the `app_volumes` table (migration `000009`/`000010`), full CRUD in `apps/api/src/services/volumes.ts`, controller reconciliation of the corresponding K8s volumes/mounts, and a "Volumes" section on the app settings page. Volumes are intentionally configured post-creation (settings), not during app creation.
 - **Teams**: `teams`/`team_members` tables have existed since the initial schema migration. A personal team is created per user at registration; projects/apps and `git_credentials` are team-scoped; roles are `owner`/`member`. Full UI at `/dashboard/teams/[id]` (overview, members, credentials).
 - **Custom hostnames**: admins can attach additional FQDNs to a `web` app beyond its platform-generated URL, stored on the `app_hostnames` table (migration `000011`, globally unique). `apps/api/src/services/hostnames.ts`: adding/removing a hostname is admin-only (`requireAdmin` per-route on `appsRouter`, deliberately bypassing the team-scoped `getAppById` — a global admin need not be a member of the app's team). Listing is team-scoped instead, like any other app sub-resource — a hostname is public DNS information, so any team member can see it, only mutation is admin-gated. The controller appends extra hostnames to the existing `HTTPRoute`'s `spec.hostnames` list alongside the platform-generated one (`apps/controller/internal/k8s/resources.go`) — one route, multiple hostnames, no new K8s objects. TLS is out of scope: canette never touches the Gateway's listener certificates, so a matching cert must already exist for HTTPS to work on a custom hostname. UI: the shared `HostnameManager` component (`apps/ui/src/components/hostname-manager.tsx`) provides admin-only add/remove — a "Custom domains" section on the app settings page (visible only to admins, but that route is team-scoped so unreachable for a non-member admin) and a per-app "Hostnames" dialog on the admin projects overview (`/admin/projects`), reachable for any admin regardless of team membership. Read-only awareness for everyone else: `AppLayout` (`apps/ui/src/app/(authenticated)/dashboard/projects/[slug]/apps/[appSlug]/layout.tsx`) fetches the list into `AppContext` and the shared `HostnameAltMenu` component (`apps/ui/src/components/hostname-alt-menu.tsx`) renders a small "+N" dropdown next to the primary live URL — in the per-tab header and on the Overview live-URL pill — listing every hostname as an external link.
+- **Password gate**: per-app password protection for a `web` app's public URL (`apps.password_gate_enabled/username/password_hash`, migration `000012`), toggled from a "Password protection" section on the app settings page (`apps/ui/src/components/password-gate-manager.tsx`). `apps/api/src/services/password-gate.ts` bcrypt-hashes the password (never stored or returned in plaintext); the controller injects an `apps/authgate` sidecar into the app's pod when enabled, switching the Service's `targetPort` to the sidecar (`AUTHGATE_SIDECAR_PORT` / `apps/api/src/services/reserved-ports.ts`, kept in sync with the Go-side `authgateSidecarPort` constant). The sidecar (own Go binary, no Kubernetes API access) verifies the same bcrypt hash via either an `Authorization: Basic` header (keeps scripts/webhooks/CI working unchanged) or a branded no-JS login form for browsers, backed by an HMAC-signed session cookie whose signing key is derived from the password hash itself — changing the password invalidates existing sessions with no separate key to rotate. Originally shipped as a `caddy:2-alpine` + `basic_auth` sidecar (native browser Basic Auth prompt); replaced by `apps/authgate` for a branded login experience.
 
 ## Planned features
 

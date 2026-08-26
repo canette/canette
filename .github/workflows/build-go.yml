@@ -5,11 +5,12 @@ on:
     branches:
       - '*'
     paths:
+      - apps/authgate/**
       - apps/builder/**
       - apps/controller/**
       - apps/logstreamer/**
       - packages/golib/**
-  workflow_dispatch: 
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        app: [ 'apps/builder', 'apps/controller', 'apps/logstreamer' ]
+        app: [ 'apps/authgate', 'apps/builder', 'apps/controller', 'apps/logstreamer' ]
     
     steps:
     - uses: actions/checkout@v7

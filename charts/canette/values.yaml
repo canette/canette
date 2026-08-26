@@ -487,6 +487,15 @@ logstreamer:
       memory: 128Mi
 
 # ---------------------------------------------------------------------------
+# Authgate (per-app password-gate sidecar image — not a standalone service;
+# the controller injects this image into an app's own pod when that app's
+# password protection is enabled)
+# ---------------------------------------------------------------------------
+authgate:
+  # Override image (defaults to {image.repo}/canette-authgate:{image.tag})
+  image: ""
+
+# ---------------------------------------------------------------------------
 # Database migrations
 # ---------------------------------------------------------------------------
 migrations:

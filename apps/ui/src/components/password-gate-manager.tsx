@@ -10,10 +10,11 @@ import { FormError } from "@/components/ui/form-error"
 import * as api from "@/lib/api"
 import type { AppPasswordGate } from "@canette/types"
 
-// Team-scoped password protection for a single web app's public URL, gated with
-// HTTP Basic Auth via a Caddy sidecar in the app's own pod. Unlike custom
-// hostnames this is an operational per-app setting, not a DNS/TLS authority
-// grant, so it's not admin-gated.
+// Team-scoped password protection for a single web app's public URL, gated by
+// an authgate sidecar in the app's own pod (branded login form for browsers,
+// HTTP Basic Auth for scripts/CI). Unlike custom hostnames this is an
+// operational per-app setting, not a DNS/TLS authority grant, so it's not
+// admin-gated.
 export function PasswordGateManager({ appId }: { appId: string }) {
   const [gate, setGate] = useState<AppPasswordGate>({ enabled: false })
   const [loading, setLoading] = useState(true)
