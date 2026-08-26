@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { authClient, signIn } from "@/lib/auth-client"
+import { signIn } from "@/lib/auth-client"
 import { Button } from "@/components/ui/button"
 import { KeyRound, Loader2 } from "lucide-react"
 import { GitHubIcon } from "@/components/icons/github-icon"
@@ -51,7 +51,7 @@ export function LoginForm({
           disabled={oidcLoading}
           onClick={() => {
             setOidcLoading(true)
-            authClient.signIn.oauth2({ providerId: "oidc", callbackURL: dest })
+            signIn.social({ provider: "oidc", callbackURL: dest })
           }}
         >
           {oidcLoading ? <Loader2 className="size-4 animate-spin" /> : <KeyRound size={18} />}
