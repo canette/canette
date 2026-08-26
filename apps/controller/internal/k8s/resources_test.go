@@ -131,8 +131,18 @@ func TestBuildResources_PasswordGateAddsSidecarAndSecret(t *testing.T) {
 	if got := envFromEntry["prefix"]; got != "AUTHGATE_" {
 		t.Errorf("envFrom prefix = %q, want %q", got, "AUTHGATE_")
 	}
-	if _, ok := authgate["securityContext"]; !ok {
-		t.Error("expected authgate container to declare a securityContext")
+	secCtx, ok := authgate["securityContext"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected authgate container to declare a securityContext")
+	}
+	if secCtx["runAsNonRoot"] != true {
+		t.Error("expected runAsNonRoot: true")
+	}
+	// A FROM scratch image with no USER directive defaults to UID 0 — pairing
+	// runAsNonRoot with no runAsUser makes the kubelet refuse to start the pod
+	// ("container has runAsNonRoot and image will run as root").
+	if _, ok := secCtx["runAsUser"]; !ok {
+		t.Error("expected an explicit runAsUser alongside runAsNonRoot")
 	}
 	if _, ok := authgate["livenessProbe"]; !ok {
 		t.Error("expected authgate container to declare a livenessProbe")

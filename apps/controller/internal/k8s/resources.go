@@ -387,8 +387,15 @@ func BuildResources(cfg DeployConfig) AppResources {
 					"prefix":    "AUTHGATE_",
 				},
 			},
+			// runAsUser is required alongside runAsNonRoot: the FROM scratch
+			// authgate image has no USER directive (defaults to UID 0), so without
+			// an explicit non-root UID here the kubelet refuses to start the pod
+			// ("container has runAsNonRoot and image will run as root"). Matches
+			// the same runAsUser: 65534 (nobody) convention as the controller and
+			// logstreamer Deployments (charts/canette/templates/*/deployment.yaml).
 			"securityContext": map[string]interface{}{
 				"runAsNonRoot":             true,
+				"runAsUser":                65534,
 				"allowPrivilegeEscalation": false,
 				"readOnlyRootFilesystem":   true,
 				"capabilities":             map[string]interface{}{"drop": []interface{}{"ALL"}},
