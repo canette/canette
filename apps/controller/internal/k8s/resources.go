@@ -206,10 +206,26 @@ func BuildResources(cfg DeployConfig) AppResources {
 									},
 								},
 							},
+							// A bare podSelector (no namespaceSelector) matches pods in the
+							// policy's own namespace. A project's apps share one namespace,
+							// so this lets them reach each other (e.g. an app's own database).
+							map[string]interface{}{
+								"podSelector": map[string]interface{}{},
+							},
 						},
 					},
 				},
 				"egress": []interface{}{
+					// Same-namespace egress, mirroring the ingress rule above — otherwise
+					// the internet ipBlock's RFC-1918 exclusion (below) blocks pod/Service
+					// CIDRs entirely, including traffic to a database in the same namespace.
+					map[string]interface{}{
+						"to": []interface{}{
+							map[string]interface{}{
+								"podSelector": map[string]interface{}{},
+							},
+						},
+					},
 					// DNS — namespaceSelector + port restriction rather than a bare
 					// port-only rule, so 53 isn't open to arbitrary destinations.
 					// kube-system is where CoreDNS/kube-dns lives on virtually every
