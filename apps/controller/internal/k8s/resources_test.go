@@ -495,3 +495,144 @@ func TestBuildResources_NoVolumes(t *testing.T) {
 		t.Error("expected no volumeMounts in container, got one")
 	}
 }
+
+func TestBuildResources_NetworkPolicyEnabled(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	res := BuildResources(cfg)
+
+	if res.NetworkPolicy == nil {
+		t.Fatal("expected NetworkPolicy to be set when NetworkPolicyEnabled, got nil")
+	}
+	meta, _ := res.NetworkPolicy["metadata"].(map[string]interface{})
+	if got := meta["name"]; got != networkPolicyName {
+		t.Errorf("NetworkPolicy name = %q, want %q", got, networkPolicyName)
+	}
+	if got := meta["namespace"]; got != AppNamespace(cfg.ProjectID, cfg.ProjectSlug) {
+		t.Errorf("NetworkPolicy namespace = %q, want %q", got, AppNamespace(cfg.ProjectID, cfg.ProjectSlug))
+	}
+}
+
+func TestBuildResources_NetworkPolicyDisabled(t *testing.T) {
+	cfg := baseDeployConfig() // NetworkPolicyEnabled zero-value (false)
+	res := BuildResources(cfg)
+
+	if res.NetworkPolicy != nil {
+		t.Error("expected NetworkPolicy to be nil when NetworkPolicyEnabled is false, got non-nil")
+	}
+}
+
+func TestBuildResources_NetworkPolicyIngressFromGatewayNamespace(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	res := BuildResources(cfg)
+
+	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
+	ingress, _ := spec["ingress"].([]interface{})
+	if len(ingress) != 1 {
+		t.Fatalf("expected 1 ingress rule, got %d", len(ingress))
+	}
+	rule, _ := ingress[0].(map[string]interface{})
+	from, _ := rule["from"].([]interface{})
+	if len(from) != 1 {
+		t.Fatalf("expected 1 ingress 'from' peer, got %d", len(from))
+	}
+	peer, _ := from[0].(map[string]interface{})
+	nsSelector, _ := peer["namespaceSelector"].(map[string]interface{})
+	matchLabels, _ := nsSelector["matchLabels"].(map[string]interface{})
+	if got := matchLabels["kubernetes.io/metadata.name"]; got != cfg.GatewayNamespace {
+		t.Errorf("ingress namespaceSelector = %q, want %q (proves it's config-driven, not hardcoded)", got, cfg.GatewayNamespace)
+	}
+}
+
+func TestBuildResources_NetworkPolicyEgressDNS(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	res := BuildResources(cfg)
+
+	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
+	egress, _ := spec["egress"].([]interface{})
+	if len(egress) != 2 {
+		t.Fatalf("expected 2 egress rules, got %d", len(egress))
+	}
+	dnsRule, _ := egress[0].(map[string]interface{})
+	to, _ := dnsRule["to"].([]interface{})
+	peer, _ := to[0].(map[string]interface{})
+	nsSelector, _ := peer["namespaceSelector"].(map[string]interface{})
+	matchLabels, _ := nsSelector["matchLabels"].(map[string]interface{})
+	if got := matchLabels["kubernetes.io/metadata.name"]; got != "kube-system" {
+		t.Errorf("DNS egress namespaceSelector = %q, want %q", got, "kube-system")
+	}
+	ports, _ := dnsRule["ports"].([]interface{})
+	if len(ports) != 2 {
+		t.Fatalf("expected 2 DNS ports (UDP+TCP 53), got %d", len(ports))
+	}
+	seen := map[string]bool{}
+	for _, p := range ports {
+		port, _ := p.(map[string]interface{})
+		seen[port["protocol"].(string)] = port["port"] == int64(53)
+	}
+	if !seen["UDP"] || !seen["TCP"] {
+		t.Errorf("expected UDP and TCP port 53 in DNS egress rule, got %v", ports)
+	}
+}
+
+func TestBuildResources_NetworkPolicyEgressInternetExcludesReservedRanges(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	res := BuildResources(cfg)
+
+	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
+	egress, _ := spec["egress"].([]interface{})
+	internetRule, _ := egress[1].(map[string]interface{})
+	to, _ := internetRule["to"].([]interface{})
+	peer, _ := to[0].(map[string]interface{})
+	ipBlock, _ := peer["ipBlock"].(map[string]interface{})
+	if got := ipBlock["cidr"]; got != "0.0.0.0/0" {
+		t.Errorf("internet egress cidr = %q, want %q", got, "0.0.0.0/0")
+	}
+	except, _ := ipBlock["except"].([]interface{})
+	want := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"100.64.0.0/10",
+		"169.254.0.0/16",
+		"127.0.0.0/8",
+	}
+	if len(except) != len(want) {
+		t.Fatalf("expected %d excepted CIDRs, got %d: %v", len(want), len(except), except)
+	}
+	for i, w := range want {
+		if except[i] != w {
+			t.Errorf("except[%d] = %q, want %q", i, except[i], w)
+		}
+	}
+}
+
+func TestBuildResources_NetworkPolicyTypes(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	res := BuildResources(cfg)
+
+	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
+	policyTypes, _ := spec["policyTypes"].([]interface{})
+	if len(policyTypes) != 2 || policyTypes[0] != "Ingress" || policyTypes[1] != "Egress" {
+		t.Errorf("policyTypes = %v, want [Ingress Egress]", policyTypes)
+	}
+}
+
+func TestBuildResources_NetworkPolicyPodSelectorEmpty(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	res := BuildResources(cfg)
+
+	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
+	podSelector, ok := spec["podSelector"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected podSelector to be a map")
+	}
+	if len(podSelector) != 0 {
+		t.Errorf("expected empty podSelector (applies to every pod in the namespace), got %v", podSelector)
+	}
+}

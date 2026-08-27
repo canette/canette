@@ -69,6 +69,8 @@ spec:
               value: {{ .Values.controller.maxConcurrent | quote }}
             - name: IMAGE_PULL_SECRETS_ENABLED
               value: {{ include "canette.imagePullSecretsEnabled" . | quote }}
+            - name: NETWORK_POLICY_ENABLED
+              value: {{ .Values.controller.networkPolicy.enabled | quote }}
             {{- if and (eq (include "canette.imagePullSecretsEnabled" .) "true") (include "canette.registryAuthSecretName" .) }}
             - name: REGISTRY_AUTH_CONFIG_FILE
               value: /run/secrets/registry-auth/config.json

@@ -14,6 +14,9 @@ func RenderManifest(res AppResources) (string, error) {
 	var buf bytes.Buffer
 
 	objs := []map[string]interface{}{res.Namespace}
+	if res.NetworkPolicy != nil {
+		objs = append(objs, res.NetworkPolicy)
+	}
 	if res.Secret != nil {
 		objs = append(objs, redactSecret(res.Secret))
 	}

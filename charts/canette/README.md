@@ -104,6 +104,7 @@ The encryption key is auto-generated on first install and reused on every subseq
 | `controller.pollInterval` | `5s` | How often to reconcile pending deployments |
 | `controller.logTailInterval` | `10s` | How often to tail app logs |
 | `controller.maxConcurrent` | `3` | Maximum concurrent deployments |
+| `controller.networkPolicy.enabled` | `true` | Create a default per-app NetworkPolicy (`canette-default`): ingress only from the Gateway namespace, egress to DNS + non-private internet |
 
 ## Registry authentication
 

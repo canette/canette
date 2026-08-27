@@ -40,3 +40,7 @@ rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
     verbs: ["create", "get", "patch", "delete"]
+  # Default per-app NetworkPolicy (canette-default) in dynamically created app namespaces
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "patch", "delete"]

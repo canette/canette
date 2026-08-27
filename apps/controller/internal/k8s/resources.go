@@ -20,6 +20,7 @@ type AppResources struct {
 	PVCs            []map[string]interface{}
 	ConfigMaps      []map[string]interface{}
 	AuthgateSecret  map[string]interface{} // nil unless PasswordGate is enabled (never set for CronJobs)
+	NetworkPolicy   map[string]interface{} // nil when NetworkPolicyEnabled is false
 	AppSlug         string                 // needed by apply.go to clean up a stale AuthgateSecret when AuthgateSecret is nil
 }
 
@@ -51,31 +52,32 @@ type PasswordGateConfig struct {
 
 // DeployConfig carries everything needed to build resources.
 type DeployConfig struct {
-	ProjectID           string
-	ProjectSlug         string
-	ProjectOwner        string // user ID who created the project (may be empty)
-	AppSlug             string
-	ImageRef            string // full image reference including digest, e.g. "registry/proj/app@sha256:..."
-	Port                int
-	Replicas            int
-	Resources           Resources
-	EnvVars             map[string]string // plain-text env vars
-	SecretData          map[string][]byte // decrypted secret values
-	GatewayName         string
-	GatewayNamespace    string
-	ClusterDomain       string
-	Command             []string // optional command override (canette.yaml runtime.command)
-	SkipHTTPRoute       bool     // true when deployment_type == "private" or ingress.enabled == false
-	IsCronJob           bool     // true when deployment_type == "cronjob"
-	Schedule            string   // cron expression, only used when IsCronJob
-	ImagePullSecretName string   // Name of the imagePullSecret to reference in pod spec
-	ImagePullSecretData []byte   // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
-	Volumes             []VolumeSpec
-	ExtraHostnames      []string // admin-assigned custom hostnames, added to the HTTPRoute alongside the platform-generated one
-	CommitSha           string   // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
-	DeploymentID        string   // deployments.id row that triggered this apply, surfaced as an annotation
-	PasswordGate        PasswordGateConfig
-	AuthgateImage       string // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
+	ProjectID            string
+	ProjectSlug          string
+	ProjectOwner         string // user ID who created the project (may be empty)
+	AppSlug              string
+	ImageRef             string // full image reference including digest, e.g. "registry/proj/app@sha256:..."
+	Port                 int
+	Replicas             int
+	Resources            Resources
+	EnvVars              map[string]string // plain-text env vars
+	SecretData           map[string][]byte // decrypted secret values
+	GatewayName          string
+	GatewayNamespace     string
+	NetworkPolicyEnabled bool // global toggle for the default per-app NetworkPolicy
+	ClusterDomain        string
+	Command              []string // optional command override (canette.yaml runtime.command)
+	SkipHTTPRoute        bool     // true when deployment_type == "private" or ingress.enabled == false
+	IsCronJob            bool     // true when deployment_type == "cronjob"
+	Schedule             string   // cron expression, only used when IsCronJob
+	ImagePullSecretName  string   // Name of the imagePullSecret to reference in pod spec
+	ImagePullSecretData  []byte   // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
+	Volumes              []VolumeSpec
+	ExtraHostnames       []string // admin-assigned custom hostnames, added to the HTTPRoute alongside the platform-generated one
+	CommitSha            string   // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
+	DeploymentID         string   // deployments.id row that triggered this apply, surfaced as an annotation
+	PasswordGate         PasswordGateConfig
+	AuthgateImage        string // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
 }
 
 // shortSHA returns the first 7 characters of a commit SHA for display as a version label,
@@ -132,6 +134,8 @@ func authgateSecretName(appSlug string) string {
 	return appSlug + "-authgate"
 }
 
+const networkPolicyName = "canette-default"
+
 // BuildResources constructs all K8s resource manifests for an app deployment.
 func BuildResources(cfg DeployConfig) AppResources {
 	ns := AppNamespace(cfg.ProjectID, cfg.ProjectSlug)
@@ -181,6 +185,74 @@ func BuildResources(cfg DeployConfig) AppResources {
 			"name":   ns,
 			"labels": nsLabels,
 		},
+	}
+
+	var networkPolicy map[string]interface{}
+	if cfg.NetworkPolicyEnabled {
+		networkPolicy = map[string]interface{}{
+			"apiVersion": "networking.k8s.io/v1",
+			"kind":       "NetworkPolicy",
+			"metadata":   resourceMeta(networkPolicyName, ns, nsLabels, nil),
+			"spec": map[string]interface{}{
+				"podSelector": map[string]interface{}{}, // all pods in the namespace
+				"policyTypes": []interface{}{"Ingress", "Egress"},
+				"ingress": []interface{}{
+					map[string]interface{}{
+						"from": []interface{}{
+							map[string]interface{}{
+								"namespaceSelector": map[string]interface{}{
+									"matchLabels": map[string]interface{}{
+										"kubernetes.io/metadata.name": cfg.GatewayNamespace,
+									},
+								},
+							},
+						},
+					},
+				},
+				"egress": []interface{}{
+					// DNS — namespaceSelector + port restriction rather than a bare
+					// port-only rule, so 53 isn't open to arbitrary destinations.
+					// kube-system is where CoreDNS/kube-dns lives on virtually every
+					// distro; a podSelector was considered but rejected since the DNS
+					// pod label (k8s-app: kube-dns vs coredns) isn't portable.
+					map[string]interface{}{
+						"to": []interface{}{
+							map[string]interface{}{
+								"namespaceSelector": map[string]interface{}{
+									"matchLabels": map[string]interface{}{
+										"kubernetes.io/metadata.name": "kube-system",
+									},
+								},
+							},
+						},
+						"ports": []interface{}{
+							map[string]interface{}{"protocol": "UDP", "port": int64(53)},
+							map[string]interface{}{"protocol": "TCP", "port": int64(53)},
+						},
+					},
+					// Internet egress minus reserved ranges. This also enforces
+					// inter-namespace/cluster-internal isolation for free, since pod
+					// and Service CIDRs fall inside these same ranges.
+					map[string]interface{}{
+						"to": []interface{}{
+							map[string]interface{}{
+								"ipBlock": map[string]interface{}{
+									"cidr": "0.0.0.0/0",
+									"except": []interface{}{
+										"10.0.0.0/8",
+										"172.16.0.0/12",
+										"192.168.0.0/16",
+										"100.64.0.0/10",
+										"169.254.0.0/16",
+										"127.0.0.0/8",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
 	}
 
 	var secretObj map[string]interface{}
@@ -550,6 +622,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 		PVCs:            pvcs,
 		ConfigMaps:      configMaps,
 		AuthgateSecret:  authgateSecretObj,
+		NetworkPolicy:   networkPolicy,
 		AppSlug:         cfg.AppSlug,
 	}
 }

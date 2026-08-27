@@ -306,6 +306,15 @@ controller:
   # already have access, set enabled: false to skip Secret creation entirely.
   imagePullSecrets:
     enabled: true
+  # Enable a default per-app NetworkPolicy (canette-default) in every app namespace.
+  # Ingress: allowed only from the Gateway namespace (controller.gateway.namespace).
+  # Egress: DNS (port 53, kube-system) plus full internet egress, excluding
+  # RFC-1918 and other reserved ranges — this also blocks pod-to-pod/Service
+  # traffic between app namespaces, since in-cluster CIDRs fall inside those
+  # same ranges. Per-app egress exceptions are not yet supported; disable this
+  # entirely if an app needs to reach another namespace or a private endpoint.
+  networkPolicy:
+    enabled: true
   resources:
     requests:
       cpu: 100m

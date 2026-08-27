@@ -28,6 +28,8 @@ var (
 	gvrCronJob    = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}
 	gvrPVC        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
 	gvrConfigMap  = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+
+	gvrNetworkPolicy = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
 )
 
 const fieldManager = "can-controller"
@@ -67,6 +69,18 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 
 	if err := ApplyResource(ctx, dyn, gvrNamespace, nsNamespace, res.Namespace); err != nil {
 		return fmt.Errorf("apply namespace: %w", err)
+	}
+	if res.NetworkPolicy != nil {
+		if err := ApplyResource(ctx, dyn, gvrNetworkPolicy, ns, res.NetworkPolicy); err != nil {
+			return fmt.Errorf("apply networkpolicy: %w", err)
+		}
+	} else {
+		// Global toggle disabled — delete any stale canette-default NetworkPolicy so a
+		// chart upgrade that flips the toggle off actually removes the restriction
+		// instead of leaving it in place. Idempotent (DeleteResource ignores not-found).
+		if err := DeleteResource(ctx, dyn, gvrNetworkPolicy, ns, networkPolicyName); err != nil {
+			return fmt.Errorf("delete stale networkpolicy: %w", err)
+		}
 	}
 	if res.Secret != nil {
 		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.Secret); err != nil {
