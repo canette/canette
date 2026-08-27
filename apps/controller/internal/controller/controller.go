@@ -24,6 +24,7 @@ type Config struct {
 	PollInterval            time.Duration
 	MaxConcurrent           int
 	ImagePullSecretsEnabled bool   // Enable automatic imagePullSecret creation in app namespaces
+	NetworkPolicyEnabled    bool   // Enable the default per-app NetworkPolicy (ingress from Gateway ns, egress DNS + non-private internet)
 	RegistryAuthConfigFile  string // Path to mounted .dockerconfigjson file
 	RegistryHost            string // Registry host extracted from PullRepo (e.g., "registry.example.com")
 	AuthgateImage           string // canette-authgate sidecar image ref, only used when an app's password gate is enabled
@@ -204,20 +205,21 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 			CPULimit:      cfg.Resources.CPULimit,
 			MemoryLimit:   cfg.Resources.MemoryLimit,
 		},
-		EnvVars:             envMap,
-		SecretData:          secretData,
-		GatewayName:         c.cfg.GatewayName,
-		GatewayNamespace:    c.cfg.GatewayNamespace,
-		ClusterDomain:       c.cfg.ClusterDomain,
-		SkipHTTPRoute:       skipHTTPRoute,
-		IsCronJob:           cfg.DeploymentType == "cronjob",
-		Schedule:            cfg.Schedule,
-		ImagePullSecretName: imagePullSecretName,
-		ImagePullSecretData: imagePullSecretData,
-		Volumes:             volumes,
-		ExtraHostnames:      cfg.ExtraHostnames,
-		CommitSha:           cfg.CommitSha,
-		DeploymentID:        deploymentID,
+		EnvVars:              envMap,
+		SecretData:           secretData,
+		GatewayName:          c.cfg.GatewayName,
+		GatewayNamespace:     c.cfg.GatewayNamespace,
+		NetworkPolicyEnabled: c.cfg.NetworkPolicyEnabled,
+		ClusterDomain:        c.cfg.ClusterDomain,
+		SkipHTTPRoute:        skipHTTPRoute,
+		IsCronJob:            cfg.DeploymentType == "cronjob",
+		Schedule:             cfg.Schedule,
+		ImagePullSecretName:  imagePullSecretName,
+		ImagePullSecretData:  imagePullSecretData,
+		Volumes:              volumes,
+		ExtraHostnames:       cfg.ExtraHostnames,
+		CommitSha:            cfg.CommitSha,
+		DeploymentID:         deploymentID,
 		PasswordGate: k8sres.PasswordGateConfig{
 			Enabled:      cfg.PasswordGate.Enabled,
 			PasswordHash: cfg.PasswordGate.PasswordHash,

@@ -125,12 +125,14 @@ func run(log *zap.Logger) error {
 	}
 
 	imagePullSecretsEnabled := env.EnvOr("IMAGE_PULL_SECRETS_ENABLED", "true") == "true"
+	networkPolicyEnabled := env.EnvOr("NETWORK_POLICY_ENABLED", "true") == "true"
 	registryAuthConfigFile := env.EnvOr("REGISTRY_AUTH_CONFIG_FILE", "")
 
 	cfg := controller.Config{
 		PullRepo:                pullRepo,
 		GatewayName:             env.EnvOr("GATEWAY_NAME", "can-gateway"),
 		GatewayNamespace:        env.EnvOr("GATEWAY_NAMESPACE", "kube-system"),
+		NetworkPolicyEnabled:    networkPolicyEnabled,
 		ClusterDomain:           clusterDomain,
 		Namespace:               env.EnvOr("BUILDER_NAMESPACE", "canette-build"),
 		PollInterval:            pollInterval,
