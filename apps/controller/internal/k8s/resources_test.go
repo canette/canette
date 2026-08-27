@@ -534,14 +534,36 @@ func TestBuildResources_NetworkPolicyIngressFromGatewayNamespace(t *testing.T) {
 	}
 	rule, _ := ingress[0].(map[string]interface{})
 	from, _ := rule["from"].([]interface{})
-	if len(from) != 1 {
-		t.Fatalf("expected 1 ingress 'from' peer, got %d", len(from))
+	if len(from) != 2 {
+		t.Fatalf("expected 2 ingress 'from' peers, got %d", len(from))
 	}
 	peer, _ := from[0].(map[string]interface{})
 	nsSelector, _ := peer["namespaceSelector"].(map[string]interface{})
 	matchLabels, _ := nsSelector["matchLabels"].(map[string]interface{})
 	if got := matchLabels["kubernetes.io/metadata.name"]; got != cfg.GatewayNamespace {
 		t.Errorf("ingress namespaceSelector = %q, want %q (proves it's config-driven, not hardcoded)", got, cfg.GatewayNamespace)
+	}
+}
+
+func TestBuildResources_NetworkPolicyIngressFromSameNamespace(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	res := BuildResources(cfg)
+
+	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
+	ingress, _ := spec["ingress"].([]interface{})
+	rule, _ := ingress[0].(map[string]interface{})
+	from, _ := rule["from"].([]interface{})
+	peer, _ := from[1].(map[string]interface{})
+	podSelector, ok := peer["podSelector"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected second ingress peer to have a podSelector")
+	}
+	if len(podSelector) != 0 {
+		t.Errorf("expected empty podSelector (matches all pods in own namespace), got %v", podSelector)
+	}
+	if _, hasNS := peer["namespaceSelector"]; hasNS {
+		t.Error("same-namespace peer must not also set namespaceSelector, or it stops matching the local namespace")
 	}
 }
 
@@ -552,10 +574,10 @@ func TestBuildResources_NetworkPolicyEgressDNS(t *testing.T) {
 
 	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
 	egress, _ := spec["egress"].([]interface{})
-	if len(egress) != 2 {
-		t.Fatalf("expected 2 egress rules, got %d", len(egress))
+	if len(egress) != 3 {
+		t.Fatalf("expected 3 egress rules, got %d", len(egress))
 	}
-	dnsRule, _ := egress[0].(map[string]interface{})
+	dnsRule, _ := egress[1].(map[string]interface{})
 	to, _ := dnsRule["to"].([]interface{})
 	peer, _ := to[0].(map[string]interface{})
 	nsSelector, _ := peer["namespaceSelector"].(map[string]interface{})
@@ -577,6 +599,31 @@ func TestBuildResources_NetworkPolicyEgressDNS(t *testing.T) {
 	}
 }
 
+func TestBuildResources_NetworkPolicyEgressSameNamespace(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	res := BuildResources(cfg)
+
+	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
+	egress, _ := spec["egress"].([]interface{})
+	rule, _ := egress[0].(map[string]interface{})
+	to, _ := rule["to"].([]interface{})
+	if len(to) != 1 {
+		t.Fatalf("expected 1 'to' peer in same-namespace egress rule, got %d", len(to))
+	}
+	peer, _ := to[0].(map[string]interface{})
+	podSelector, ok := peer["podSelector"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected same-namespace egress peer to have a podSelector")
+	}
+	if len(podSelector) != 0 {
+		t.Errorf("expected empty podSelector (matches all pods in own namespace), got %v", podSelector)
+	}
+	if _, hasPorts := rule["ports"]; hasPorts {
+		t.Error("same-namespace egress rule should not restrict ports (a database may listen on any port)")
+	}
+}
+
 func TestBuildResources_NetworkPolicyEgressInternetExcludesReservedRanges(t *testing.T) {
 	cfg := baseDeployConfig()
 	cfg.NetworkPolicyEnabled = true
@@ -584,7 +631,7 @@ func TestBuildResources_NetworkPolicyEgressInternetExcludesReservedRanges(t *tes
 
 	spec, _ := res.NetworkPolicy["spec"].(map[string]interface{})
 	egress, _ := spec["egress"].([]interface{})
-	internetRule, _ := egress[1].(map[string]interface{})
+	internetRule, _ := egress[2].(map[string]interface{})
 	to, _ := internetRule["to"].([]interface{})
 	peer, _ := to[0].(map[string]interface{})
 	ipBlock, _ := peer["ipBlock"].(map[string]interface{})
