@@ -6,7 +6,13 @@ export async function getAppNamespace(
   db: DB,
   appId: string,
   userId: string
-): Promise<{ appSlug: string; projectId: string; projectSlug: string; deploymentType: string } | null> {
+): Promise<{
+  appSlug: string
+  projectId: string
+  projectSlug: string
+  deploymentType: string
+  liveDeploymentId: string | null
+} | null> {
   const row = await db
     .selectFrom("apps as a")
     .innerJoin("projects as p", "p.id", "a.project_id")
@@ -17,6 +23,16 @@ export async function getAppNamespace(
       "p.id as project_id",
       "p.slug as project_slug",
     ])
+    .select((eb) =>
+      eb
+        .selectFrom("deployments")
+        .select("id")
+        .whereRef("app_id", "=", "a.id")
+        .where("status", "=", "live")
+        .orderBy("created_at", "desc")
+        .limit(1)
+        .as("live_deployment_id")
+    )
     .where("a.id", "=", appId)
     .where("tm.user_id", "=", userId)
     .executeTakeFirst()
@@ -27,6 +43,7 @@ export async function getAppNamespace(
     projectId: row.project_id,
     projectSlug: row.project_slug,
     deploymentType: row.deployment_type,
+    liveDeploymentId: row.live_deployment_id ?? null,
   }
 }
 

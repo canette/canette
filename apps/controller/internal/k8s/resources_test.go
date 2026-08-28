@@ -2,6 +2,8 @@ package k8s
 
 import (
 	"testing"
+
+	libk8s "canette.dev/lib/k8s"
 )
 
 func TestAppNamespace(t *testing.T) {
@@ -243,6 +245,94 @@ func TestAppNamespaceShortProjectID(t *testing.T) {
 	expected := "can-abc-my-project"
 	if got != expected {
 		t.Errorf("AppNamespace() = %q, wanted %q", got, expected)
+	}
+}
+
+func mainContainer(t *testing.T, res AppResources) map[string]interface{} {
+	t.Helper()
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	if len(containers) == 0 {
+		t.Fatal("expected at least one container")
+	}
+	c, _ := containers[0].(map[string]interface{})
+	return c
+}
+
+func TestBuildResources_ReadinessProbeWhenHealthcheckSet(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Healthcheck = &HealthcheckSpec{Path: "/healthz", Port: 3000, InitialDelaySeconds: 5, PeriodSeconds: 10}
+	res := BuildResources(cfg)
+
+	container := mainContainer(t, res)
+	probe, ok := container["readinessProbe"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected readinessProbe to be set when Healthcheck is configured")
+	}
+	httpGet, _ := probe["httpGet"].(map[string]interface{})
+	if httpGet["path"] != "/healthz" || httpGet["port"] != 3000 {
+		t.Errorf("readinessProbe.httpGet = %v, want path=/healthz port=3000", httpGet)
+	}
+	if probe["initialDelaySeconds"] != 5 || probe["periodSeconds"] != 10 {
+		t.Errorf("readinessProbe timing = %v, want initialDelaySeconds=5 periodSeconds=10", probe)
+	}
+	if _, hasLiveness := container["livenessProbe"]; hasLiveness {
+		t.Error("expected no livenessProbe to be generated — readiness only, see resources.go")
+	}
+}
+
+func TestBuildResources_NoReadinessProbeWhenHealthcheckAbsent(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Healthcheck = nil
+	res := BuildResources(cfg)
+
+	container := mainContainer(t, res)
+	if _, ok := container["readinessProbe"]; ok {
+		t.Error("expected no readinessProbe when canette.yaml has no healthcheck block — must not regress existing apps")
+	}
+}
+
+func TestBuildResources_NoReadinessProbeForCronJob(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.IsCronJob = true
+	cfg.Schedule = "0 2 * * *"
+	cfg.Healthcheck = &HealthcheckSpec{Path: "/healthz", Port: 3000, InitialDelaySeconds: 5, PeriodSeconds: 10}
+	res := BuildResources(cfg)
+
+	jobSpec, _ := res.CronJob["spec"].(map[string]interface{})
+	jobTmpl, _ := jobSpec["jobTemplate"].(map[string]interface{})
+	tmplSpec, _ := jobTmpl["spec"].(map[string]interface{})
+	podTmpl, _ := tmplSpec["template"].(map[string]interface{})
+	podSpec, _ := podTmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	container, _ := containers[0].(map[string]interface{})
+	if _, ok := container["readinessProbe"]; ok {
+		t.Error("expected no readinessProbe on a CronJob container even with Healthcheck configured — no Service routes to it")
+	}
+}
+
+func TestBuildResources_PodTemplateHasDeploymentIDLabel(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.DeploymentID = "dep-abc-123"
+	res := BuildResources(cfg)
+
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	tmplMeta, _ := tmpl["metadata"].(map[string]interface{})
+	labels, _ := tmplMeta["labels"].(map[string]interface{})
+	if labels[libk8s.LabelDeployment] != "dep-abc-123" {
+		t.Errorf("pod template labels[%s] = %v, want %q — needed to scope rollout checks to this deployment", libk8s.LabelDeployment, labels[libk8s.LabelDeployment], "dep-abc-123")
+	}
+
+	// The selector must stay stable across redeploys of the same app — it must
+	// NOT include the per-deploy DeploymentID label, since a Deployment's
+	// spec.selector is immutable once created.
+	selector, _ := depSpec["selector"].(map[string]interface{})
+	matchLabels, _ := selector["matchLabels"].(map[string]interface{})
+	if _, present := matchLabels[libk8s.LabelDeployment]; present {
+		t.Error("expected spec.selector.matchLabels to NOT include the deployment-ID label (selector must remain stable across redeploys)")
 	}
 }
 

@@ -19,9 +19,12 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "get", "patch", "delete"]
+  # "watch" is required cluster-wide (not scoped to app namespaces, since
+  # they're created dynamically) for the background pod-health watcher —
+  # see internal/health.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]

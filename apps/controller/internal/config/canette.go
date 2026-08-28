@@ -10,11 +10,25 @@ import (
 // CanetteRuntimeConfig is the subset of canette.yaml that affects how the
 // controller generates Kubernetes resources. All fields are optional.
 type CanetteRuntimeConfig struct {
-	Resources ResourceConfig `yaml:"resources"`
-	Replicas  *int           `yaml:"replicas"`
-	Runtime   RuntimeSpec    `yaml:"runtime"`
-	Ingress   IngressSpec    `yaml:"ingress"`
-	Env       map[string]string `yaml:"env"`
+	Resources   ResourceConfig    `yaml:"resources"`
+	Replicas    *int              `yaml:"replicas"`
+	Runtime     RuntimeSpec       `yaml:"runtime"`
+	Ingress     IngressSpec       `yaml:"ingress"`
+	Env         map[string]string `yaml:"env"`
+	Healthcheck *HealthcheckSpec  `yaml:"healthcheck"`
+}
+
+// HealthcheckSpec maps to the canette.yaml healthcheck block. A nil pointer
+// on the outer config means the block is absent (no probe generated, today's
+// behavior) — distinct from a present-but-empty block, which applies
+// defaults. canette.yaml is currently the ONLY source for this — there is no
+// DB-stored default (unlike port/replicas/resources), so an app with no
+// healthcheck in its repo gets no probe at all.
+type HealthcheckSpec struct {
+	Path         string `yaml:"path"`
+	Port         *int   `yaml:"port"`
+	InitialDelay *int   `yaml:"initial_delay"`
+	Period       *int   `yaml:"period"`
 }
 
 // ResourceConfig maps to the canette.yaml resources block.

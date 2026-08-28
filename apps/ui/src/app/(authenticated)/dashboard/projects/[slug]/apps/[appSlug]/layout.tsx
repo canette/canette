@@ -5,6 +5,7 @@ import { useParams, usePathname } from "next/navigation"
 import { AppProvider } from "@/lib/app-context"
 import { TabNavigation } from "@/components/tab-navigation"
 import { StatusBadge } from "@/components/ui/status-badge"
+import { RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
 import { HostnameAltMenu } from "@/components/hostname-alt-menu"
 import { ExternalLink } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
@@ -75,6 +76,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-2.5">
                 <h1 className="text-xl font-semibold font-mono tracking-tight truncate">{app.name}</h1>
                 <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
+                {isLive && (
+                  <RuntimeHealthIndicator
+                    runtimeHealth={app.runtimeHealth}
+                    runtimeHealthReason={app.runtimeHealthReason}
+                    className="shrink-0"
+                  />
+                )}
               </div>
               {computedUrl && (
                 <div className="flex items-center gap-1.5">

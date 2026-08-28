@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Info } from "lucide-react"
+import { Info, AlertTriangle } from "lucide-react"
 import { StatTile } from "@/components/ui/stat-tile"
 import { formatBytes, formatCpu, sumMetric, usageTile } from "@/lib/metrics-format"
+import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
 import type { AppMetricsUsage } from "@canette/types"
 
@@ -50,6 +51,28 @@ export function AppMetricsSummary({ appId }: { appId: string }) {
         <StatTile label="Memory usage" value={memTile.value} caption={memTile.caption} meter={memTile.meter} />
         <StatTile label="Ready pods" value={`${readyCount}/${usage.pods.length}`} />
         <StatTile label="Restarts" value={String(restarts)} />
+      </div>
+      {/* Pod identity + crash detail — the direct "no more kubectl for this"
+          surface: same data the stat tiles above already summarize, broken
+          out per pod so a specific unhealthy pod and its exit reason are
+          visible without leaving the dashboard. */}
+      <div className="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
+        {usage.pods.map((p) => (
+          <div key={p.name} className="flex items-center gap-2 text-xs">
+            <span
+              className={cn("size-1.5 rounded-full shrink-0", p.ready ? "bg-success" : "bg-destructive")}
+              aria-hidden
+            />
+            <span className="font-mono truncate" title={p.name}>{p.name}</span>
+            {!p.ready && p.lastTerminationReason && (
+              <span className="flex items-center gap-1 text-destructive-text shrink-0 ml-auto">
+                <AlertTriangle size={11} className="shrink-0" />
+                {p.lastTerminationReason}
+                {p.lastExitCode != null ? ` (exit ${p.lastExitCode})` : ""}
+              </span>
+            )}
+          </div>
+        ))}
       </div>
       {!usage.usageAvailable && (
         <div className="flex items-start gap-2 rounded-md bg-warning-soft ring-1 ring-inset ring-warning-line px-3 py-2.5">

@@ -18,7 +18,13 @@ appMetricsRouter.get("/apps/:id/metrics/usage", async (c) => {
   if (!appNs) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
 
   const base = process.env.LOGSTREAMER_URL ?? "http://localhost:8080"
-  const url = `${base}/metrics/usage?project_id=${encodeURIComponent(appNs.projectId)}&project_slug=${encodeURIComponent(appNs.projectSlug)}&app=${encodeURIComponent(appNs.appSlug)}`
+  let url = `${base}/metrics/usage?project_id=${encodeURIComponent(appNs.projectId)}&project_slug=${encodeURIComponent(appNs.projectSlug)}&app=${encodeURIComponent(appNs.appSlug)}`
+  // Scopes the pod list to the app's current deployment so a leftover pod
+  // from a previous, still-terminating deployment isn't shown as if it
+  // belonged to the current one.
+  if (appNs.liveDeploymentId) {
+    url += `&deployment_id=${encodeURIComponent(appNs.liveDeploymentId)}`
+  }
 
   const secret = process.env.LOGSTREAMER_SECRET ?? ""
   const upstream = await fetch(url, {

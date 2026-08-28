@@ -114,6 +114,9 @@ export interface Database {
     live_url: string | null
     canette_config: string | null
     position: number
+    runtime_health: string
+    runtime_health_reason: string | null
+    runtime_health_updated_at: string | null
     created_at: string
     updated_at: string
   }

@@ -35,6 +35,9 @@ function mapApp(row: AppRow): App {
     latestDeploymentStatus: (row.latest_deployment_status as App["latestDeploymentStatus"]) ?? undefined,
     canetteConfig: row.canette_config ?? undefined,
     position: row.position,
+    runtimeHealth: row.runtime_health as App["runtimeHealth"],
+    runtimeHealthReason: row.runtime_health_reason ?? undefined,
+    runtimeHealthUpdatedAt: row.runtime_health_updated_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -314,6 +317,9 @@ export async function createApp(
         password_gate_enabled: false,
         password_gate_password_hash: null,
         canette_config: input.canetteConfig ?? null,
+        runtime_health: "unknown",
+        runtime_health_reason: null,
+        runtime_health_updated_at: null,
         created_at: now,
         updated_at: now,
       })

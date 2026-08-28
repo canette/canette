@@ -19,15 +19,17 @@ import (
 
 // podMetrics is the per-pod entry in the GET /metrics/usage response.
 type podMetrics struct {
-	Name               string `json:"name"`
-	Ready              bool   `json:"ready"`
-	Restarts           int32  `json:"restarts"`
-	CPURequestMilli    *int64 `json:"cpuRequestMilli,omitempty"`
-	CPULimitMilli      *int64 `json:"cpuLimitMilli,omitempty"`
-	MemoryRequestBytes *int64 `json:"memoryRequestBytes,omitempty"`
-	MemoryLimitBytes   *int64 `json:"memoryLimitBytes,omitempty"`
-	CPUUsageMilli      *int64 `json:"cpuUsageMilli,omitempty"`
-	MemoryUsageBytes   *int64 `json:"memoryUsageBytes,omitempty"`
+	Name                  string `json:"name"`
+	Ready                 bool   `json:"ready"`
+	Restarts              int32  `json:"restarts"`
+	CPURequestMilli       *int64 `json:"cpuRequestMilli,omitempty"`
+	CPULimitMilli         *int64 `json:"cpuLimitMilli,omitempty"`
+	MemoryRequestBytes    *int64 `json:"memoryRequestBytes,omitempty"`
+	MemoryLimitBytes      *int64 `json:"memoryLimitBytes,omitempty"`
+	CPUUsageMilli         *int64 `json:"cpuUsageMilli,omitempty"`
+	MemoryUsageBytes      *int64 `json:"memoryUsageBytes,omitempty"`
+	LastTerminationReason string `json:"lastTerminationReason,omitempty"` // e.g. "OOMKilled", "Error"
+	LastExitCode          *int32 `json:"lastExitCode,omitempty"`
 }
 
 type usageResponse struct {
@@ -87,16 +89,22 @@ func fetchPodUsage(ctx context.Context, metricsClient rest.Interface, ns, select
 	return byName, nil
 }
 
-// metricsUsageHandler serves GET /metrics/usage?project_id=&project_slug=&app=.
+// metricsUsageHandler serves GET /metrics/usage?project_id=&project_slug=&app=&deployment_id=.
 // Pod health (ready/restarts) and declared requests/limits always come from the core
 // Pods API; live CPU/memory usage additionally requires metrics-server and degrades
 // gracefully (usageAvailable: false) when it isn't installed.
+//
+// deployment_id is optional but, when given, scopes the pod list to the
+// app's CURRENT deployment (via the canette.dev/deployment label) — without
+// it, a leftover pod from a previous, still-terminating deployment of the
+// same app would be listed as if it belonged to the app's current rollout.
 func metricsUsageHandler(log *zap.Logger, client kubernetes.Interface, metricsClient rest.Interface) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		projectID := r.URL.Query().Get("project_id")
 		projectSlug := r.URL.Query().Get("project_slug")
 		app := r.URL.Query().Get("app")
+		deploymentID := r.URL.Query().Get("deployment_id")
 		if projectID == "" || projectSlug == "" || app == "" {
 			http.Error(w, "missing project_id, project_slug or app", http.StatusBadRequest)
 			return
@@ -107,6 +115,9 @@ func metricsUsageHandler(log *zap.Logger, client kubernetes.Interface, metricsCl
 		}
 		ns := libk8s.AppNamespace(projectID, projectSlug)
 		selector := libk8s.AppLabelSelector(app)
+		if deploymentID != "" {
+			selector = libk8s.AppDeploymentLabelSelector(app, deploymentID)
+		}
 
 		pods, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
 		if err != nil {
@@ -131,6 +142,7 @@ func metricsUsageHandler(log *zap.Logger, client kubernetes.Interface, metricsCl
 			}
 			pm := podMetrics{Name: pod.Name, Ready: podIsReady(&pod), Restarts: podRestartCount(&pod)}
 			pm.CPURequestMilli, pm.CPULimitMilli, pm.MemoryRequestBytes, pm.MemoryLimitBytes = podResourceSpec(&pod)
+			pm.LastTerminationReason, pm.LastExitCode = podLastTermination(&pod)
 
 			if raw, ok := usage[pod.Name]; ok {
 				var cpuMilli, memBytes int64
@@ -169,6 +181,35 @@ func podRestartCount(pod *corev1.Pod) int32 {
 	}
 	return total
 }
+
+// podLastTermination returns the reason/exit code for the most relevant
+// container exit: a currently-Terminated state (e.g. crash-looping between
+// restarts) takes priority over the last-known past exit (LastTerminationState),
+// which is what's available once the container is Running again after a
+// restart — this is what lets the UI show "OOMKilled (exit 137)" even for a
+// pod that has since recovered.
+func podLastTermination(pod *corev1.Pod) (reason string, exitCode *int32) {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if t := cs.State.Terminated; t != nil {
+			return terminationReason(t), int32Ptr(t.ExitCode)
+		}
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if t := cs.LastTerminationState.Terminated; t != nil {
+			return terminationReason(t), int32Ptr(t.ExitCode)
+		}
+	}
+	return "", nil
+}
+
+func terminationReason(t *corev1.ContainerStateTerminated) string {
+	if t.Reason != "" {
+		return t.Reason
+	}
+	return "Error"
+}
+
+func int32Ptr(v int32) *int32 { return &v }
 
 func podResourceSpec(pod *corev1.Pod) (cpuReq, cpuLim, memReq, memLim *int64) {
 	var cr, cl, mr, ml int64
