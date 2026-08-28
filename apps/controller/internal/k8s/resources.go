@@ -50,6 +50,17 @@ type PasswordGateConfig struct {
 	PasswordHash string // bcrypt hash, e.g. "$2b$10$..." — never a plaintext password
 }
 
+// HealthcheckSpec describes a resolved readinessProbe to attach to the main
+// container. nil means no probe is generated (canette.yaml has no
+// healthcheck block) — the default, unchanged behavior for every app that
+// hasn't opted in.
+type HealthcheckSpec struct {
+	Path                string
+	Port                int
+	InitialDelaySeconds int
+	PeriodSeconds       int
+}
+
 // DeployConfig carries everything needed to build resources.
 type DeployConfig struct {
 	ProjectID            string
@@ -78,6 +89,7 @@ type DeployConfig struct {
 	DeploymentID         string   // deployments.id row that triggered this apply, surfaced as an annotation
 	PasswordGate         PasswordGateConfig
 	AuthgateImage        string // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
+	Healthcheck          *HealthcheckSpec // nil when canette.yaml has no healthcheck block
 }
 
 // shortSHA returns the first 7 characters of a commit SHA for display as a version label,
@@ -161,6 +173,13 @@ func BuildResources(cfg DeployConfig) AppResources {
 	resourceLabels[libk8s.LabelK8sPartOf] = cfg.ProjectSlug
 	if sha := shortSHA(cfg.CommitSha); sha != "" {
 		resourceLabels[libk8s.LabelK8sVersion] = sha
+	}
+	if cfg.DeploymentID != "" {
+		// Lets apply.go and the health watcher filter pods to the ones belonging
+		// to the deployment currently being reconciled, instead of matching any
+		// pod for the app regardless of which (possibly stale, still-terminating)
+		// deployment it came from.
+		resourceLabels[libk8s.LabelDeployment] = cfg.DeploymentID
 	}
 	labels := resourceLabels
 
@@ -348,6 +367,21 @@ func BuildResources(cfg DeployConfig) AppResources {
 	if !cfg.IsCronJob {
 		containerSpec["ports"] = []interface{}{
 			map[string]interface{}{"containerPort": port, "protocol": "TCP"},
+		}
+		// readinessProbe only — no livenessProbe. A failing readinessProbe just
+		// pulls the pod from Service endpoints and feeds the health watcher's
+		// PodReady check; it never causes Kubernetes to kill/restart the
+		// container, so a misconfigured initial_delay/path can't turn a
+		// slow-starting app into a new restart-crash-loop.
+		if cfg.Healthcheck != nil {
+			containerSpec["readinessProbe"] = map[string]interface{}{
+				"httpGet": map[string]interface{}{
+					"path": cfg.Healthcheck.Path,
+					"port": cfg.Healthcheck.Port,
+				},
+				"initialDelaySeconds": cfg.Healthcheck.InitialDelaySeconds,
+				"periodSeconds":       cfg.Healthcheck.PeriodSeconds,
+			}
 		}
 	}
 	if len(cfg.SecretData) > 0 {

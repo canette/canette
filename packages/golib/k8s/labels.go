@@ -25,3 +25,11 @@ const (
 func AppLabelSelector(appSlug string) string {
 	return LabelApp + "=" + appSlug
 }
+
+// AppDeploymentLabelSelector returns a K8s label selector string matching only
+// pods belonging to a specific deployment of an app — used to avoid matching a
+// stale pod left over from a previous (possibly still-terminating) deployment
+// of the same app.
+func AppDeploymentLabelSelector(appSlug, deploymentID string) string {
+	return LabelApp + "=" + appSlug + "," + LabelDeployment + "=" + deploymentID
+}

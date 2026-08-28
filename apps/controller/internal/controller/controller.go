@@ -225,5 +225,20 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 			PasswordHash: cfg.PasswordGate.PasswordHash,
 		},
 		AuthgateImage: c.cfg.AuthgateImage,
+		Healthcheck:   healthcheckSpec(cfg.Healthcheck),
+	}
+}
+
+// healthcheckSpec converts the store's resolved healthcheck (built from
+// canette.yaml, see store.GetAppConfig) into the k8s package's own spec type.
+func healthcheckSpec(hc *store.Healthcheck) *k8sres.HealthcheckSpec {
+	if hc == nil {
+		return nil
+	}
+	return &k8sres.HealthcheckSpec{
+		Path:                hc.Path,
+		Port:                hc.Port,
+		InitialDelaySeconds: hc.InitialDelaySeconds,
+		PeriodSeconds:       hc.PeriodSeconds,
 	}
 }

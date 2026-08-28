@@ -60,6 +60,14 @@ export interface GitCredential {
 export type AppSourceType = "git" | "image"
 export type AppDeploymentType = "web" | "private" | "cronjob"
 
+// Whether the app's CURRENT pod is actually healthy right now, independent of
+// deploymentType.status: deployments.status ("live") means the deploy
+// operation succeeded; runtimeHealth is a live signal from the controller's
+// background health watcher that can flip to "unhealthy" long after a
+// successful deploy (e.g. a later crash) or stay "unknown" for apps with no
+// meaningful long-running-pod signal (cronjobs, stopped apps).
+export type RuntimeHealth = "healthy" | "unhealthy" | "unknown"
+
 export interface App {
   id: string
   projectId: string
@@ -82,6 +90,9 @@ export interface App {
   canetteConfig?: string
   // Manual sort order within the project, shared across the team — lower sorts first.
   position: number
+  runtimeHealth: RuntimeHealth
+  runtimeHealthReason?: string
+  runtimeHealthUpdatedAt?: string
   createdAt: string
   updatedAt: string
 }
@@ -245,6 +256,10 @@ export interface AppPodMetrics {
   memoryLimitBytes?: number
   cpuUsageMilli?: number
   memoryUsageBytes?: number
+  // e.g. "OOMKilled", "CrashLoopBackOff", "Error" — set whenever a container
+  // has a known past or current termination, even if it has since recovered.
+  lastTerminationReason?: string
+  lastExitCode?: number
 }
 
 export interface AppMetricsUsage {

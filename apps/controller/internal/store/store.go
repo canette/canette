@@ -106,6 +106,15 @@ type PasswordGateSpec struct {
 	PasswordHash string // bcrypt hash, e.g. "$2b$10$..." — never a plaintext password
 }
 
+// Healthcheck describes a resolved readinessProbe, built only when
+// canette.yaml's healthcheck block is present — see GetAppConfig.
+type Healthcheck struct {
+	Path                string
+	Port                int
+	InitialDelaySeconds int
+	PeriodSeconds       int
+}
+
 // AppConfig is the full config for an app needed during reconciliation.
 type AppConfig struct {
 	AppID          string
@@ -126,6 +135,7 @@ type AppConfig struct {
 	Volumes        []VolumeSpec
 	ExtraHostnames []string
 	PasswordGate   PasswordGateSpec
+	Healthcheck    *Healthcheck // nil when canette.yaml has no healthcheck block
 }
 
 // Secret is an encrypted secret row.
@@ -335,6 +345,32 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		port = *cfg.Runtime.Port
 	}
 
+	// Healthcheck: canette.yaml only, no DB/snapshot fallback — absence of the
+	// block means no probe is generated at all (matches today's behavior for
+	// every app that hasn't opted in).
+	var healthcheck *Healthcheck
+	if cfg.Healthcheck != nil {
+		hc := &Healthcheck{
+			Path:                cfg.Healthcheck.Path,
+			Port:                port,
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       10,
+		}
+		if hc.Path == "" {
+			hc.Path = "/"
+		}
+		if cfg.Healthcheck.Port != nil && *cfg.Healthcheck.Port > 0 {
+			hc.Port = *cfg.Healthcheck.Port
+		}
+		if cfg.Healthcheck.InitialDelay != nil && *cfg.Healthcheck.InitialDelay >= 0 {
+			hc.InitialDelaySeconds = *cfg.Healthcheck.InitialDelay
+		}
+		if cfg.Healthcheck.Period != nil && *cfg.Healthcheck.Period > 0 {
+			hc.PeriodSeconds = *cfg.Healthcheck.Period
+		}
+		healthcheck = hc
+	}
+
 	const maxReplicas = 20
 	replicas := 1
 	if cfg.Replicas != nil && *cfg.Replicas >= 1 {
@@ -401,6 +437,7 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 			Enabled:      snap.App.PasswordGate.Enabled && dep.DeploymentType == "web",
 			PasswordHash: snap.App.PasswordGate.PasswordHash,
 		},
+		Healthcheck: healthcheck,
 	}, parseErr
 }
 
@@ -444,6 +481,64 @@ func (s *Store) MarkFailed(ctx context.Context, deploymentID, errMsg string) err
 		WHERE id = $3 AND status NOT IN ('live', 'failed')`, errMsg, now, deploymentID)
 	if err != nil {
 		return fmt.Errorf("mark failed: %w", err)
+	}
+	return nil
+}
+
+// CurrentDeployment identifies, for one app, the most recent deployment that
+// reached status='live' — the deployment the health watcher should scope its
+// pod checks to, so a leftover pod from a superseded deployment is never
+// mistaken for the current one.
+type CurrentDeployment struct {
+	AppID          string
+	AppSlug        string
+	ProjectID      string
+	DeploymentID   string
+	DeploymentType string // "web" | "private" | "cronjob"
+}
+
+// GetCurrentDeployments returns the most recent live deployment per app.
+// Deliberately scoped to status='live' only, not 'deploying': while a
+// redeploy is in progress, the controller's own rollout check (CheckRollout)
+// is the authoritative health signal for that window, not the background
+// watcher — including 'deploying' rows here would risk the watcher flagging
+// a pod that is legitimately still starting up.
+func (s *Store) GetCurrentDeployments(ctx context.Context) ([]CurrentDeployment, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT ON (d.app_id) d.app_id, a.slug, a.project_id, d.id, a.deployment_type
+		FROM deployments d
+		JOIN apps a ON a.id = d.app_id
+		WHERE d.status = 'live'
+		ORDER BY d.app_id, d.created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query current deployments: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CurrentDeployment
+	for rows.Next() {
+		var cd CurrentDeployment
+		if err := rows.Scan(&cd.AppID, &cd.AppSlug, &cd.ProjectID, &cd.DeploymentID, &cd.DeploymentType); err != nil {
+			return nil, fmt.Errorf("scan current deployment: %w", err)
+		}
+		out = append(out, cd)
+	}
+	return out, rows.Err()
+}
+
+// UpdateRuntimeHealth records the health watcher's current verdict for an
+// app's live pod(s) — independent of deployments.status, which only ever
+// records whether the deploy operation itself succeeded.
+func (s *Store) UpdateRuntimeHealth(ctx context.Context, appID, health, reason string) error {
+	var reasonArg interface{}
+	if reason != "" {
+		reasonArg = reason
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE apps SET runtime_health = $1, runtime_health_reason = $2, runtime_health_updated_at = $3
+		WHERE id = $4`, health, reasonArg, time.Now().UTC(), appID)
+	if err != nil {
+		return fmt.Errorf("update runtime health: %w", err)
 	}
 	return nil
 }

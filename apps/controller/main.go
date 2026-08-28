@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"canette.dev/controller/internal/controller"
+	controllerhealth "canette.dev/controller/internal/health"
 	"canette.dev/controller/internal/store"
 	"canette.dev/lib/crypto"
 	"canette.dev/lib/env"
@@ -145,6 +146,20 @@ func run(log *zap.Logger) error {
 
 	// ── Run ───────────────────────────────────────────────────────────────────
 	health.StartServer(ctx, log, env.EnvOr("HEALTH_ADDR", ":8082"))
+
+	// Background runtime-health watcher: reacts to pod state changes
+	// cluster-wide so an already-`live` app that later crashes is detected
+	// without waiting for the next deploy. Runs alongside the deploy
+	// reconciler, sharing the same ctx so both stop together on shutdown.
+	// Safe to run unguarded by leader election: the controller Deployment is
+	// hardcoded to replicas:1 (charts/canette/templates/controller/deployment.yaml).
+	watcher := controllerhealth.New(k8sClient, s, log)
+	go func() {
+		if err := watcher.Run(ctx); err != nil {
+			log.Error("health watcher error", zap.Error(err))
+		}
+	}()
+
 	ctrl := controller.New(s, k8sClient, dynClient, cfg, cryptoKey, log)
 	return ctrl.Run(ctx)
 }

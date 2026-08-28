@@ -5,11 +5,13 @@ import { useParams, usePathname } from "next/navigation"
 import { AppProvider } from "@/lib/app-context"
 import { TabNavigation } from "@/components/tab-navigation"
 import { StatusBadge } from "@/components/ui/status-badge"
+import { RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
 import { HostnameAltMenu } from "@/components/hostname-alt-menu"
 import { ExternalLink } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
 import { useDomain } from "@/lib/domain-context"
 import { computeAppUrl } from "@/lib/deployment-format"
+import { ACTIVE_STATUSES } from "@/lib/use-deployment-actions"
 import * as api from "@/lib/api"
 import type { App, AppHostname, Project } from "@canette/types"
 
@@ -52,6 +54,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { load() }, [load])
 
+  // Keep the header's status badge and runtime-health indicator fresh no matter
+  // which tab (Overview/Deployments/Logs) is mounted underneath — those pages
+  // don't all poll deployment/runtime state themselves (the Logs tab never did).
+  useEffect(() => {
+    const isActive = !!app?.latestDeploymentStatus && ACTIVE_STATUSES.includes(app.latestDeploymentStatus)
+    const interval = setInterval(load, isActive ? 3000 : 15000)
+    return () => clearInterval(interval)
+  }, [app?.latestDeploymentStatus, load])
+
   const computedUrl = app && project && domain && app.deploymentType === "web"
     ? computeAppUrl(app.slug, project.slug, domain)
     : null
@@ -75,6 +86,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-2.5">
                 <h1 className="text-xl font-semibold font-mono tracking-tight truncate">{app.name}</h1>
                 <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
+                {isLive && (
+                  <RuntimeHealthIndicator
+                    runtimeHealth={app.runtimeHealth}
+                    runtimeHealthReason={app.runtimeHealthReason}
+                    className="shrink-0"
+                  />
+                )}
               </div>
               {computedUrl && (
                 <div className="flex items-center gap-1.5">

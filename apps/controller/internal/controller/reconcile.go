@@ -129,6 +129,7 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
 
 	// 7. Watch rollout — skipped for CronJobs (no Deployment to roll out).
+	var livePodName string
 	if !isCronJob {
 		// Poll every 3s, timeout 12min.
 		// K8s progressDeadlineSeconds defaults to 600s (10min); our timeout must exceed that
@@ -142,13 +143,14 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 			default:
 			}
 
-			status, err := k8sres.CheckRollout(ctx, c.client, appNS, dep.AppSlug)
+			status, err := k8sres.CheckRollout(ctx, c.client, appNS, dep.AppSlug, dep.ID)
 			if err != nil {
 				log.Warn("check rollout error", zap.Error(err))
 			} else {
 				c.appendLog(ctx, log, dep.ID, "controller", status.Message)
 				if status.Done {
 					if status.Succeeded {
+						livePodName = status.PodName
 						break
 					}
 					lastErr = fmt.Errorf("rollout failed: %s", status.Message)
@@ -178,15 +180,23 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 			log.Warn("failed to clear live url", zap.Error(err))
 		}
 		clusterDNS := fmt.Sprintf("%s.%s.svc.cluster.local", dep.AppSlug, appNS)
-		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("Private deployment live. Reachable at %s", clusterDNS))
-		log.Info("deployment live (private)", zap.String("cluster_dns", clusterDNS))
+		msg := fmt.Sprintf("Private deployment live. Reachable at %s", clusterDNS)
+		if livePodName != "" {
+			msg = fmt.Sprintf("%s (pod %s)", msg, livePodName)
+		}
+		c.appendLog(ctx, log, dep.ID, "controller", msg)
+		log.Info("deployment live (private)", zap.String("cluster_dns", clusterDNS), zap.String("pod", livePodName))
 	} else {
 		liveURL := fmt.Sprintf("https://%s-%s.%s", dep.AppSlug, dep.ProjectSlug, c.cfg.ClusterDomain)
 		if err := c.store.SetAppLiveURL(ctx, dep.AppID, liveURL); err != nil {
 			log.Warn("failed to set live url", zap.Error(err))
 		}
-		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("Deployment live at %s", liveURL))
-		log.Info("deployment live", zap.String("url", liveURL))
+		msg := fmt.Sprintf("Deployment live at %s", liveURL)
+		if livePodName != "" {
+			msg = fmt.Sprintf("%s (pod %s)", msg, livePodName)
+		}
+		c.appendLog(ctx, log, dep.ID, "controller", msg)
+		log.Info("deployment live", zap.String("url", liveURL), zap.String("pod", livePodName))
 	}
 	lastErr = nil
 }

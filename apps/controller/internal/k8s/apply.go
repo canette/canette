@@ -163,10 +163,21 @@ type RolloutStatus struct {
 	Done      bool
 	Succeeded bool
 	Message   string
+	PodName   string // name of the pod backing a successful rollout; empty otherwise
 }
 
 // CheckRollout checks whether the Deployment has finished rolling out.
-func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, name string) (RolloutStatus, error) {
+// deploymentID scopes the pod-failure check to pods belonging to THIS
+// deployment (via the canette.dev/deployment label) — without it, a crashing
+// pod left over from a previous, still-terminating deployment of the same app
+// would be misattributed to the current rollout.
+//
+// Pod failures are checked before the availability success condition below,
+// not after: a pod can pass its readiness check and crash moments later, and
+// checking failures first means a crash observed on the very poll that would
+// otherwise satisfy AvailableReplicas>=1 is still caught instead of the
+// rollout being declared successful.
+func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, name, deploymentID string) (RolloutStatus, error) {
 	dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -175,11 +186,12 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 		return RolloutStatus{}, fmt.Errorf("get deployment: %w", err)
 	}
 
-	// Check if all replicas are available and the generation matches
-	if dep.Status.ObservedGeneration >= dep.Generation &&
-		dep.Status.UpdatedReplicas >= *replicaCount(dep) &&
-		dep.Status.AvailableReplicas >= 1 {
-		return RolloutStatus{Done: true, Succeeded: true, Message: "deployment available"}, nil
+	// Listing errors fail open (nil pods) — pod-level failure/name detection
+	// just degrades, the replica-count based status below is unaffected.
+	pods, _ := listDeploymentPods(ctx, client, namespace, name, deploymentID)
+
+	if reason, failed := checkPodsForFailure(pods); failed {
+		return RolloutStatus{Done: true, Succeeded: false, Message: reason}, nil
 	}
 
 	// Check conditions for failures — only meaningful once K8s has observed the current
@@ -193,23 +205,46 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 		}
 	}
 
-	// Check pods for crash/image pull failures
-	if reason, failed := checkPodsForFailure(ctx, client, namespace, name); failed {
-		return RolloutStatus{Done: true, Succeeded: false, Message: reason}, nil
+	// Check if all replicas are available and the generation matches
+	if dep.Status.ObservedGeneration >= dep.Generation &&
+		dep.Status.UpdatedReplicas >= *replicaCount(dep) &&
+		dep.Status.AvailableReplicas >= 1 {
+		podName := firstRunningPodName(pods)
+		msg := "deployment available"
+		if podName != "" {
+			msg = fmt.Sprintf("deployment available (pod %s)", podName)
+		}
+		return RolloutStatus{Done: true, Succeeded: true, Message: msg, PodName: podName}, nil
 	}
 
 	return RolloutStatus{Message: fmt.Sprintf("waiting: updated=%d available=%d",
 		dep.Status.UpdatedReplicas, dep.Status.AvailableReplicas)}, nil
 }
 
-func checkPodsForFailure(ctx context.Context, client kubernetes.Interface, namespace, appName string) (string, bool) {
-	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: libk8s.AppLabelSelector(appName),
-	})
-	if err != nil {
-		return "", false
+// listDeploymentPods lists pods for an app, scoped to a specific deployment ID
+// when one is given (see AppDeploymentLabelSelector) — falls back to an
+// app-wide selector when deploymentID is empty.
+func listDeploymentPods(ctx context.Context, client kubernetes.Interface, namespace, appName, deploymentID string) ([]corev1.Pod, error) {
+	selector := libk8s.AppLabelSelector(appName)
+	if deploymentID != "" {
+		selector = libk8s.AppDeploymentLabelSelector(appName, deploymentID)
 	}
-	for _, pod := range pods.Items {
+	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, err
+	}
+	return pods.Items, nil
+}
+
+// checkPodsForFailure inspects pods for known crash/image-pull failure states.
+// It checks both a container currently backing off from repeated restarts
+// (Waiting) and a container's most recent exit (Terminated with a nonzero
+// exit code) — the latter is what makes a pod's FIRST crash visible: kubelet
+// only starts backing off into CrashLoopBackOff after several restarts, so a
+// pod that has crashed once and not yet been restarted shows up only as
+// Terminated, never as Waiting.
+func checkPodsForFailure(pods []corev1.Pod) (string, bool) {
+	for _, pod := range pods {
 		for _, cs := range pod.Status.ContainerStatuses {
 			if cs.State.Waiting != nil {
 				reason := cs.State.Waiting.Reason
@@ -217,9 +252,26 @@ func checkPodsForFailure(ctx context.Context, client kubernetes.Interface, names
 					return fmt.Sprintf("pod %s: %s", pod.Name, reason), true
 				}
 			}
+			if t := cs.State.Terminated; t != nil && t.ExitCode != 0 {
+				reason := t.Reason
+				if reason == "" {
+					reason = "Error"
+				}
+				return fmt.Sprintf("pod %s: %s (exit %d)", pod.Name, reason, t.ExitCode), true
+			}
 		}
 	}
 	return "", false
+}
+
+// firstRunningPodName returns the name of the first Running pod, or "".
+func firstRunningPodName(pods []corev1.Pod) string {
+	for _, pod := range pods {
+		if pod.Status.Phase == corev1.PodRunning {
+			return pod.Name
+		}
+	}
+	return ""
 }
 
 // GetPodLogs retrieves logs from the first running pod for an app since sinceTime.
