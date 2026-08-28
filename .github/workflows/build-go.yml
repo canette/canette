@@ -21,7 +21,13 @@ jobs:
     strategy:
       matrix:
         app: [ 'apps/authgate', 'apps/builder', 'apps/controller', 'apps/logstreamer' ]
-    
+    env:
+      # The repo-root go.work unifies all Go modules' dependency graphs, which can mask
+      # a module whose own go.mod/go.sum is incomplete. Production builds (Dockerfiles)
+      # only ever COPY a single module plus packages/golib, without go.work, so this
+      # check must build in that same isolation to be meaningful.
+      GOWORK: 'off'
+
     steps:
     - uses: actions/checkout@v7
 
