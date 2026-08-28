@@ -195,6 +195,13 @@ export default function LogsPage() {
         </div>
       </div>
 
+      {mode === "build" && selectedDeployment?.status === "failed" && selectedDeployment.errorMessage && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5">
+          <p className="text-xs font-medium text-destructive mb-1">Deployment failed</p>
+          <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">{selectedDeployment.errorMessage}</p>
+        </div>
+      )}
+
       {mode === "runtime" && cronMeta && cronMeta.status !== "no_runs" && (
         <div className="flex items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground w-fit">
           <span className={cronMeta.status === "succeeded" ? "text-success-text font-medium" : "text-destructive font-medium"}>

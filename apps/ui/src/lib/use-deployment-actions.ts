@@ -5,7 +5,7 @@ import * as api from "@/lib/api"
 import { ApiError } from "@/lib/api"
 import type { Deployment } from "@canette/types"
 
-const ACTIVE_STATUSES = ["pending_build", "building", "scanning", "pending_deployment", "deploying"]
+export const ACTIVE_STATUSES = ["pending_build", "building", "scanning", "pending_deployment", "deploying"]
 const REDEPLOYABLE_STATUSES = ["live", "failed", "stopped"]
 
 /**

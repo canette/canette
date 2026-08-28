@@ -11,6 +11,7 @@ import { ExternalLink } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
 import { useDomain } from "@/lib/domain-context"
 import { computeAppUrl } from "@/lib/deployment-format"
+import { ACTIVE_STATUSES } from "@/lib/use-deployment-actions"
 import * as api from "@/lib/api"
 import type { App, AppHostname, Project } from "@canette/types"
 
@@ -52,6 +53,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [slug, appSlug])
 
   useEffect(() => { load() }, [load])
+
+  // Keep the header's status badge and runtime-health indicator fresh no matter
+  // which tab (Overview/Deployments/Logs) is mounted underneath — those pages
+  // don't all poll deployment/runtime state themselves (the Logs tab never did).
+  useEffect(() => {
+    const isActive = !!app?.latestDeploymentStatus && ACTIVE_STATUSES.includes(app.latestDeploymentStatus)
+    const interval = setInterval(load, isActive ? 3000 : 15000)
+    return () => clearInterval(interval)
+  }, [app?.latestDeploymentStatus, load])
 
   const computedUrl = app && project && domain && app.deploymentType === "web"
     ? computeAppUrl(app.slug, project.slug, domain)
