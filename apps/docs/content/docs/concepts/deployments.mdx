@@ -22,6 +22,22 @@ A **deployment** is a single attempt to build and ship a commit of an app.
 | `failed` | Build or deploy failed — see logs for details |
 | `stopped` | App was manually stopped — K8s resources have been torn down |
 
+## Runtime health
+
+Separate from deployment status, the app page also shows an **Unhealthy** indicator when the last deploy succeeded but the running pod is currently misbehaving. This can appear at any time after a deploy — for example if the app crashes hours after going live — and clears automatically once the pod recovers.
+
+| Reason | Meaning |
+|---|---|
+| `CrashLoopBackOff` | The app keeps crashing right after it starts, so Kubernetes is repeatedly restarting it with a growing delay between attempts |
+| `ImagePullBackOff` | Kubernetes couldn't download the container image and is waiting before trying again |
+| `ErrImagePull` | Kubernetes couldn't download the container image — it may not exist, or access may be denied |
+| `{reason} (exit {code})` | The app's process exited unexpectedly with the given exit code (e.g. `OOMKilled (exit 137)` means it ran out of memory) |
+| `restarting repeatedly` | The app has restarted several times in the last few minutes, which usually means it's failing shortly after startup |
+| `readiness probe failing` | The app is running, but it isn't passing the health checks it needs to pass before it can receive traffic |
+| `no running pods` | There's no running instance of this app right now |
+
+No indicator is shown while a deployment has no pods yet (e.g. just after triggering) or while the app is healthy.
+
 ## Triggering a deployment
 
 Deployments can be triggered:

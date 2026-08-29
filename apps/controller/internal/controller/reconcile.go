@@ -171,6 +171,9 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		lastErr = fmt.Errorf("mark live: %w", err)
 		return
 	}
+	if c.onDeployLive != nil {
+		c.onDeployLive()
+	}
 
 	if isCronJob {
 		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("CronJob scheduled with expression: %s", deployCfg.Schedule))

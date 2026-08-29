@@ -160,7 +160,12 @@ func run(log *zap.Logger) error {
 		}
 	}()
 
-	ctrl := controller.New(s, k8sClient, dynClient, cfg, cryptoKey, log)
+	// Passing watcher.TriggerRefresh lets the reconciler nudge the health
+	// watcher the instant a deployment goes live, instead of it learning
+	// that up to currentDeploymentRefresh later — closing a window where
+	// the watcher can misread an already-healthy new pod as "no pods" for
+	// a still-current-in-its-view superseded deployment.
+	ctrl := controller.New(s, k8sClient, dynClient, cfg, cryptoKey, log, watcher.TriggerRefresh)
 	return ctrl.Run(ctx)
 }
 
