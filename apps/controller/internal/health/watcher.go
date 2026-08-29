@@ -66,6 +66,14 @@ type Watcher struct {
 	tracking    map[types.UID]*restartTracking
 	noPodsSince map[appKey]time.Time
 	lastWritten map[string]string // appID → "health|reason", debounces DB writes
+
+	// refresh lets callers outside the watcher (the reconcile loop, right
+	// after it marks a deployment live) ask for an immediate
+	// refreshCurrentDeployments instead of waiting for the next
+	// currentDeploymentRefresh tick. Buffered size 1 so a burst of triggers
+	// coalesces into a single pending refresh and TriggerRefresh never
+	// blocks its caller.
+	refresh chan struct{}
 }
 
 // New creates a Watcher. Call Run to start it.
@@ -79,6 +87,17 @@ func New(client kubernetes.Interface, s *store.Store, log *zap.Logger) *Watcher 
 		tracking:    make(map[types.UID]*restartTracking),
 		noPodsSince: make(map[appKey]time.Time),
 		lastWritten: make(map[string]string),
+		refresh:     make(chan struct{}, 1),
+	}
+}
+
+// TriggerRefresh asks the watcher to re-read "which deployment is current
+// for each app" as soon as Run's loop next runs, rather than waiting up to
+// currentDeploymentRefresh. Safe to call from any goroutine; never blocks.
+func (w *Watcher) TriggerRefresh() {
+	select {
+	case w.refresh <- struct{}{}:
+	default:
 	}
 }
 
@@ -116,6 +135,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ticker.C:
 			if err := w.refreshCurrentDeployments(ctx); err != nil {
 				w.log.Warn("current-deployment refresh failed", zap.Error(err))
+			}
+		case <-w.refresh:
+			if err := w.refreshCurrentDeployments(ctx); err != nil {
+				w.log.Warn("triggered current-deployment refresh failed", zap.Error(err))
 			}
 		}
 	}

@@ -39,9 +39,16 @@ type Controller struct {
 	cryptoKey  []byte
 	log        *zap.Logger
 	inProgress sync.Map // deploymentID → struct{}{}
+
+	// onDeployLive, if set, is called right after a deployment is marked
+	// live — lets the health watcher learn about it immediately instead of
+	// waiting for its own poll ticker. Nil-safe: never called if unset.
+	onDeployLive func()
 }
 
-// New creates a Controller.
+// New creates a Controller. onDeployLive is called right after a deployment
+// is marked live (e.g. to nudge the health watcher's current-deployment
+// refresh); pass nil if nothing needs to observe that.
 func New(
 	s *store.Store,
 	client kubernetes.Interface,
@@ -49,14 +56,16 @@ func New(
 	cfg Config,
 	cryptoKey []byte,
 	log *zap.Logger,
+	onDeployLive func(),
 ) *Controller {
 	return &Controller{
-		store:     s,
-		client:    client,
-		dynClient: dynClient,
-		cfg:       cfg,
-		cryptoKey: cryptoKey,
-		log:       log,
+		store:        s,
+		client:       client,
+		dynClient:    dynClient,
+		cfg:          cfg,
+		cryptoKey:    cryptoKey,
+		log:          log,
+		onDeployLive: onDeployLive,
 	}
 }
 
