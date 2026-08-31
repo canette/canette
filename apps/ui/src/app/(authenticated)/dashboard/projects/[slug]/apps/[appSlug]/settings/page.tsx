@@ -651,20 +651,55 @@ function WebhookSection({ appId, sourceType, gitBranch, onWebhookChange }: {
                   <p className="text-sm text-muted-foreground">Copy the URL and secret below and add them to your repository settings.</p>
                 </div>
               )}
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-muted-foreground">Payload URL</Label>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded-md border border-border bg-muted px-3 py-2 text-xs font-mono break-all">{createResult.webhookUrl}</code>
-                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => navigator.clipboard.writeText(createResult.webhookUrl).catch(() => {})}>Copy</Button>
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-muted-foreground flex items-center gap-1.5">Webhook secret <span className="text-warning-text font-medium">— copy now, shown once</span></Label>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded-md border bg-warning-soft ring-1 ring-inset ring-warning-line border-transparent px-3 py-2 text-xs font-mono break-all">{createResult.webhookSecret}</code>
-                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => copySecret(createResult.webhookSecret)}>{secretCopied ? "Copied!" : "Copy"}</Button>
-                </div>
-              </div>
+              {createResult.autoRegistered ? (
+                <Collapsible>
+                  <CollapsibleTrigger asChild>
+                    <button type="button" className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors self-start">
+                      <ChevronDown size={13} className="transition-transform [[data-state=open]_&]:rotate-180" />
+                      Show payload URL and secret
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="flex flex-col gap-4 pt-3">
+                      <p className="text-xs text-muted-foreground">
+                        You don&apos;t need these for anything right now — canette already registered the webhook in your repository.
+                        Keep them if you want to verify the webhook in your provider&apos;s settings, or re-add it manually if it&apos;s ever removed there.
+                      </p>
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs text-muted-foreground">Payload URL</Label>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 rounded-md border border-border bg-muted px-3 py-2 text-xs font-mono break-all">{createResult.webhookUrl}</code>
+                          <Button size="sm" variant="outline" className="shrink-0" onClick={() => navigator.clipboard.writeText(createResult.webhookUrl).catch(() => {})}>Copy</Button>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs text-muted-foreground flex items-center gap-1.5">Webhook secret <span className="text-warning-text font-medium">— copy now, shown once</span></Label>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 rounded-md border bg-warning-soft ring-1 ring-inset ring-warning-line border-transparent px-3 py-2 text-xs font-mono break-all">{createResult.webhookSecret}</code>
+                          <Button size="sm" variant="outline" className="shrink-0" onClick={() => copySecret(createResult.webhookSecret)}>{secretCopied ? "Copied!" : "Copy"}</Button>
+                        </div>
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs text-muted-foreground">Payload URL</Label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 rounded-md border border-border bg-muted px-3 py-2 text-xs font-mono break-all">{createResult.webhookUrl}</code>
+                      <Button size="sm" variant="outline" className="shrink-0" onClick={() => navigator.clipboard.writeText(createResult.webhookUrl).catch(() => {})}>Copy</Button>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs text-muted-foreground flex items-center gap-1.5">Webhook secret <span className="text-warning-text font-medium">— copy now, shown once</span></Label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 rounded-md border bg-warning-soft ring-1 ring-inset ring-warning-line border-transparent px-3 py-2 text-xs font-mono break-all">{createResult.webhookSecret}</code>
+                      <Button size="sm" variant="outline" className="shrink-0" onClick={() => copySecret(createResult.webhookSecret)}>{secretCopied ? "Copied!" : "Copy"}</Button>
+                    </div>
+                  </div>
+                </>
+              )}
               {createResult.setupInstructions && (
                 <div className="flex flex-col gap-1.5">
                   <Label className="text-xs text-muted-foreground">Setup instructions</Label>
