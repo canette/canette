@@ -39,7 +39,7 @@ export function DeploymentRow({
       <StatusDot status={d.status} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium truncate">
+          <span className="text-[13px] font-medium truncate min-w-0">
             {d.commitMessage || shortSha(d.commitSha)}
           </span>
           {isCurrent && (
