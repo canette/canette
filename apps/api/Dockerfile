@@ -1,5 +1,5 @@
 # ---- Base image with Bun ----
-FROM oven/bun:1-slim AS base
+FROM oven/bun:1.4.0-slim AS base
 WORKDIR /app
 
 # ---- Install dependencies (with caching) ----
