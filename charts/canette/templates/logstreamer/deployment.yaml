@@ -39,6 +39,17 @@ spec:
                 secretKeyRef:
                   name: canette-logstreamer-secret
                   key: token
+            {{- if include "canette.metricsTimeseriesEnabled" . }}
+            - name: PROMETHEUS_URL
+              value: {{ include "canette.prometheusURL" . | trim | quote }}
+            {{- if .Values.metrics.prometheus.externalAuth.tokenSecretRef.name }}
+            - name: PROMETHEUS_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.metrics.prometheus.externalAuth.tokenSecretRef.name }}
+                  key: {{ .Values.metrics.prometheus.externalAuth.tokenSecretRef.key }}
+            {{- end }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz

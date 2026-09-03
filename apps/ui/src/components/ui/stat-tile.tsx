@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import type { MeterTone, TileMeter } from "@/lib/metrics-format"
 
@@ -6,6 +7,9 @@ interface StatTileProps {
   value: string
   caption?: string
   meter?: TileMeter
+  // Compact trend figure (see Sparkline in ui/sparkline.tsx), rendered inline
+  // next to the headline value when historical data is available.
+  sparkline?: ReactNode
   className?: string
 }
 
@@ -15,11 +19,14 @@ const meterToneClasses: Record<MeterTone, { track: string; fill: string }> = {
   critical: { track: "bg-destructive-soft", fill: "bg-destructive" },
 }
 
-export function StatTile({ label, value, caption, meter, className }: StatTileProps) {
+export function StatTile({ label, value, caption, meter, sparkline, className }: StatTileProps) {
   return (
     <div className={cn("rounded-lg border border-border bg-card p-4 flex flex-col gap-1.5", className)}>
       <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="font-mono text-2xl font-medium tabular-nums">{value}</span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-2xl font-medium tabular-nums">{value}</span>
+        {sparkline}
+      </div>
       {meter && (
         <div className={cn("relative h-1.5 rounded-full", meterToneClasses[meter.tone].track)}>
           <div

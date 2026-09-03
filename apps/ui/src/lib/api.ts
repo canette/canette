@@ -2,7 +2,7 @@
 // All requests go through Next.js rewrites → API server.
 // Never call the API directly from the browser with a hardcoded URL.
 
-import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppHostname, AppMetricsUsage, AppPasswordGate, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
+import type { AdminProjectOverview, AdminSignupSettings, AdminTeamOverview, App, AppHostname, AppMetricsTimeseries, AppMetricsUsage, AppPasswordGate, AppSecret, AppTemplate, AppVolume, BuildLog, Deployment, EnvVar, GitCredential, GitCredentialType, GitProvider, MetricsInfo, PaginatedResponse, Project, ResourceDefaults, ScanInfo, SignupSettings, SyncResult, Team, TeamMember, User, UserDeletionImpact, UserRole, VolumeConfig, VolumeType, WebhookConfig, WebhookSettings } from "@canette/types"
 
 const base = "/api/v1"
 
@@ -184,6 +184,7 @@ export const appLogs = {
 // App runtime metrics
 export const appMetrics = {
   usage: (appId: string) => request<AppMetricsUsage>(`/apps/${appId}/metrics/usage`),
+  timeseries: (appId: string) => request<AppMetricsTimeseries>(`/apps/${appId}/metrics/timeseries`),
 }
 
 // Current user
@@ -217,6 +218,7 @@ export const admin = {
   resetStuck: () => request<SyncResult>("/admin/reset-stuck", { method: "POST" }),
   getSecurityInfo: () => request<ScanInfo>("/admin/settings/security"),
   getWebhookSettings: () => request<WebhookSettings>("/admin/settings/webhooks"),
+  getMetricsInfo: () => request<MetricsInfo>("/admin/settings/metrics"),
   getResourceDefaults: () => request<ResourceDefaults>("/admin/settings/resources"),
   getSignupSettings: () => request<AdminSignupSettings>("/admin/settings/signup"),
   updateSignupSettings: (mode: string) =>

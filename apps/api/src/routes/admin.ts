@@ -9,6 +9,7 @@ import { ServiceError } from "../services/errors"
 import {
   deleteUser,
   forceSyncLiveApps,
+  getMetricsInfo,
   getProjectsOverview,
   getResourceDefaults,
   getSecurityInfo,
@@ -238,6 +239,12 @@ adminRouter.get("/settings/resources", (c) => {
 // GET /api/v1/admin/settings/webhooks
 adminRouter.get("/settings/webhooks", (c) => {
   return c.json(getWebhookSettings())
+})
+
+// Get metrics info (read-only — configured via Helm values)
+// GET /api/v1/admin/settings/metrics
+adminRouter.get("/settings/metrics", (c) => {
+  return c.json(getMetricsInfo())
 })
 
 // Get signup mode (admin sees the actual invite code value)

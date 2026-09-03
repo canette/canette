@@ -1,0 +1,42 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheus.bundled.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: prometheus
+    {{- include "canette.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+    scrape_configs:
+      # Container CPU/memory usage, scraped from kubelet cAdvisor via the
+      # apiserver-proxy path (not directly against each node's kubelet:10250).
+      # This keeps the NetworkPolicy egress rule for this pod identical in
+      # shape to logstreamer's existing rule (K8s API server only) and avoids
+      # needing kubelet TLS/anonymous-auth configuration on every node.
+      - job_name: kubernetes-cadvisor
+        scheme: https
+        # The scrape target is kubernetes.default.svc itself (see __address__
+        # below), not a node's kubelet directly — its cert is signed by the
+        # same CA mounted here, so normal verification succeeds. No
+        # insecure_skip_verify needed (unlike a direct-to-kubelet job, where
+        # each node's cert commonly doesn't match this CA/SAN).
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+{{- end }}

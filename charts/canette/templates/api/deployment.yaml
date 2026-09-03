@@ -172,6 +172,10 @@ spec:
               value: {{ .Values.security.scan.mandatory | quote }}
             - name: SCAN_FAIL_SEVERITY
               value: {{ .Values.security.scan.failSeverity | quote }}
+            - name: METRICS_ENABLED
+              value: {{ if include "canette.metricsTimeseriesEnabled" . }}"true"{{ else }}"false"{{ end }}
+            - name: METRICS_SOURCE
+              value: {{ if .Values.metrics.prometheus.externalUrl }}"external"{{ else }}"bundled"{{ end }}
             - name: APP_VERSION
               value: {{ .Chart.AppVersion | quote }}
             - name: DISABLE_EMAIL_SIGNUP

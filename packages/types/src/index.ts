@@ -268,6 +268,24 @@ export interface AppMetricsUsage {
   pods: AppPodMetrics[]
 }
 
+export interface AppMetricsSeriesPoint {
+  t: number // unix seconds
+  v: number
+}
+
+export interface AppMetricsTimeseries {
+  available: boolean
+  unavailableReason?: string
+  cpuMilli?: AppMetricsSeriesPoint[]
+  memoryBytes?: AppMetricsSeriesPoint[]
+}
+
+// MetricsInfo is the read-only metrics config served from env vars (Helm values).
+export interface MetricsInfo {
+  enabled: boolean
+  source: "bundled" | "external" | "disabled"
+}
+
 export interface SignupSettings {
   mode: "open" | "disabled" | "invite_code"
   magicLinkEnabled: boolean

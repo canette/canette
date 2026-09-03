@@ -1,0 +1,27 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheus.bundled.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: canette-metrics-prometheus
+  labels:
+    {{- include "canette.labels" . | nindent 4 }}
+rules:
+  # Node/pod/service discovery for kubernetes_sd_configs (role: node/pod).
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  # nodes/proxy — required to scrape kubelet cAdvisor via the apiserver-proxy
+  # path (/api/v1/nodes/<node>/proxy/metrics/cadvisor). Scoping to this path
+  # instead of a direct-to-kubelet scrape keeps the NetworkPolicy egress rule
+  # simple (K8s API server only, same as logstreamer's existing egress).
+  - apiGroups: [""]
+    resources: ["nodes/proxy", "nodes/metrics"]
+    verbs: ["get"]
+  # This ClusterRole is intentionally cluster-wide (unlike every other canette
+  # RBAC grant, which is namespace-scoped) — cAdvisor container metrics are
+  # exposed per-node, not per-namespace, so there is no narrower binding that
+  # still allows scraping every app namespace's pods. Queries are filtered
+  # down to a single app/namespace at read time (see apps/logstreamer's
+  # PromQL query builders), so no app data is exposed across this boundary —
+  # only the scrape step itself needs cluster-wide read access.
+{{- end }}

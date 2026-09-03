@@ -95,13 +95,24 @@ the base for interactive components per CLAUDE.md.
 
 ## Not yet implemented (mockup-only, needs backend)
 
-Metrics traffic chart (needs a Prometheus-compatible source — see
-[canette/canette#168](https://github.com/canette/canette/issues/168)), repo
-auto-detection preview in the new-app flow, build-pipeline phase panel, ⌘K
-search. Don't build these as UI-only stubs.
+Traefik traffic/request-rate chart (Step 3 of
+[canette/canette#168](https://github.com/canette/canette/issues/168) — gateway
+metrics adapter, not yet built), repo auto-detection preview in the new-app
+flow, build-pipeline phase panel, ⌘K search. Don't build these as UI-only stubs.
 
-Basic metrics (CPU/memory usage, pod health) are implemented as a stat-tile
-row at the top of the app Overview tab — `AppMetricsSummary`
-(`src/components/app-metrics-summary.tsx`) + `StatTile`
-(`src/components/ui/stat-tile.tsx`). It renders nothing when the app has no
-running/pending pod.
+Metrics are implemented in two places:
+- A stat-tile row at the top of the app Overview tab — `AppMetricsSummary`
+  (`src/components/app-metrics-summary.tsx`) + `StatTile`
+  (`src/components/ui/stat-tile.tsx`). It renders nothing when the app has no
+  running/pending pod. CPU/memory tiles carry an inline `Sparkline`
+  (`src/components/ui/sparkline.tsx`) when historical data is available.
+- A dedicated "Metrics" tab (`app/.../[appSlug]/metrics/page.tsx`) with
+  full-size `TimeseriesChart`s and the per-pod health list, structured as
+  `MetricsSection`s so a future Step 3 traffic section can be appended
+  without restructuring.
+
+Pod health and instant CPU/memory usage (via `metrics.k8s.io`) always work.
+CPU/memory-*over-time* charts additionally require a Prometheus-compatible
+backend (bundled or `externalUrl`, see `metrics.*` in the Helm chart) — when
+none is configured, both surfaces silently fall back to the instant-only view
+instead of showing an error.

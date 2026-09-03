@@ -1,17 +1,22 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Info, AlertTriangle } from "lucide-react"
+import { Info } from "lucide-react"
 import { StatTile } from "@/components/ui/stat-tile"
+import { Sparkline } from "@/components/ui/sparkline"
+import { PodHealthList } from "@/components/pod-health-list"
 import { formatBytes, formatCpu, sumMetric, usageTile } from "@/lib/metrics-format"
-import { cn } from "@/lib/utils"
 import * as api from "@/lib/api"
-import type { AppMetricsUsage } from "@canette/types"
+import type { AppMetricsTimeseries, AppMetricsUsage } from "@canette/types"
 
 // Renders nothing until the app has at least one running/pending pod — there's
 // nothing useful to show for a stopped or not-yet-deployed app.
 export function AppMetricsSummary({ appId }: { appId: string }) {
   const [usage, setUsage] = useState<AppMetricsUsage | null>(null)
+  // Fetched independently from usage — a timeseries failure (or Prometheus
+  // simply not being configured, the common case) must never block the
+  // stat tiles above, which rely only on the always-available usage poll.
+  const [timeseries, setTimeseries] = useState<AppMetricsTimeseries | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -21,6 +26,24 @@ export function AppMetricsSummary({ appId }: { appId: string }) {
         if (!cancelled) setUsage(u)
       } catch {
         if (!cancelled) setUsage(null)
+      }
+    }
+    load()
+    const interval = setInterval(load, 15000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [appId])
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const t = await api.appMetrics.timeseries(appId)
+        if (!cancelled) setTimeseries(t)
+      } catch {
+        if (!cancelled) setTimeseries(null)
       }
     }
     load()
@@ -44,36 +67,29 @@ export function AppMetricsSummary({ appId }: { appId: string }) {
   const cpuTile = usageTile(cpuUsage, cpuRequest, cpuLimit, formatCpu)
   const memTile = usageTile(memUsage, memRequest, memLimit, formatBytes)
 
+  const hasHistory = timeseries?.available === true
+
   return (
     <div className="flex flex-col gap-2">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatTile label="CPU usage" value={cpuTile.value} caption={cpuTile.caption} meter={cpuTile.meter} />
-        <StatTile label="Memory usage" value={memTile.value} caption={memTile.caption} meter={memTile.meter} />
+        <StatTile
+          label="CPU usage"
+          value={cpuTile.value}
+          caption={cpuTile.caption}
+          meter={cpuTile.meter}
+          sparkline={hasHistory && timeseries.cpuMilli && timeseries.cpuMilli.length > 1 ? <Sparkline points={timeseries.cpuMilli} /> : undefined}
+        />
+        <StatTile
+          label="Memory usage"
+          value={memTile.value}
+          caption={memTile.caption}
+          meter={memTile.meter}
+          sparkline={hasHistory && timeseries.memoryBytes && timeseries.memoryBytes.length > 1 ? <Sparkline points={timeseries.memoryBytes} /> : undefined}
+        />
         <StatTile label="Ready pods" value={`${readyCount}/${usage.pods.length}`} />
         <StatTile label="Restarts" value={String(restarts)} />
       </div>
-      {/* Pod identity + crash detail — the direct "no more kubectl for this"
-          surface: same data the stat tiles above already summarize, broken
-          out per pod so a specific unhealthy pod and its exit reason are
-          visible without leaving the dashboard. */}
-      <div className="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
-        {usage.pods.map((p) => (
-          <div key={p.name} className="flex items-center gap-2 text-xs">
-            <span
-              className={cn("size-1.5 rounded-full shrink-0", p.ready ? "bg-success" : "bg-destructive")}
-              aria-hidden
-            />
-            <span className="font-mono truncate" title={p.name}>{p.name}</span>
-            {!p.ready && p.lastTerminationReason && (
-              <span className="flex items-center gap-1 text-destructive-text shrink-0 ml-auto">
-                <AlertTriangle size={11} className="shrink-0" />
-                {p.lastTerminationReason}
-                {p.lastExitCode != null ? ` (exit ${p.lastExitCode})` : ""}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
+      <PodHealthList pods={usage.pods} />
       {!usage.usageAvailable && (
         <div className="flex items-start gap-2 rounded-md bg-warning-soft ring-1 ring-inset ring-warning-line px-3 py-2.5">
           <Info size={14} className="text-warning-text shrink-0 mt-0.5" />

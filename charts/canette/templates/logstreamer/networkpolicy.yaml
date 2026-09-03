@@ -21,9 +21,44 @@ spec:
         - protocol: TCP
           port: 8080
   egress:
-    # K8s API server — required to list pods and stream logs across app namespaces
+    # K8s API server — required to list pods and stream logs across app namespaces.
+    # In-cluster client-go config resolves this via IP env vars, not DNS, so no
+    # DNS egress is needed for this rule specifically.
     - ports:
         - protocol: TCP
           port: 443
         - protocol: TCP
           port: 6443
+    {{- if include "canette.metricsTimeseriesEnabled" . }}
+    # DNS — required once PROMETHEUS_URL is set below, since (unlike the K8s API
+    # above) both the bundled Prometheus Service DNS name and an externalUrl
+    # hostname need real resolution. namespaceSelector + port restriction rather
+    # than a bare port-only rule, so 53 isn't open to arbitrary destinations.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+    {{- if and .Values.metrics.enabled .Values.metrics.prometheus.bundled.enabled }}
+    # Bundled Prometheus — CPU/memory-over-time queries for the Metrics tab
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+    {{- end }}
+    {{- if and .Values.metrics.enabled .Values.metrics.prometheus.externalUrl (not .Values.metrics.prometheus.bundled.enabled) }}
+    # BYO external Prometheus-compatible endpoint (metrics.prometheus.externalUrl).
+    # Assumes HTTPS on 443 — adjust this NetworkPolicy if your endpoint uses a
+    # different port/protocol.
+    - ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
