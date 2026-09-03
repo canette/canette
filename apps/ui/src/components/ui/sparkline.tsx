@@ -15,9 +15,18 @@ function buildLinePath(points: AppMetricsSeriesPoint[], width: number, height: n
   const maxT = points[points.length - 1].t
   const spanT = Math.max(maxT - minT, 1)
   const values = points.map((p) => p.v)
-  const minV = Math.min(...values)
-  const maxV = Math.max(...values)
-  const spanV = Math.max(maxV - minV, 1e-9)
+  const rawMinV = Math.min(...values)
+  const rawMaxV = Math.max(...values)
+  // Floor the y-axis span at 5% of the series' own magnitude (e.g. 33.000MB vs
+  // 33.002MB is real-world noise, not a trend — without a floor the axis
+  // stretches to fill the chart height and makes it look like a dramatic
+  // swing). Expand symmetrically around the data's own midpoint so the actual
+  // min/max always stay inside the plotted range.
+  const maxAbs = Math.max(Math.abs(rawMinV), Math.abs(rawMaxV))
+  const minSpan = Math.max(maxAbs * 0.05, 1e-9)
+  const spanV = Math.max(rawMaxV - rawMinV, minSpan)
+  const midV = (rawMinV + rawMaxV) / 2
+  const minV = midV - spanV / 2
 
   const innerW = width - pad * 2
   const innerH = height - pad * 2
@@ -90,9 +99,14 @@ export function TimeseriesChart({ points, formatValue, height = 120, className }
   const { segments, coords } = useMemo(() => buildLinePath(points, width, height, 8), [points, height])
 
   if (points.length === 0 || coords.length === 0) {
+    // Matches the chart's own height plus the caption row's height (mt-1 + one
+    // line of text-xs) so swapping between this state and the real chart never
+    // shifts surrounding layout.
     return (
-      <div className="flex items-center justify-center h-[120px] text-xs text-muted-foreground">
-        Not enough data yet
+      <div className={className} style={{ height: height + 20 }}>
+        <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
+          Not enough data yet
+        </div>
       </div>
     )
   }
@@ -113,6 +127,10 @@ export function TimeseriesChart({ points, formatValue, height = 120, className }
   }
 
   const hover = hoverIdx !== null ? coords[hoverIdx] : null
+  // Fall back to the latest point rather than rendering nothing, so this row
+  // is always present — otherwise the card grows/shrinks by a line height on
+  // every hover in/out, causing a visible layout jump.
+  const displayed = hover ?? coords[coords.length - 1]
 
   return (
     <div className={className}>
@@ -147,12 +165,10 @@ export function TimeseriesChart({ points, formatValue, height = 120, className }
             anywhere over the chart, not just directly on the line. */}
         <rect x={0} y={0} width={width} height={height} fill="transparent" />
       </svg>
-      {hover && (
-        <div className="flex items-center justify-between text-xs mt-1">
-          <span className="text-secondary-foreground font-mono tabular-nums">{formatValue(hover.point.v)}</span>
-          <span className="text-tertiary font-mono">{new Date(hover.point.t * 1000).toLocaleTimeString()}</span>
-        </div>
-      )}
+      <div className="flex items-center justify-between text-xs mt-1">
+        <span className="text-secondary-foreground font-mono tabular-nums">{formatValue(displayed.point.v)}</span>
+        <span className="text-tertiary font-mono">{new Date(displayed.point.t * 1000).toLocaleTimeString()}</span>
+      </div>
     </div>
   )
 }
