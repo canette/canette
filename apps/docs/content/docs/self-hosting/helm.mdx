@@ -141,6 +141,9 @@ These values are snapshotted into each deployment at trigger time. Changing them
 | `backup.enabled` | `false` | Deploy a nightly CronJob that backs up PostgreSQL to S3. Requires `postgres.enabled=true`. See [Backups](/docs/self-hosting/backup). |
 | `backup.schedule` | `0 3 * * *` | Cron schedule for the backup Job |
 | `backup.s3.uri` | `""` | Destination URI, e.g. `s3://my-bucket/canette-backups`. Required when `backup.enabled=true`. |
+| `metrics.enabled` | `false` | Unlock CPU/memory-over-time charts on the app Metrics tab. Pod health and instant usage work regardless of this setting. See [Metrics](/docs/self-hosting/metrics). |
+| `metrics.prometheus.bundled.enabled` | `false` | Deploy a small in-chart Prometheus (no operator/CRDs) that scrapes kubelet cAdvisor cluster-wide. Ignored when `externalUrl` is set. |
+| `metrics.prometheus.externalUrl` | `""` | BYO Prometheus-compatible query API (Prometheus, Thanos, Mimir, VictoriaMetrics). Takes precedence over the bundled instance. |
 
 ### Gateway
 

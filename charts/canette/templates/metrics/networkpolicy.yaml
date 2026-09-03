@@ -1,0 +1,47 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheus.bundled.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only the logstreamer pod queries Prometheus (proxied by the API — see
+    # apps/logstreamer's PROMETHEUS_URL wiring).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: canette-logstreamer
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # DNS — namespaceSelector + port restriction rather than a bare port-only
+    # rule, so 53 isn't open to arbitrary destinations. Required because the
+    # scrape config's apiserver-proxy target is the DNS name
+    # kubernetes.default.svc, not an IP (see configmap.yaml).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # K8s API server only — cAdvisor is scraped via the apiserver-proxy path,
+    # so this pod never talks to a node's kubelet directly (see configmap.yaml).
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+{{- end }}

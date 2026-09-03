@@ -1,5 +1,5 @@
 import type { DB } from "../db/db"
-import type { AdminAppSummary, AdminProjectOverview, DeploymentStatus, ResourceDefaults, ScanInfo, SyncResult, TeamMember, User, UserDeletionImpact, UserRole, WebhookSettings } from "@canette/types"
+import type { AdminAppSummary, AdminProjectOverview, DeploymentStatus, MetricsInfo, ResourceDefaults, ScanInfo, SyncResult, TeamMember, User, UserDeletionImpact, UserRole, WebhookSettings } from "@canette/types"
 import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
@@ -407,6 +407,23 @@ export function getResourceDefaults(): ResourceDefaults {
     memoryRequest: process.env.DEFAULT_MEMORY_REQUEST ?? "128Mi",
     cpuLimit: process.env.DEFAULT_CPU_LIMIT ?? "500m",
     memoryLimit: process.env.DEFAULT_MEMORY_LIMIT ?? "512Mi",
+  }
+}
+
+// ── Metrics info ───────────────────────────────────────────────────────────────
+
+// Metrics (Prometheus time-series) configuration is set via Helm values and
+// injected as METRICS_ENABLED. It is read-only at runtime — change it by
+// updating the Helm release. The API never receives the Prometheus URL
+// itself (only logstreamer does) — this is display-only status.
+export function getMetricsInfo(): MetricsInfo {
+  const enabled = process.env.METRICS_ENABLED === "true"
+  if (!enabled) {
+    return { enabled: false, source: "disabled" }
+  }
+  return {
+    enabled: true,
+    source: process.env.METRICS_SOURCE === "external" ? "external" : "bundled",
   }
 }
 

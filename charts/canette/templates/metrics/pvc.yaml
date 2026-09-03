@@ -1,0 +1,19 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheus.bundled.enabled (dig "persistence" "enabled" true .Values.metrics.prometheus.bundled) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: prometheus
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ dig "persistence" "size" "2Gi" .Values.metrics.prometheus.bundled }}
+  {{- with dig "persistence" "storageClass" "" .Values.metrics.prometheus.bundled }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

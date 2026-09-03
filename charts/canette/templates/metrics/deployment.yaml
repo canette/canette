@@ -1,0 +1,73 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheus.bundled.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: prometheus
+    {{- include "canette.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # RollingUpdate (the default) starts the new pod before killing the old one,
+  # but both would try to mount the same RWO PVC — the new pod fails to
+  # acquire Prometheus's TSDB directory lock and crash-loops until the old
+  # pod terminates. Recreate avoids that by tearing down first.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/metrics/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: {{ .Values.metrics.prometheus.bundled.image }}
+          imagePullPolicy: {{ include "canette.imagePullPolicy" .Values.metrics.prometheus.bundled.image }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.metrics.prometheus.bundled.retention }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.metrics.prometheus.bundled.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          {{- if dig "persistence" "enabled" true .Values.metrics.prometheus.bundled }}
+          persistentVolumeClaim:
+            claimName: prometheus-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

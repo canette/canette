@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { FormError } from "@/components/ui/form-error"
 import * as api from "@/lib/api"
-import type { AdminSignupSettings, ResourceDefaults, ScanInfo, WebhookSettings } from "@canette/types"
+import type { AdminSignupSettings, MetricsInfo, ResourceDefaults, ScanInfo, WebhookSettings } from "@canette/types"
 import { SkeletonText } from "@/components/ui/skeleton"
 
 type SignupModeValue = "open" | "disabled" | "invite_code"
@@ -15,6 +15,7 @@ type SignupModeValue = "open" | "disabled" | "invite_code"
 export default function AdminSettingsPage() {
   const [scanInfo, setScanInfo] = useState<ScanInfo | null>(null)
   const [webhookSettings, setWebhookSettings] = useState<WebhookSettings | null>(null)
+  const [metricsInfo, setMetricsInfo] = useState<MetricsInfo | null>(null)
   const [resourceDefaults, setResourceDefaults] = useState<ResourceDefaults | null>(null)
   const [signupSettings, setSignupSettings] = useState<AdminSignupSettings | null>(null)
   const [loading, setLoading] = useState(true)
@@ -33,12 +34,14 @@ export default function AdminSettingsPage() {
       api.admin.getWebhookSettings(),
       api.admin.getResourceDefaults(),
       api.admin.getSignupSettings(),
+      api.admin.getMetricsInfo(),
     ])
-      .then(([si, wh, rd, ss]) => {
+      .then(([si, wh, rd, ss, mi]) => {
         setScanInfo(si)
         setWebhookSettings(wh)
         setResourceDefaults(rd)
         setSignupSettings(ss)
+        setMetricsInfo(mi)
 
         // Derive UI mode from the raw DB value
         if (ss.mode === "open" || ss.mode === "disabled") {
@@ -228,6 +231,32 @@ export default function AdminSettingsPage() {
                 {webhookSettings?.baseUrl || <span className="text-muted-foreground">(uses UI hostname)</span>}
               </p>
             </div>
+          </div>
+        </section>
+
+        <Separator />
+
+        {/* Metrics */}
+        <section>
+          <h2 className="text-sm font-medium mb-4">Metrics</h2>
+          <div className="rounded-lg border border-border p-6 flex flex-col gap-4">
+            <p className="text-sm text-muted-foreground">
+              Historical CPU/memory charts are set via Helm values (<code className="text-xs">metrics</code>) and
+              cannot be changed at runtime. Instant usage snapshots work regardless of this setting.{" "}
+              <a href="https://canette.dev/docs/self-hosting/helm" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">View docs</a>
+            </p>
+            {metricsInfo && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Enabled</p>
+                  <p className="font-mono text-sm">{metricsInfo.enabled ? "yes" : "no"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Source</p>
+                  <p className="font-mono text-sm capitalize">{metricsInfo.source}</p>
+                </div>
+              </div>
+            )}
           </div>
         </section>
 

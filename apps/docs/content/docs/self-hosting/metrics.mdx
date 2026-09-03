@@ -1,0 +1,111 @@
+---
+title: Metrics
+description: Pod health, CPU/memory usage, and optional historical charts on the app Metrics tab.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+canette shows pod health and live CPU/memory usage for every app out of the box — no
+configuration required. Historical CPU/memory-*over-time* charts are opt-in and need a
+Prometheus-compatible query API, either a small bundled instance or your own.
+
+## What works with zero configuration
+
+- **Pod health** (ready/restart count) — read from the core Kubernetes Pods API, always
+  available.
+- **Instant CPU/memory usage** — read from `metrics.k8s.io` (metrics-server) when it's
+  installed on the cluster. Degrades gracefully (no error, just an empty state) if it isn't.
+
+Both appear as a stat-tile row on the app's Overview tab, and again on the dedicated
+Metrics tab.
+
+## Historical charts (`metrics.enabled=true`)
+
+CPU/memory-over-time charts need a Prometheus-compatible query API behind the scenes.
+Set `metrics.enabled=true` plus one of the two sources below — leave both unset and the
+UI silently falls back to the instant-only stat tiles, exactly as if `metrics.enabled`
+were `false`.
+
+### Bundled Prometheus
+
+A plain `Deployment` + `ConfigMap` (no prometheus-operator, no CRDs) that scrapes kubelet
+cAdvisor cluster-wide for container CPU/memory, retained for a short window (3 days by
+default) — a convenience chart, not a monitoring system:
+
+```yaml
+metrics:
+  enabled: true
+  prometheus:
+    bundled:
+      enabled: true
+      retention: 3d
+      persistence:
+        enabled: true
+        size: 2Gi
+```
+
+The bundled instance scrapes via the Kubernetes apiserver-proxy path
+(`/api/v1/nodes/<node>/proxy/metrics/cadvisor`) rather than talking to each node's kubelet
+directly — this keeps its NetworkPolicy egress rule identical in shape to logstreamer's
+existing rule (Kubernetes API server only) and avoids kubelet TLS/anonymous-auth setup.
+Because of this, the ServiceAccount backing it (`prometheus`) needs a
+cluster-wide `ClusterRole` (`nodes/proxy`, `nodes/metrics`) — the only cluster-wide RBAC
+grant in the whole chart, everything else is namespace-scoped. Queries are always filtered
+to a single app's namespace and pod-name prefix at read time, so no app's data is exposed
+to another.
+
+Set `persistence.enabled: false` to use an `emptyDir` instead of a PVC — cheaper, but
+history is lost on every pod restart or node drain.
+
+### External Prometheus-compatible endpoint
+
+If you already run Prometheus, Thanos, Mimir, or VictoriaMetrics — they all implement the
+same PromQL HTTP query API — point canette at it instead of deploying a second instance:
+
+```yaml
+metrics:
+  enabled: true
+  prometheus:
+    externalUrl: https://prometheus.example.com
+```
+
+`externalUrl` takes precedence over `prometheus.bundled` whenever both are set. If your
+endpoint requires a bearer token (e.g. Grafana Cloud, multi-tenant Mimir), supply it via a
+Secret rather than a plain value:
+
+```bash
+kubectl create secret generic canette-prometheus-token \
+  --namespace canette-system \
+  --from-literal=token=...
+```
+
+```yaml
+metrics:
+  prometheus:
+    externalAuth:
+      tokenSecretRef:
+        name: canette-prometheus-token
+        key: token
+```
+
+<Callout type="warn">
+  The logstreamer NetworkPolicy allows egress to `externalUrl` on port 443 only (HTTPS).
+  If your endpoint uses a different port or plain HTTP, adjust
+  `templates/logstreamer/networkpolicy.yaml` accordingly.
+</Callout>
+
+## Where the charts show up
+
+- **Overview tab** — compact sparklines ride inline next to the existing CPU/memory stat
+  tiles when historical data is available.
+- **Metrics tab** — full-size charts with a hover crosshair, plus the same per-pod health
+  list, grouped into sections so future metric families (e.g. a Traefik traffic adapter)
+  can be added as a sibling section later without restructuring the page.
+
+## What's not implemented yet
+
+Request rate / status code / latency charts need a gateway-specific traffic adapter
+(Traefik first) — see
+[canette/canette#168](https://github.com/canette/canette/issues/168) for the staged
+rollout. `metrics.gateway.provider` exists in `values.yaml` as a placeholder but has no
+effect yet.

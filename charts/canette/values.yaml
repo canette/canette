@@ -163,6 +163,52 @@ registry:
     # storageClass: "" # Leave empty to use the cluster default StorageClass.
 
 # ---------------------------------------------------------------------------
+# Metrics (optional — CPU/memory-over-time charts on the app Metrics tab)
+# ---------------------------------------------------------------------------
+# Pod health and instant CPU/memory snapshots (via metrics.k8s.io) always work
+# without any of this — this section only unlocks historical charts. Leave
+# metrics.enabled=false to skip it entirely.
+metrics:
+  enabled: false
+  prometheus:
+    # Bundled short-retention Prometheus (no operator/CRDs — a plain Deployment
+    # scraping kubelet cAdvisor cluster-wide via the apiserver-proxy path).
+    # Ignored when prometheus.externalUrl is set.
+    bundled:
+      enabled: false
+      image: prom/prometheus:v3.7.3
+      # How long to keep samples. Kept short since this is a convenience chart,
+      # not a durability guarantee — pair with a small persistence.size.
+      retention: 3d
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      persistence:
+        # Enable a PersistentVolumeClaim for Prometheus's TSDB data. Set to
+        # false to use an emptyDir instead (loses history on every restart).
+        enabled: true
+        size: 2Gi
+        # storageClass: "" # Leave empty to use the cluster default StorageClass.
+    # BYO Prometheus-compatible query API (Prometheus, Thanos, Mimir,
+    # VictoriaMetrics all implement the same PromQL HTTP API). Takes
+    # precedence over prometheus.bundled when set.
+    externalUrl: ""
+    # Optional bearer token for externalUrl (e.g. Grafana Cloud, multi-tenant
+    # Mimir). Ignored when using the bundled Prometheus.
+    externalAuth:
+      tokenSecretRef:
+        name: ""
+        key: "token"
+  gateway:
+    # Traffic/request-rate metrics adapter — not yet implemented.
+    # "none" | "traefik"
+    provider: none
+
+# ---------------------------------------------------------------------------
 # PostgreSQL backup to S3 (optional — requires postgres.enabled=true)
 # ---------------------------------------------------------------------------
 backup:

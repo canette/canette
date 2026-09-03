@@ -106,6 +106,24 @@ canette-registry-auth
 http://canette-logstreamer.{{ .Release.Namespace }}.svc.cluster.local:8080
 {{- end }}
 
+{{/* Resolve the Prometheus-compatible query API URL.
+     externalUrl takes precedence; falls back to the bundled Prometheus
+     Service when enabled; empty when metrics are off entirely. */}}
+{{- define "canette.prometheusURL" -}}
+{{- if .Values.metrics.prometheus.externalUrl -}}
+{{ .Values.metrics.prometheus.externalUrl }}
+{{- else if .Values.metrics.prometheus.bundled.enabled -}}
+http://prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090
+{{- end -}}
+{{- end }}
+
+{{/* Whether logstreamer should receive a PROMETHEUS_URL at all. */}}
+{{- define "canette.metricsTimeseriesEnabled" -}}
+{{- if and .Values.metrics.enabled (or .Values.metrics.prometheus.bundled.enabled .Values.metrics.prometheus.externalUrl) -}}
+true
+{{- end -}}
+{{- end }}
+
 {{/* Resolve the registry URL used by the kubelet to pull images.
      When registry.enabled=true and pullRepo is unset, derives registry.<domain>/.
      When registry.enabled=false, pullRepo must be set explicitly. */}}

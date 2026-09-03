@@ -72,10 +72,15 @@ func run(log *zap.Logger) error {
 		return fmt.Errorf("LOGSTREAMER_SECRET environment variable is required")
 	}
 
+	var promClient *prometheusClient
+	if promURL := os.Getenv("PROMETHEUS_URL"); promURL != "" {
+		promClient = newPrometheusClient(promURL, os.Getenv("PROMETHEUS_BEARER_TOKEN"))
+	}
+
 	addr := env.EnvOr("ADDR", ":8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newMux(log, k8sClient, metricsClient, secret),
+		Handler:           newMux(log, k8sClient, metricsClient, promClient, secret),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -93,13 +98,14 @@ func run(log *zap.Logger) error {
 	return nil
 }
 
-func newMux(log *zap.Logger, client kubernetes.Interface, metricsClient rest.Interface, secret string) http.Handler {
+func newMux(log *zap.Logger, client kubernetes.Interface, metricsClient rest.Interface, promClient *prometheusClient, secret string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /stream", requireSecret(secret, streamHandler(log, client)))
 	mux.Handle("GET /metrics/usage", requireSecret(secret, metricsUsageHandler(log, client, metricsClient)))
+	mux.Handle("GET /metrics/timeseries", requireSecret(secret, timeseriesHandler(log, promClient)))
 	return mux
 }
 

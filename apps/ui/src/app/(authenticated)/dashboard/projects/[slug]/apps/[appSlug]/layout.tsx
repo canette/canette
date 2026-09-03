@@ -71,6 +71,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const appBase = `/dashboard/projects/${slug}/apps/${appSlug}`
   const isOverview = pathname === appBase || pathname === `${appBase}/`
   const isDeployments = pathname.startsWith(`${appBase}/deployments`)
+  const isMetrics = pathname.startsWith(`${appBase}/metrics`)
   const isLogs = pathname.startsWith(`${appBase}/logs`)
   const isSettings = pathname.startsWith(`${appBase}/settings`)
 
@@ -127,6 +128,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <TabNavigation tabs={[
           { label: "Overview", href: appBase, active: isOverview },
           { label: "Deployments", href: `${appBase}/deployments`, active: isDeployments },
+          { label: "Metrics", href: `${appBase}/metrics`, active: isMetrics },
           { label: "Logs", href: `${appBase}/logs`, active: isLogs },
           { label: "Settings", href: `${appBase}/settings`, active: isSettings },
         ]} />
