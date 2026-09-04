@@ -2,13 +2,14 @@ import { cn } from "@/lib/utils"
 
 // Single source of truth for mapping deployment statuses to visual variants.
 // pending_build intentionally maps to "pending" — the build hasn't started yet.
-export type StatusVariant = "live" | "building" | "deploying" | "failed" | "stopped" | "pending"
+export type StatusVariant = "live" | "building" | "deploying" | "failed" | "unhealthy" | "stopped" | "pending"
 
 export function statusVariant(status: string | undefined | null): StatusVariant {
   if (status === "live") return "live"
   if (status === "building" || status === "scanning") return "building"
   if (status === "pending_deployment" || status === "deploying") return "deploying"
   if (status === "failed") return "failed"
+  if (status === "unhealthy") return "unhealthy"
   if (status === "stopped") return "stopped"
   return "pending"
 }
@@ -22,6 +23,7 @@ const VARIANT_STYLES: Record<StatusVariant, { dot: string; chip: string; text: s
   building: { dot: "bg-warning", chip: "bg-warning-soft text-warning-text", text: "text-warning-text", ring: "ring-[3px] ring-warning-soft", pulse: "animate-pulse [animation-duration:1s]" },
   deploying: { dot: "bg-info", chip: "bg-info-soft text-info-text", text: "text-info-text", ring: "ring-[3px] ring-info-soft", pulse: "animate-pulse [animation-duration:1.4s]" },
   failed: { dot: "bg-destructive", chip: "bg-destructive-soft text-destructive-text", text: "text-destructive-text", ring: "ring-[3px] ring-destructive-soft" },
+  unhealthy: { dot: "bg-destructive", chip: "bg-destructive-soft text-destructive-text", text: "text-destructive-text", ring: "ring-[3px] ring-destructive-soft" },
   stopped: { dot: "bg-tertiary", chip: "bg-muted text-muted-foreground", text: "text-muted-foreground", ring: "ring-[3px] ring-muted" },
   pending: { dot: "bg-tertiary", chip: "bg-muted text-tertiary", text: "text-tertiary", ring: "ring-[3px] ring-muted" },
 }

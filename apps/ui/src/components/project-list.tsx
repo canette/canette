@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { SkeletonText } from "@/components/ui/skeleton"
+import { effectiveRuntimeHealth, RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
 import { StatusBadge, StatusLabel } from "@/components/ui/status-badge"
 import * as api from "@/lib/api"
 import { useSelectedTeam } from "@/lib/team-context"
@@ -16,7 +17,13 @@ function projectColor(id: string): string {
   return PROJECT_COLORS[Math.abs(h) % PROJECT_COLORS.length]
 }
 
-/** Aggregate status chip for a project card: worst state wins. */
+/**
+ * Aggregate status chip for a project card: worst state wins. Among apps
+ * with a live deploy, distinguishes runtime-unhealthy (deploy succeeded but
+ * the pod isn't currently passing health checks) from healthy, rather than
+ * just reporting "live" — see runtime-health-indicator.tsx for why the two
+ * signals are tracked separately.
+ */
 function projectAggregate(apps: App[]): { status: string; label: string } | null {
   if (apps.length === 0) return null
   const count = (pred: (s: string | undefined) => boolean) =>
@@ -25,8 +32,12 @@ function projectAggregate(apps: App[]): { status: string; label: string } | null
   if (failed > 0) return { status: "failed", label: `${failed} failed` }
   const building = count((s) => !!s && ["pending_build", "building", "scanning", "pending_deployment", "deploying"].includes(s))
   if (building > 0) return { status: "building", label: `${building} building` }
-  const live = count((s) => s === "live")
-  if (live > 0) return { status: "live", label: `${live} live` }
+  const liveApps = apps.filter((a) => a.latestDeploymentStatus === "live")
+  const unhealthy = liveApps.filter(
+    (a) => effectiveRuntimeHealth(a.runtimeHealth, a.runtimeHealthUpdatedAt) === "unhealthy",
+  ).length
+  if (unhealthy > 0) return { status: "unhealthy", label: `${unhealthy} unhealthy` }
+  if (liveApps.length > 0) return { status: "live", label: `${liveApps.length} live` }
   return null
 }
 
@@ -136,7 +147,16 @@ export function ProjectList() {
                                   {a.slug.slice(0, 2)}
                                 </span>
                                 <span className="text-[12.5px] font-medium font-mono truncate">{a.name}</span>
-                                <StatusLabel status={a.latestDeploymentStatus} className="ml-auto text-[11.5px] shrink-0" />
+                                <div className="ml-auto flex items-center gap-2 shrink-0">
+                                  {a.latestDeploymentStatus === "live" && (
+                                    <RuntimeHealthIndicator
+                                      runtimeHealth={a.runtimeHealth}
+                                      runtimeHealthReason={a.runtimeHealthReason}
+                                      runtimeHealthUpdatedAt={a.runtimeHealthUpdatedAt}
+                                    />
+                                  )}
+                                  <StatusLabel status={a.latestDeploymentStatus} className="text-[11.5px]" />
+                                </div>
                               </div>
                             ))}
                           </div>

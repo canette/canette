@@ -19,6 +19,28 @@ const REASON_EXPLANATIONS: Record<string, string> = {
   "no running pods": "There's no running instance of this app right now.",
 }
 
+// How long the watcher's verdict is trusted without a fresh update before
+// being treated as stale. The watcher (apps/controller/internal/health/watcher.go)
+// re-evaluates on every pod event plus a resyncPeriod (5 min) safety-net
+// replay, so a verdict that hasn't moved in twice that long means the
+// watcher itself has stopped updating it (informer hiccup, pod restart,
+// etc.) — the stored value, including a lingering "unhealthy", can no
+// longer be trusted and is treated as unknown instead.
+const STALE_AFTER_MS = 10 * 60 * 1000
+
+export function isRuntimeHealthStale(runtimeHealthUpdatedAt?: string): boolean {
+  if (!runtimeHealthUpdatedAt) return false
+  return Date.now() - new Date(runtimeHealthUpdatedAt).getTime() > STALE_AFTER_MS
+}
+
+/** The runtime health to actually use for display/logic — a stale verdict reads as unknown. */
+export function effectiveRuntimeHealth(
+  runtimeHealth: RuntimeHealth,
+  runtimeHealthUpdatedAt?: string,
+): RuntimeHealth {
+  return isRuntimeHealthStale(runtimeHealthUpdatedAt) ? "unknown" : runtimeHealth
+}
+
 function getReasonExplanation(reason: string): string | undefined {
   if (REASON_EXPLANATIONS[reason]) return REASON_EXPLANATIONS[reason]
   const exitMatch = reason.match(/^(.+) \(exit (\d+)\)$/)
@@ -41,14 +63,17 @@ function getReasonExplanation(reason: string): string | undefined {
 // chip reads as exactly what it is: the deploy succeeded, but the app is
 // currently unhealthy.
 export function RuntimeHealthIndicator({
-  runtimeHealth,
+  runtimeHealth: rawRuntimeHealth,
   runtimeHealthReason,
+  runtimeHealthUpdatedAt,
   className,
 }: {
   runtimeHealth: RuntimeHealth
   runtimeHealthReason?: string
+  runtimeHealthUpdatedAt?: string
   className?: string
 }) {
+  const runtimeHealth = effectiveRuntimeHealth(rawRuntimeHealth, runtimeHealthUpdatedAt)
   if (runtimeHealth === "unknown") return null
 
   if (runtimeHealth === "unhealthy") {

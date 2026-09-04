@@ -141,10 +141,10 @@ export default function ProjectSettingsPage() {
         <Collapsible>
         <Card className="border-destructive/50">
           <CollapsibleTrigger asChild>
-            <CardHeader className="cursor-pointer select-none hover:bg-muted/30 transition-colors rounded-lg [&[data-state=open]]:rounded-b-none">
+            <CardHeader className="group cursor-pointer select-none hover:bg-muted/30 transition-colors rounded-lg [&[data-state=open]]:rounded-b-none">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
-                <ChevronDown size={15} className={cn("text-destructive/70 transition-transform [[data-state=open]_&]:rotate-180")} />
+                <ChevronDown size={15} className={cn("text-destructive/70 transition-transform group-data-[state=open]:rotate-180")} />
               </div>
             </CardHeader>
           </CollapsibleTrigger>
