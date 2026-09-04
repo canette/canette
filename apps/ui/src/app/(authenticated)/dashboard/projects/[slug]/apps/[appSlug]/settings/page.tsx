@@ -654,8 +654,8 @@ function WebhookSection({ appId, sourceType, gitBranch, onWebhookChange }: {
               {createResult.autoRegistered ? (
                 <Collapsible>
                   <CollapsibleTrigger asChild>
-                    <button type="button" className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors self-start">
-                      <ChevronDown size={13} className="transition-transform [[data-state=open]_&]:rotate-180" />
+                    <button type="button" className="group flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors self-start">
+                      <ChevronDown size={13} className="transition-transform group-data-[state=open]:rotate-180" />
                       Show payload URL and secret
                     </button>
                   </CollapsibleTrigger>
@@ -972,10 +972,10 @@ export default function SettingsPage() {
       <Collapsible id="danger" className="scroll-mt-6">
         <Card className="border-transparent ring-1 ring-inset ring-destructive-line">
           <CollapsibleTrigger asChild>
-            <CardHeader className="cursor-pointer select-none hover:bg-muted/30 transition-colors rounded-lg [&[data-state=open]]:rounded-b-none">
+            <CardHeader className="group cursor-pointer select-none hover:bg-muted/30 transition-colors rounded-lg [&[data-state=open]]:rounded-b-none">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base text-destructive-text">Danger Zone</CardTitle>
-                <ChevronDown size={15} className={cn("text-destructive-text/70 transition-transform [[data-state=open]_&]:rotate-180")} />
+                <ChevronDown size={15} className={cn("text-destructive-text/70 transition-transform group-data-[state=open]:rotate-180")} />
               </div>
             </CardHeader>
           </CollapsibleTrigger>
