@@ -20,6 +20,7 @@ import {
   Sun,
 } from "lucide-react"
 import { CanetteLogo } from "@/components/canette-logo"
+import { effectiveRuntimeHealth } from "@/components/runtime-health-indicator"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -202,28 +203,40 @@ const BUILDING_STATUSES = new Set(["pending_build", "building", "scanning", "pen
 
 function FleetHealth({ apps }: { apps: App[] }) {
   // Apps that are stopped, or have never been deployed, aren't part of the
-  // live fleet — excluding them keeps the percentage and the live/building/failed
-  // breakdown below it consistent with each other (they always sum to total).
-  const live = apps.filter((a) => a.latestDeploymentStatus === "live").length
+  // live fleet — excluding them keeps the percentage and the breakdown below
+  // it consistent with each other (they always sum to total). Among apps with
+  // a live deploy, "healthy" reflects runtime health (pod actually up and
+  // passing checks) rather than just "the last deploy succeeded" — a
+  // deploy can succeed and the pod can crash-loop later without that ever
+  // showing here otherwise. "unknown" runtime health (no data yet, or a
+  // stale verdict the watcher hasn't refreshed in a while — see
+  // effectiveRuntimeHealth) falls back to counting as healthy, since the
+  // deploy did succeed.
   const building = apps.filter((a) => BUILDING_STATUSES.has(a.latestDeploymentStatus ?? "")).length
   const failed = apps.filter((a) => a.latestDeploymentStatus === "failed").length
-  const total = live + building + failed
+  const liveApps = apps.filter((a) => a.latestDeploymentStatus === "live")
+  const unhealthy = liveApps.filter(
+    (a) => effectiveRuntimeHealth(a.runtimeHealth, a.runtimeHealthUpdatedAt) === "unhealthy",
+  ).length
+  const healthy = liveApps.length - unhealthy
+  const total = healthy + unhealthy + building + failed
   if (total === 0) return null
-  const pct = Math.round((live / total) * 100)
+  const pct = Math.round((healthy / total) * 100)
 
   return (
     <div className="rounded-lg border border-border bg-card px-3 py-2.5 mb-2">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-muted-foreground">Fleet health</span>
-        <span className={cn("text-xs font-semibold", failed > 0 ? "text-warning-text" : "text-success-text")}>
+        <span className={cn("text-xs font-semibold", failed > 0 || unhealthy > 0 ? "text-warning-text" : "text-success-text")}>
           {pct}%
         </span>
       </div>
       <div className="h-[5px] rounded-full bg-muted overflow-hidden">
         <div className="h-full bg-success rounded-full transition-all" style={{ width: `${pct}%` }} />
       </div>
-      <div className="flex gap-2.5 mt-2 text-[11px] text-tertiary">
-        <span><b className="font-semibold text-success-text">{live}</b> live</span>
+      <div className="flex gap-2.5 mt-2 text-[11px] text-tertiary flex-wrap">
+        <span><b className="font-semibold text-success-text">{healthy}</b> healthy</span>
+        <span><b className="font-semibold text-destructive-text">{unhealthy}</b> unhealthy</span>
         <span><b className="font-semibold text-warning-text">{building}</b> building</span>
         <span><b className="font-semibold text-destructive-text">{failed}</b> failed</span>
       </div>

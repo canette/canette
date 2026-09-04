@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { ArrowUpDown, ChevronDown, ChevronUp } from "lucide-react"
+import { RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { cn } from "@/lib/utils"
@@ -111,6 +112,14 @@ export default function ProjectPage() {
                         {app.deploymentType !== "web" && ` · ${app.deploymentType}`}
                       </div>
                     </div>
+                    {app.latestDeploymentStatus === "live" && (
+                      <RuntimeHealthIndicator
+                        runtimeHealth={app.runtimeHealth}
+                        runtimeHealthReason={app.runtimeHealthReason}
+                        runtimeHealthUpdatedAt={app.runtimeHealthUpdatedAt}
+                        className="shrink-0"
+                      />
+                    )}
                     <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
                   </div>
                   <div className="flex items-center gap-1.5 mt-2.5 text-xs text-tertiary font-mono truncate">

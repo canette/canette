@@ -91,6 +91,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   <RuntimeHealthIndicator
                     runtimeHealth={app.runtimeHealth}
                     runtimeHealthReason={app.runtimeHealthReason}
+                    runtimeHealthUpdatedAt={app.runtimeHealthUpdatedAt}
                     className="shrink-0"
                   />
                 )}
