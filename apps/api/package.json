@@ -22,7 +22,7 @@
     "js-yaml": "^5.4.1",
     "kysely": "^0.29.5",
     "pg": "^8.23.0",
-    "resend": "^6.24.0"
+    "resend": "^6.26.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
