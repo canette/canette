@@ -101,6 +101,10 @@ Each deployment row carries a `deployment_snapshot` JSON column written by the A
 ### Auth
 Auth is handled by `better-auth` embedded in the API server. Supported providers: Google OAuth, GitHub OAuth, email magic link (requires SMTP config). Do not add Keycloak, Dex, or any external auth service as a dependency.
 
+**better-auth schema is hand-migrated, not library-managed.** better-auth owns `user`/`session`/`account`/`verification`, but this repo does not use its CLI or `getMigrations()` to manage them in Postgres — those tables are created and altered by the same hand-written SQL files in `apps/api/migrations/` as everything else (see initial schema in `000001_initial_schema.up.sql`). This means every field a configured plugin adds (`admin` → `user.role/banned/banReason/banExpires`, `session.impersonatedBy`; future plugins add their own) must be mirrored into a migration by hand — better-auth will not create or alter these columns itself. When adding a plugin or bumping the `better-auth` version, run `bunx @better-auth/cli generate` against `apps/api/src/auth/auth.ts` to see what columns/tables it now expects, and hand-write the equivalent `ALTER TABLE`/`CREATE TABLE` into a new migration — do not run its `migrate` command directly against the database.
+
+`apps/api/tests/auth/auth.test.ts` guards against drift between the two: it provisions its in-memory SQLite database from the real migrations in `apps/api/migrations/` (via `runMigrations`, same as every other test suite), not from better-auth's own `getMigrations()`. Because better-auth validates its schema against the live database on every write, any plugin field missing from the migrations fails a test immediately (`SchemaMismatchError`) instead of surfacing at runtime in production. Never change this test back to building its schema from `getMigrations()` — that generates a schema from the plugin config itself and can never detect drift from what's actually migrated.
+
 ---
 
 ## Component responsibilities
