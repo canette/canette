@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { HelpTooltip } from "@/components/ui/tooltip"
 import { CredentialSelect } from "@/components/credential-select"
+import { EnvValueField } from "@/components/env-value-field"
 import { cn } from "@/lib/utils"
 import { resolveTemplateVars, hasTemplateVars } from "@/lib/template"
 import { useDomain } from "@/lib/domain-context"
@@ -164,6 +165,7 @@ export function AppFormFields({
   const slugEdited = useRef(false)
   const [urlParsed, setUrlParsed] = useState(false)
   const [envOpen, setEnvOpen] = useState(() => value.envRows.length > 0)
+  const [multilineRows, setMultilineRows] = useState<Record<number, boolean>>({})
   const [advancedOpen, setAdvancedOpen] = useState(() => !!value.canetteConfig)
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -449,51 +451,71 @@ export function AppFormFields({
             const resolved = !row.isSecret && slugMap && hasTemplateVars(row.value)
               ? resolveTemplateVars(row.value, slugMap)
               : null
+            const multiline = !!multilineRows[ri]
+            const secretButton = (
+              <Button
+                type="button"
+                size="sm"
+                variant={row.isSecret ? "secondary" : "outline"}
+                onClick={() => {
+                  const rows = value.envRows.map((r, i) => i === ri ? { ...r, isSecret: !r.isSecret } : r)
+                  onChange({ envRows: rows })
+                }}
+                className={cn("h-8 shrink-0 text-xs", row.isSecret && "bg-warning-soft text-warning-text ring-1 ring-inset ring-warning-line")}
+              >
+                Secret
+              </Button>
+            )
+            const removeButton = (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => onChange({ envRows: value.envRows.filter((_, i) => i !== ri) })}
+                className="h-8 shrink-0 text-muted-foreground hover:text-destructive px-2"
+                aria-label="Remove"
+              >
+                ✕
+              </Button>
+            )
             return (
               <div key={ri} className="flex flex-col gap-0.5">
-                <div className="flex gap-2 items-center">
-                  <Input
-                    placeholder="KEY"
-                    value={row.key}
-                    onChange={(e) => {
-                      const next = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_")
-                      const rows = value.envRows.map((r, i) => i === ri ? { ...r, key: next } : r)
-                      onChange({ envRows: rows })
-                    }}
-                    className="h-8 font-mono text-xs w-48 shrink-0"
-                  />
-                  <Input
-                    placeholder={row.description ?? "value"}
-                    type={row.isSecret ? "password" : "text"}
+                <div className={cn("flex gap-2", multiline ? "flex-col items-stretch" : "items-center")}>
+                  <div className={cn("flex items-center gap-2", multiline && "justify-between")}>
+                    <Input
+                      placeholder="KEY"
+                      value={row.key}
+                      onChange={(e) => {
+                        const next = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_")
+                        const rows = value.envRows.map((r, i) => i === ri ? { ...r, key: next } : r)
+                        onChange({ envRows: rows })
+                      }}
+                      className="h-8 font-mono text-xs w-48 shrink-0"
+                    />
+                    {multiline && (
+                      <div className="flex items-center gap-2">
+                        {secretButton}
+                        {removeButton}
+                      </div>
+                    )}
+                  </div>
+                  <EnvValueField
                     value={row.value}
-                    onChange={(e) => {
-                      const rows = value.envRows.map((r, i) => i === ri ? { ...r, value: e.target.value } : r)
+                    onChange={(v) => {
+                      const rows = value.envRows.map((r, i) => i === ri ? { ...r, value: v } : r)
                       onChange({ envRows: rows })
                     }}
-                    className="h-8 font-mono text-xs flex-1"
+                    isSecret={row.isSecret}
+                    placeholder={row.description ?? "value"}
+                    className="h-8"
+                    onMultilineChange={(m) => setMultilineRows((prev) => ({ ...prev, [ri]: m }))}
                   />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={row.isSecret ? "secondary" : "outline"}
-                    onClick={() => {
-                      const rows = value.envRows.map((r, i) => i === ri ? { ...r, isSecret: !r.isSecret } : r)
-                      onChange({ envRows: rows })
-                    }}
-                    className={cn("h-8 shrink-0 text-xs", row.isSecret && "bg-warning-soft text-warning-text ring-1 ring-inset ring-warning-line")}
-                  >
-                    Secret
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => onChange({ envRows: value.envRows.filter((_, i) => i !== ri) })}
-                    className="h-8 shrink-0 text-muted-foreground hover:text-destructive px-2"
-                    aria-label="Remove"
-                  >
-                    ✕
-                  </Button>
+                  {!multiline && (
+                    <>
+                      {secretButton}
+                      {removeButton}
+                    </>
+                  )}
                 </div>
                 {resolved !== null && (
                   <p className="text-xs text-muted-foreground pl-1">
