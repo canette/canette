@@ -80,6 +80,11 @@ function SectionNav({ showHostnames, showAccessControl }: { showHostnames: boole
 
 // ── env row ───────────────────────────────────────────────────────────────────
 
+function multilinePreview(value: string): string {
+  const flat = value.replace(/\n/g, " ")
+  return flat.length > 50 ? `${flat.slice(0, 50)}…` : flat
+}
+
 function EnvRow({ label, value, isSecret, onSave, onDelete }: {
   label: string; value: string; isSecret: boolean
   onSave: (v: string) => Promise<void>; onDelete: () => Promise<void>
@@ -105,7 +110,7 @@ function EnvRow({ label, value, isSecret, onSave, onDelete }: {
   }
 
   return (
-    <div className={cn("flex gap-3 px-6 py-2.5 group", editing && multiline ? "flex-col items-stretch" : "items-center")}>
+    <div className={cn("flex gap-3 px-6 py-1.5 group", editing && multiline ? "flex-col items-stretch" : "items-center")}>
       <span className={cn("font-mono text-xs shrink-0 text-foreground/80", !(editing && multiline) && "w-48")}>{label}</span>
       {editing ? (
         <EnvValueField
@@ -120,7 +125,16 @@ function EnvRow({ label, value, isSecret, onSave, onDelete }: {
         <span className="flex-1 text-sm text-muted-foreground font-mono select-none">••••••••</span>
       ) : (
         <button type="button" className="flex-1 text-sm font-mono text-foreground/80 cursor-pointer hover:text-foreground text-left" onClick={() => { setDraft(value); setEditing(true) }}>
-          {value || <span className="text-muted-foreground italic">empty</span>}
+          {!value ? (
+            <span className="text-muted-foreground italic">empty</span>
+          ) : value.includes("\n") ? (
+            <>
+              {multilinePreview(value)}{" "}
+              <span className="text-muted-foreground italic">· {value.split("\n").length} lines</span>
+            </>
+          ) : (
+            value
+          )}
         </button>
       )}
       <div className={cn("flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity", editing && multiline && "self-end")}>
@@ -150,6 +164,7 @@ function EnvSection({ appId }: { appId: string }) {
   const [addValue, setAddValue] = useState("")
   const [addIsSecret, setAddIsSecret] = useState(false)
   const [addMultiline, setAddMultiline] = useState(false)
+  const [addFieldKey, setAddFieldKey] = useState(0)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState("")
 
@@ -171,6 +186,7 @@ function EnvSection({ appId }: { appId: string }) {
       if (addIsSecret) await api.env.putSecret(appId, addKey.trim(), addValue.trim())
       else await api.env.putVar(appId, addKey.trim(), addValue.trim())
       setAddKey(""); setAddValue(""); setAddIsSecret(false); setAddMultiline(false)
+      setAddFieldKey((k) => k + 1) // remount EnvValueField so its internal multiline state resets
       await loadEnv()
     } catch (e: unknown) {
       setAddError(e instanceof Error ? e.message : "Failed to add")
@@ -219,6 +235,7 @@ function EnvSection({ appId }: { appId: string }) {
                 )}
               </div>
               <EnvValueField
+                key={addFieldKey}
                 value={addValue}
                 onChange={setAddValue}
                 isSecret={addIsSecret}
