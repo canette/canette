@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { ChevronDown, Eye, EyeOff, FileText, Folder, FolderX, RefreshCw, Trash2, TriangleAlert } from "lucide-react"
+import { EnvValueField } from "@/components/env-value-field"
+import { ChevronDown, FileText, Folder, FolderX, RefreshCw, Trash2, TriangleAlert } from "lucide-react"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SegmentedControl } from "@/components/ui/segmented-control"
@@ -79,6 +80,11 @@ function SectionNav({ showHostnames, showAccessControl }: { showHostnames: boole
 
 // ── env row ───────────────────────────────────────────────────────────────────
 
+function multilinePreview(value: string): string {
+  const flat = value.replace(/\n/g, " ")
+  return flat.length > 50 ? `${flat.slice(0, 50)}…` : flat
+}
+
 function EnvRow({ label, value, isSecret, onSave, onDelete }: {
   label: string; value: string; isSecret: boolean
   onSave: (v: string) => Promise<void>; onDelete: () => Promise<void>
@@ -86,11 +92,16 @@ function EnvRow({ label, value, isSecret, onSave, onDelete }: {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
   const [saving, setSaving] = useState(false)
-  const [showSecret, setShowSecret] = useState(false)
+  const [multiline, setMultiline] = useState(false)
+
+  function stopEditing() {
+    setEditing(false)
+    setMultiline(false)
+  }
 
   async function handleSave() {
     setSaving(true)
-    try { await onSave(draft); setEditing(false); setShowSecret(false) }
+    try { await onSave(draft); stopEditing() }
     finally { setSaving(false) }
   }
   async function handleDelete() {
@@ -99,37 +110,38 @@ function EnvRow({ label, value, isSecret, onSave, onDelete }: {
   }
 
   return (
-    <div className="flex items-center gap-3 px-6 py-2.5 group">
-      <span className="font-mono text-xs w-48 shrink-0 text-foreground/80">{label}</span>
-      {isSecret ? (
-        <div className="flex-1 flex items-center gap-2">
-          {editing ? (
+    <div className={cn("flex gap-3 px-6 py-1.5 group", editing && multiline ? "flex-col items-stretch" : "items-center")}>
+      <span className={cn("font-mono text-xs shrink-0 text-foreground/80", !(editing && multiline) && "w-48")}>{label}</span>
+      {editing ? (
+        <EnvValueField
+          value={draft}
+          onChange={setDraft}
+          isSecret={isSecret}
+          className="h-7"
+          onMultilineChange={setMultiline}
+          autoFocus
+        />
+      ) : isSecret ? (
+        <span className="flex-1 text-sm text-muted-foreground font-mono select-none">••••••••</span>
+      ) : (
+        <button type="button" className="flex-1 text-sm font-mono text-foreground/80 cursor-pointer hover:text-foreground text-left" onClick={() => { setDraft(value); setEditing(true) }}>
+          {!value ? (
+            <span className="text-muted-foreground italic">empty</span>
+          ) : value.includes("\n") ? (
             <>
-              <Input type={showSecret ? "text" : "password"} className="h-7 text-xs font-mono" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
-              <button type="button" onClick={() => setShowSecret((v) => !v)} className="text-muted-foreground hover:text-foreground shrink-0" tabIndex={-1}>
-                {showSecret ? <Eye size={15} /> : <EyeOff size={15} />}
-              </button>
+              {multilinePreview(value)}{" "}
+              <span className="text-muted-foreground italic">· {value.split("\n").length} lines</span>
             </>
           ) : (
-            <span className="text-sm text-muted-foreground font-mono select-none">••••••••</span>
+            value
           )}
-        </div>
-      ) : (
-        <div className="flex-1">
-          {editing ? (
-            <Input className="h-7 text-xs font-mono" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
-          ) : (
-            <button type="button" className="text-sm font-mono text-foreground/80 cursor-pointer hover:text-foreground text-left" onClick={() => { setDraft(value); setEditing(true) }}>
-              {value || <span className="text-muted-foreground italic">empty</span>}
-            </button>
-          )}
-        </div>
+        </button>
       )}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className={cn("flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity", editing && multiline && "self-end")}>
         {editing ? (
           <>
             <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={handleSave} disabled={saving}>Save</Button>
-            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setEditing(false); setShowSecret(false) }} disabled={saving}>Cancel</Button>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={stopEditing} disabled={saving}>Cancel</Button>
           </>
         ) : (
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setDraft(isSecret ? "" : value); setEditing(true) }}>
@@ -151,6 +163,8 @@ function EnvSection({ appId }: { appId: string }) {
   const [addKey, setAddKey] = useState("")
   const [addValue, setAddValue] = useState("")
   const [addIsSecret, setAddIsSecret] = useState(false)
+  const [addMultiline, setAddMultiline] = useState(false)
+  const [addFieldKey, setAddFieldKey] = useState(0)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState("")
 
@@ -171,7 +185,8 @@ function EnvSection({ appId }: { appId: string }) {
     try {
       if (addIsSecret) await api.env.putSecret(appId, addKey.trim(), addValue.trim())
       else await api.env.putVar(appId, addKey.trim(), addValue.trim())
-      setAddKey(""); setAddValue(""); setAddIsSecret(false)
+      setAddKey(""); setAddValue(""); setAddIsSecret(false); setAddMultiline(false)
+      setAddFieldKey((k) => k + 1) // remount EnvValueField so its internal multiline state resets
       await loadEnv()
     } catch (e: unknown) {
       setAddError(e instanceof Error ? e.message : "Failed to add")
@@ -209,21 +224,44 @@ function EnvSection({ appId }: { appId: string }) {
             </>
           )}
           <div className="flex flex-col gap-3 pt-4">
-            <div className="flex items-center gap-2">
-              <Input className="h-8 text-xs font-mono w-48 shrink-0" placeholder="KEY"
-                value={addKey} onChange={(e) => setAddKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))} />
-              <Input className="h-8 text-xs font-mono flex-1" placeholder="value"
-                type={addIsSecret ? "password" : "text"} value={addValue}
-                onChange={(e) => setAddValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleAdd() }} />
-              <Button type="button" size="sm" variant={addIsSecret ? "secondary" : "outline"}
-                className={cn("h-8 shrink-0 text-xs", addIsSecret && "bg-warning-soft text-warning-text ring-1 ring-inset ring-warning-line")}
-                onClick={() => setAddIsSecret((v) => !v)}>Secret</Button>
-              <Button type="button" size="sm" className="h-8 shrink-0"
+            <div className={cn("flex gap-2", addMultiline ? "flex-col items-stretch" : "items-center")}>
+              <div className={cn("flex items-center gap-2", addMultiline && "justify-between")}>
+                <Input className="h-8 text-xs font-mono w-48 shrink-0" placeholder="KEY"
+                  value={addKey} onChange={(e) => setAddKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))} />
+                {addMultiline && (
+                  <Button type="button" size="sm" variant={addIsSecret ? "secondary" : "outline"}
+                    className={cn("h-8 shrink-0 text-xs", addIsSecret && "bg-warning-soft text-warning-text ring-1 ring-inset ring-warning-line")}
+                    onClick={() => setAddIsSecret((v) => !v)}>Secret</Button>
+                )}
+              </div>
+              <EnvValueField
+                key={addFieldKey}
+                value={addValue}
+                onChange={setAddValue}
+                isSecret={addIsSecret}
+                placeholder="value"
+                className="h-8"
+                onEnter={handleAdd}
+                onMultilineChange={setAddMultiline}
+              />
+              {!addMultiline && (
+                <>
+                  <Button type="button" size="sm" variant={addIsSecret ? "secondary" : "outline"}
+                    className={cn("h-8 shrink-0 text-xs", addIsSecret && "bg-warning-soft text-warning-text ring-1 ring-inset ring-warning-line")}
+                    onClick={() => setAddIsSecret((v) => !v)}>Secret</Button>
+                  <Button type="button" size="sm" className="h-8 shrink-0"
+                    disabled={!addKey.trim() || !addValue.trim() || adding} onClick={handleAdd}>
+                    {adding ? "Adding…" : "Add"}
+                  </Button>
+                </>
+              )}
+            </div>
+            {addMultiline && (
+              <Button type="button" size="sm" className="w-fit self-end"
                 disabled={!addKey.trim() || !addValue.trim() || adding} onClick={handleAdd}>
                 {adding ? "Adding…" : "Add"}
               </Button>
-            </div>
+            )}
             {addError && <p className="text-xs text-destructive">{addError}</p>}
           </div>
         </>
