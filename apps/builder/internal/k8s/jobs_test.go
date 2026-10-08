@@ -379,7 +379,6 @@ func TestBuildJob_CANETTECONFIGEncoding(t *testing.T) {
 	}
 }
 
-
 func TestBuildJob_SecurityContext(t *testing.T) {
 	job := BuildJob(
 		testDeploymentID, testProjectSlug, testAppSlug, testCommitSha,

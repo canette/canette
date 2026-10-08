@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,14 +19,13 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
-	"go.uber.org/zap"
 
-	"canette.dev/lib/crypto"
 	"canette.dev/builder/internal/githubapp"
 	k8sjobs "canette.dev/builder/internal/k8s"
 	"canette.dev/builder/internal/registry"
 	"canette.dev/builder/internal/scanner"
 	"canette.dev/builder/internal/store"
+	"canette.dev/lib/crypto"
 )
 
 func base64Decode(s string) ([]byte, error) {
@@ -47,16 +47,16 @@ type Storer interface {
 }
 
 type Builder struct {
-	store          Storer
-	k8s            kubernetes.Interface
-	cfg            k8sjobs.BuildConfig
-	cryptoKey      []byte
-	log            *zap.Logger
-	pollInterval   time.Duration
-	maxConcurrent  int
-	registryConfig registry.Config
-	scanProvider   scanner.Provider
-	scanProviderName  string // resolved provider name, used for MarkScanning job name
+	store            Storer
+	k8s              kubernetes.Interface
+	cfg              k8sjobs.BuildConfig
+	cryptoKey        []byte
+	log              *zap.Logger
+	pollInterval     time.Duration
+	maxConcurrent    int
+	registryConfig   registry.Config
+	scanProvider     scanner.Provider
+	scanProviderName string // resolved provider name, used for MarkScanning job name
 }
 
 // New creates a Builder.
@@ -99,7 +99,7 @@ func New(
 			ImageRepo: cfg.ImageRepo,
 			AuthType:  cfg.RegistryAuthType,
 		},
-		scanProvider:  scanProvider,
+		scanProvider:     scanProvider,
 		scanProviderName: providerName,
 	}
 }
@@ -443,7 +443,10 @@ func (b *Builder) streamContainerLogs(ctx context.Context, log *zap.Logger, depl
 	// Retry opening the log stream — the container may not have started yet
 	// even though the pod exists (especially for image-build after git-clone finishes).
 	const maxAttempts = 15
-	var stream interface{ Read([]byte) (int, error); Close() error }
+	var stream interface {
+		Read([]byte) (int, error)
+		Close() error
+	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if ctx.Err() != nil {
 			return ctx.Err()

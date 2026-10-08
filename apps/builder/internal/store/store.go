@@ -190,7 +190,6 @@ func (s *Store) UpdateCommitSha(ctx context.Context, deploymentID, sha string) e
 	return nil
 }
 
-
 // MarkScanning transitions building → scanning and records the scan job name.
 func (s *Store) MarkScanning(ctx context.Context, deploymentID, scanJobName string) error {
 	now := time.Now().UTC()

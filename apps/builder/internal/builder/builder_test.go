@@ -18,16 +18,16 @@ func newTestBuilder(imageRepo, registryAuthType string) *Builder {
 			ImageRepo:        imageRepo,
 			RegistryAuthType: registryAuthType,
 		},
-		nil,                    // cryptoKey
+		nil, // cryptoKey
 		zap.NewNop(),
 		time.Second,
 		1,
-		scanner.Config{},       // empty → NoneProvider
+		scanner.Config{}, // empty → NoneProvider
 	)
 }
 
 func TestRegistryAuthTypeResolution(t *testing.T) {
-	ecrRepo    := "123456789012.dkr.ecr.us-east-1.amazonaws.com/canette/"
+	ecrRepo := "123456789012.dkr.ecr.us-east-1.amazonaws.com/canette/"
 	genericRepo := "registry.example.com/canette/"
 
 	tests := []struct {

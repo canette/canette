@@ -175,10 +175,10 @@ func (p *TrivyProvider) buildJob(deploymentID, imageRef, jobName string) *batchv
 	backoff := int32(0)
 
 	jobLabels := map[string]string{
-		libk8s.LabelManagedBy:          libk8s.LabelManagedByVal,
-		"app.kubernetes.io/name":        "canette-builder",
-		libk8s.LabelComponent:          "builder",
-		libk8s.LabelDeployment:         deploymentID,
+		libk8s.LabelManagedBy:    libk8s.LabelManagedByVal,
+		"app.kubernetes.io/name": "canette-builder",
+		libk8s.LabelComponent:    "builder",
+		libk8s.LabelDeployment:   deploymentID,
 	}
 
 	volumeMounts := []corev1.VolumeMount{

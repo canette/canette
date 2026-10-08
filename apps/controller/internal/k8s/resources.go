@@ -88,7 +88,7 @@ type DeployConfig struct {
 	CommitSha            string   // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
 	DeploymentID         string   // deployments.id row that triggered this apply, surfaced as an annotation
 	PasswordGate         PasswordGateConfig
-	AuthgateImage        string // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
+	AuthgateImage        string           // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
 	Healthcheck          *HealthcheckSpec // nil when canette.yaml has no healthcheck block
 }
 

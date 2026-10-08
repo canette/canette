@@ -5,10 +5,10 @@ const (
 	LabelManagedBy    = "app.kubernetes.io/managed-by"
 	LabelManagedByVal = "canette"
 
-	LabelProject   = "canette.dev/project"
-	LabelProjectID = "canette.dev/project-id"
-	LabelApp       = "canette.dev/app"
-	LabelComponent = "canette.dev/component"
+	LabelProject    = "canette.dev/project"
+	LabelProjectID  = "canette.dev/project-id"
+	LabelApp        = "canette.dev/app"
+	LabelComponent  = "canette.dev/component"
 	LabelDeployment = "canette.dev/deployment"
 
 	AnnotDeploymentID = "canette.dev/deployment-id"
