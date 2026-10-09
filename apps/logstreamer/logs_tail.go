@@ -44,7 +44,7 @@ type tailResponse struct {
 }
 
 // logsTailHandler serves GET /logs/tail?project_id=&project_slug=&app=&deployment_id=&lines=&previous=.
-// Unlike /stream it is a one-shot, non-following read meant for programmatic
+// Unlike /logs/stream it is a one-shot, non-following read meant for programmatic
 // diagnostics (the API's MCP tools): it picks the app's newest pod in any
 // phase, returns its status alongside the last N log lines, and — when the
 // current container has no logs because it is crash-looping — falls back to

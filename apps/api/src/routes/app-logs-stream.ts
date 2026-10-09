@@ -20,7 +20,7 @@ appLogsStreamRouter.get("/apps/:id/logs/stream", async (c) => {
 
   const base = process.env.LOGSTREAMER_URL ?? "http://localhost:8080"
   const typeParam = appNs.deploymentType === "cronjob" ? "&type=cronjob" : ""
-  const url = `${base}/stream?project_id=${encodeURIComponent(appNs.projectId)}&project_slug=${encodeURIComponent(appNs.projectSlug)}&app=${encodeURIComponent(appNs.appSlug)}${typeParam}`
+  const url = `${base}/logs/stream?project_id=${encodeURIComponent(appNs.projectId)}&project_slug=${encodeURIComponent(appNs.projectSlug)}&app=${encodeURIComponent(appNs.appSlug)}${typeParam}`
 
   const secret = process.env.LOGSTREAMER_SECRET ?? ""
   const upstream = await fetch(url, {

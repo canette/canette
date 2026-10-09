@@ -103,7 +103,7 @@ func newMux(log *zap.Logger, client kubernetes.Interface, metricsClient rest.Int
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.Handle("GET /stream", requireSecret(secret, streamHandler(log, client)))
+	mux.Handle("GET /logs/stream", requireSecret(secret, streamHandler(log, client)))
 	mux.Handle("GET /logs/tail", requireSecret(secret, logsTailHandler(log, client)))
 	mux.Handle("GET /metrics/usage", requireSecret(secret, metricsUsageHandler(log, client, metricsClient)))
 	mux.Handle("GET /metrics/timeseries", requireSecret(secret, timeseriesHandler(log, promClient)))
