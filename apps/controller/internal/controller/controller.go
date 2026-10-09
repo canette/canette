@@ -3,6 +3,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	k8sres "canette.dev/controller/internal/k8s"
 	"canette.dev/controller/internal/store"
+	libk8s "canette.dev/lib/k8s"
 )
 
 // Config holds operator-level configuration.
@@ -151,11 +153,18 @@ func (c *Controller) processPending(ctx context.Context) error {
 	} else {
 		for _, vd := range volDels {
 			go func(d store.PendingVolumeDeletion) {
-				if err := k8sres.DeleteVolumeResource(ctx, c.dynClient, d.ResourceType, d.Namespace, d.ResourceName); err != nil {
+				ns, kind, name, err := resolveVolumeDeletion(d)
+				if err != nil {
+					// Can't happen with the table's CHECK constraints; the claim
+					// expires and the row is retried (and logged) again later.
+					c.log.Error("invalid volume deletion row", zap.String("id", d.ID), zap.Error(err))
+					return
+				}
+				if err := k8sres.DeleteVolumeResource(ctx, c.dynClient, kind, ns, name); err != nil {
 					c.log.Warn("volume deletion error",
-						zap.String("resource_type", d.ResourceType),
-						zap.String("namespace", d.Namespace),
-						zap.String("name", d.ResourceName),
+						zap.String("resource_type", kind),
+						zap.String("namespace", ns),
+						zap.String("name", name),
 						zap.Error(err))
 					return // will retry next poll
 				}
@@ -163,14 +172,28 @@ func (c *Controller) processPending(ctx context.Context) error {
 					c.log.Warn("mark volume deleted error", zap.Error(err))
 				}
 				c.log.Info("volume resource deleted",
-					zap.String("resource_type", d.ResourceType),
-					zap.String("namespace", d.Namespace),
-					zap.String("name", d.ResourceName))
+					zap.String("resource_type", kind),
+					zap.String("namespace", ns),
+					zap.String("name", name))
 			}(vd)
 		}
 	}
 
 	return nil
+}
+
+// resolveVolumeDeletion maps a queued volume deletion to the namespace, kind
+// and name of the K8s resource to delete, using the same naming helpers that
+// created it. Legacy rows (queued before migration 000018) are already resolved.
+func resolveVolumeDeletion(d store.PendingVolumeDeletion) (namespace, kind, name string, err error) {
+	if d.LegacyNamespace != "" {
+		return d.LegacyNamespace, d.LegacyResourceType, d.LegacyResourceName, nil
+	}
+	kind, name, ok := libk8s.VolumeResource(d.AppSlug, d.VolumeName, d.VolumeType)
+	if !ok {
+		return "", "", "", fmt.Errorf("volume type %q has no K8s resource to delete", d.VolumeType)
+	}
+	return libk8s.AppNamespace(d.ProjectID, d.ProjectSlug), kind, name, nil
 }
 
 // buildDeployConfig translates store+config into k8s.DeployConfig.

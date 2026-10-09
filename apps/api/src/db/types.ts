@@ -209,9 +209,15 @@ export interface Database {
 
   pending_volume_deletions: {
     id: string
-    namespace: string
-    resource_type: string
-    resource_name: string
+    project_id: string | null
+    project_slug: string | null
+    app_slug: string | null
+    volume_name: string | null
+    volume_type: string | null
+    // Legacy (pre-000018) shape — the API no longer writes these.
+    namespace: string | null
+    resource_type: string | null
+    resource_name: string | null
     created_at: string
     claimed_at: string | null
   }

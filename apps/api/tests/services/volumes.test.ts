@@ -125,10 +125,16 @@ describe("services/volumes", () => {
     const pending = await db
       .selectFrom("pending_volume_deletions")
       .selectAll()
-      .where("resource_name", "=", `${app.slug}-data`)
+      .where("app_slug", "=", app.slug)
       .executeTakeFirst()
     expect(pending).toBeDefined()
-    expect(pending?.resource_type).toBe("PersistentVolumeClaim")
+    expect(pending?.project_id).toBe(app.projectId)
+    expect(pending?.project_slug).toBeTruthy()
+    expect(pending?.volume_name).toBe("data")
+    expect(pending?.volume_type).toBe("pvc")
+    // The API must not compute K8s names — the controller resolves them.
+    expect(pending?.namespace).toBeNull()
+    expect(pending?.resource_name).toBeNull()
   })
 
   it("deletes an emptyDir volume without queuing pending deletion", async () => {
@@ -145,7 +151,7 @@ describe("services/volumes", () => {
     const count = await db
       .selectFrom("pending_volume_deletions")
       .select(db.fn.countAll<number>().as("n"))
-      .where("namespace", "like", "%-delete-emptydir-app")
+      .where("app_slug", "=", app.slug)
       .executeTakeFirst()
     expect(Number(count?.n ?? 0)).toBe(0)
   })
@@ -273,8 +279,9 @@ describe("services/volumes", () => {
     const pending = await db
       .selectFrom("pending_volume_deletions")
       .selectAll()
-      .where("resource_name", "=", `${app.slug}-etc-app-conf-cfg`)
+      .where("app_slug", "=", app.slug)
       .executeTakeFirst()
-    expect(pending?.resource_type).toBe("ConfigMap")
+    expect(pending?.volume_name).toBe("etc-app-conf")
+    expect(pending?.volume_type).toBe("configmap")
   })
 })

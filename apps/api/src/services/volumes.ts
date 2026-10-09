@@ -122,22 +122,18 @@ function validateConfigMapContent(content: unknown): asserts content is string {
   }
 }
 
-// k8sResourceName returns the K8s name for the given volume.
-// PVC:       {appSlug}-{volumeName}
-// ConfigMap: {appSlug}-{volumeName}-cfg
-// emptyDir:  no resource (returns empty string)
-function k8sResourceName(appSlug: string, volumeName: string, type: VolumeType): string {
-  if (type === "pvc") return `${appSlug}-${volumeName}`
-  if (type === "configmap") return `${appSlug}-${volumeName}-cfg`
-  return ""
-}
+// The controller derives each volume's K8s resource name from the app slug and
+// the volume name (see packages/golib/k8s/volumes.go). The longest form adds
+// this many characters on top of the two, and the result must fit the 63-char
+// DNS-1123 limit. This is a length budget only; the naming itself lives in Go.
+const VOLUME_RESOURCE_NAME_OVERHEAD = 5
+const K8S_NAME_MAX_LENGTH = 63
 
-// generateVolumeName derives a valid K8s name from the mount path. Returns null
-// when no truncation can produce a name that fits within the K8s 63-char DNS-1123
-// limit for the longest derived resource name (ConfigMap: {appSlug}-{name}-cfg).
+// generateVolumeName derives a valid volume name from the mount path. Returns
+// null when no truncation can keep the derived K8s resource names within the
+// 63-char limit.
 function generateVolumeName(mountPath: string, appSlug: string): string | null {
-  // "-cfg" (4) is the longest suffix; reserve appSlug + "-" + "-cfg" = appSlug.length + 5.
-  const maxLen = 63 - appSlug.length - 5
+  const maxLen = K8S_NAME_MAX_LENGTH - appSlug.length - VOLUME_RESOURCE_NAME_OVERHEAD
   if (maxLen < 1) return null
   const sanitised = mountPath
     .replace(/^\/+/, "")
@@ -147,13 +143,6 @@ function generateVolumeName(mountPath: string, appSlug: string): string | null {
     .slice(0, maxLen)
     .replace(/-+$/, "")
   return sanitised || "volume"
-}
-
-// appNamespace replicates the Go libk8s.AppNamespace logic: can-{id[:8]}-{slug[:50]}.
-// MUST stay in sync with apps/lib/k8s/AppNamespace — if you change the format here,
-// change it there too.
-function appNamespace(projectId: string, projectSlug: string): string {
-  return `can-${projectId.slice(0, 8)}-${projectSlug.slice(0, 50)}`
 }
 
 function isUniqueConstraintError(e: unknown): boolean {
@@ -366,7 +355,8 @@ export async function deleteVolume(
   const app = await getAppById(db, appId, userId)
   if (!app) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
-  // Pull the project slug now so we can compute the namespace inside the tx.
+  // The controller resolves the namespace and resource name from these
+  // domain identifiers; the API never computes K8s names itself.
   const project = await db
     .selectFrom("projects")
     .select(["id", "slug"])
@@ -388,16 +378,15 @@ export async function deleteVolume(
         // Should be impossible — we already loaded `app`, which requires a project row.
         throw new ServiceError("App project not found", "NOT_FOUND", 404)
       }
-      const ns = appNamespace(project.id, project.slug)
-      const resourceName = k8sResourceName(app.slug, volRow.name, type)
-      const resourceType = type === "pvc" ? "PersistentVolumeClaim" : "ConfigMap"
       await tx
         .insertInto("pending_volume_deletions")
         .values({
           id: crypto.randomUUID(),
-          namespace: ns,
-          resource_type: resourceType,
-          resource_name: resourceName,
+          project_id: project.id,
+          project_slug: project.slug,
+          app_slug: app.slug,
+          volume_name: volRow.name,
+          volume_type: type,
           created_at: new Date().toISOString(),
         })
         .execute()
