@@ -7,7 +7,7 @@ import { listApps, createApp, getAppById } from "./apps"
 import { createDeployment, listDeployments, getDeploymentLogs, getDeploymentById } from "./deployments"
 import { listTeams } from "./teams"
 import { listHostnames } from "./hostnames"
-import { getAppNamespace } from "./app-logs"
+import { getAppPodTarget } from "./app-logs"
 import { fetchFromLogstreamer } from "./logstreamer"
 import type { AppMetricsUsage, AppRuntimeLogs } from "@canette/types"
 
@@ -297,8 +297,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
       case "get_runtime_logs": {
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
-        const appNs = await getAppNamespace(db, appId, userId)
-        if (!appNs) return err("App not found or access denied")
+        const podTarget = await getAppPodTarget(db, appId, userId)
+        if (!podTarget) return err("App not found or access denied")
 
         const lines = argNum(args, "lines") ?? DEFAULT_LOG_LINES
         if (!Number.isInteger(lines) || lines < 1) return err("lines must be a positive integer")
@@ -314,7 +314,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
 
         // Not scoped to the live deployment: a rollout that crash-loops never
         // becomes live, and its pod is exactly the one worth looking at.
-        const result = await fetchFromLogstreamer<AppRuntimeLogs>("/logs/tail", appNs, params, {
+        const result = await fetchFromLogstreamer<AppRuntimeLogs>("/logs/tail", podTarget, params, {
           scopeToLiveDeployment: false,
         })
         if (!result) return err("Could not reach the log service — try again shortly")
@@ -335,9 +335,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
       case "get_app_metrics": {
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
-        const appNs = await getAppNamespace(db, appId, userId)
-        if (!appNs) return err("App not found or access denied")
-        const usage = await fetchFromLogstreamer<AppMetricsUsage>("/metrics/usage", appNs)
+        const podTarget = await getAppPodTarget(db, appId, userId)
+        if (!podTarget) return err("App not found or access denied")
+        const usage = await fetchFromLogstreamer<AppMetricsUsage>("/metrics/usage", podTarget)
         if (!usage) return err("Could not reach the metrics service — try again shortly")
         return ok(usage)
       }

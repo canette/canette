@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import { db } from "../db/db"
 import { requireAuth } from "../middleware/require-auth"
 import type { AppEnv } from "../types"
-import { getAppNamespace } from "../services/app-logs"
+import { getAppPodTarget } from "../services/app-logs"
 import { fetchFromLogstreamer } from "../services/logstreamer"
 import type { AppMetricsTimeseries, AppMetricsUsage } from "@canette/types"
 
@@ -15,10 +15,10 @@ appMetricsRouter.use("*", requireAuth)
 appMetricsRouter.get("/apps/:id/metrics/usage", async (c) => {
   const session = c.get("session")
 
-  const appNs = await getAppNamespace(db, c.req.param("id"), session.user.id)
-  if (!appNs) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  const podTarget = await getAppPodTarget(db, c.req.param("id"), session.user.id)
+  if (!podTarget) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
 
-  const body = await fetchFromLogstreamer<AppMetricsUsage>("/metrics/usage", appNs)
+  const body = await fetchFromLogstreamer<AppMetricsUsage>("/metrics/usage", podTarget)
   if (!body) return c.json({ error: "Failed to fetch metrics", code: "UPSTREAM_ERROR" }, 502)
   return c.json(body)
 })
@@ -31,10 +31,10 @@ appMetricsRouter.get("/apps/:id/metrics/usage", async (c) => {
 appMetricsRouter.get("/apps/:id/metrics/timeseries", async (c) => {
   const session = c.get("session")
 
-  const appNs = await getAppNamespace(db, c.req.param("id"), session.user.id)
-  if (!appNs) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  const podTarget = await getAppPodTarget(db, c.req.param("id"), session.user.id)
+  if (!podTarget) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
 
-  const body = await fetchFromLogstreamer<AppMetricsTimeseries>("/metrics/timeseries", appNs)
+  const body = await fetchFromLogstreamer<AppMetricsTimeseries>("/metrics/timeseries", podTarget)
   if (!body) return c.json({ error: "Failed to fetch metrics", code: "UPSTREAM_ERROR" }, 502)
   return c.json(body)
 })

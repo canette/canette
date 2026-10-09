@@ -1,18 +1,23 @@
 import type { DB } from "../db/db"
 
-// getAppForLogStream returns the identifiers needed to proxy log streams.
-// Returns null if the user does not have access to the app.
-export async function getAppNamespace(
-  db: DB,
-  appId: string,
-  userId: string
-): Promise<{
+// AppPodTarget identifies an app's pods for the logstreamer, which derives
+// the Kubernetes namespace from projectId + projectSlug itself.
+export interface AppPodTarget {
   appSlug: string
   projectId: string
   projectSlug: string
   deploymentType: string
   liveDeploymentId: string | null
-} | null> {
+}
+
+// getAppPodTarget returns what the logstreamer needs to locate an app's pods
+// (log stream/tail, metrics). Returns null if the user does not have access
+// to the app.
+export async function getAppPodTarget(
+  db: DB,
+  appId: string,
+  userId: string
+): Promise<AppPodTarget | null> {
   const row = await db
     .selectFrom("apps as a")
     .innerJoin("projects as p", "p.id", "a.project_id")

@@ -1,6 +1,4 @@
-import type { getAppNamespace } from "./app-logs"
-
-type AppNamespace = NonNullable<Awaited<ReturnType<typeof getAppNamespace>>>
+import type { AppPodTarget } from "./app-logs"
 
 // fetchFromLogstreamer calls a JSON endpoint on the internal logstreamer
 // service for one app. By default pod lookups are scoped to the app's current
@@ -11,19 +9,19 @@ type AppNamespace = NonNullable<Awaited<ReturnType<typeof getAppNamespace>>>
 // for MCP).
 export async function fetchFromLogstreamer<T>(
   path: string,
-  appNs: AppNamespace,
+  target: AppPodTarget,
   params: Record<string, string> = {},
   { scopeToLiveDeployment = true }: { scopeToLiveDeployment?: boolean } = {}
 ): Promise<T | null> {
   const base = process.env.LOGSTREAMER_URL ?? "http://localhost:8080"
   const query = new URLSearchParams({
-    project_id: appNs.projectId,
-    project_slug: appNs.projectSlug,
-    app: appNs.appSlug,
+    project_id: target.projectId,
+    project_slug: target.projectSlug,
+    app: target.appSlug,
     // Scopes pod lookups to the app's current deployment so a leftover pod
     // from a previous, still-terminating deployment isn't reported as if it
     // belonged to the current one.
-    ...(scopeToLiveDeployment && appNs.liveDeploymentId ? { deployment_id: appNs.liveDeploymentId } : {}),
+    ...(scopeToLiveDeployment && target.liveDeploymentId ? { deployment_id: target.liveDeploymentId } : {}),
     ...params,
   })
 

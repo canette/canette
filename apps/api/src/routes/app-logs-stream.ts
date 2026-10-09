@@ -3,7 +3,7 @@ import { stream } from "hono/streaming"
 import { db } from "../db/db"
 import { requireAuth } from "../middleware/require-auth"
 import type { AppEnv } from "../types"
-import { getAppNamespace } from "../services/app-logs"
+import { getAppPodTarget } from "../services/app-logs"
 
 export const appLogsStreamRouter = new Hono<AppEnv>()
 
@@ -15,12 +15,12 @@ appLogsStreamRouter.use("*", requireAuth)
 appLogsStreamRouter.get("/apps/:id/logs/stream", async (c) => {
   const session = c.get("session")
 
-  const appNs = await getAppNamespace(db, c.req.param("id"), session.user.id)
-  if (!appNs) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
+  const podTarget = await getAppPodTarget(db, c.req.param("id"), session.user.id)
+  if (!podTarget) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
 
   const base = process.env.LOGSTREAMER_URL ?? "http://localhost:8080"
-  const typeParam = appNs.deploymentType === "cronjob" ? "&type=cronjob" : ""
-  const url = `${base}/logs/stream?project_id=${encodeURIComponent(appNs.projectId)}&project_slug=${encodeURIComponent(appNs.projectSlug)}&app=${encodeURIComponent(appNs.appSlug)}${typeParam}`
+  const typeParam = podTarget.deploymentType === "cronjob" ? "&type=cronjob" : ""
+  const url = `${base}/logs/stream?project_id=${encodeURIComponent(podTarget.projectId)}&project_slug=${encodeURIComponent(podTarget.projectSlug)}&app=${encodeURIComponent(podTarget.appSlug)}${typeParam}`
 
   const secret = process.env.LOGSTREAMER_SECRET ?? ""
   const upstream = await fetch(url, {
