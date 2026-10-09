@@ -614,12 +614,23 @@ func (s *Store) MarkNamespaceDeleted(ctx context.Context, id string) error {
 	return nil
 }
 
-// PendingVolumeDeletion holds the details of a K8s volume resource queued for deletion.
+// PendingVolumeDeletion holds the domain identifiers of a volume whose K8s
+// resource is queued for deletion. The controller resolves them to a namespace
+// and resource name via packages/golib/k8s.
+//
+// Rows queued before migration 000018 carry the already-resolved Legacy*
+// fields instead (and empty domain fields).
 type PendingVolumeDeletion struct {
-	ID           string
-	Namespace    string
-	ResourceType string // "PersistentVolumeClaim" | "ConfigMap"
-	ResourceName string
+	ID          string
+	ProjectID   string
+	ProjectSlug string
+	AppSlug     string
+	VolumeName  string
+	VolumeType  string // "pvc" | "configmap"
+
+	LegacyNamespace    string
+	LegacyResourceType string // "PersistentVolumeClaim" | "ConfigMap"
+	LegacyResourceName string
 }
 
 // volumeDeletionClaimTTL bounds how long a claimed row stays "in flight" before
@@ -645,7 +656,10 @@ func (s *Store) ClaimVolumeDeletions(ctx context.Context, limit int) ([]PendingV
 			LIMIT $3
 			FOR UPDATE SKIP LOCKED
 		)
-		RETURNING id, namespace, resource_type, resource_name`,
+		RETURNING id,
+			COALESCE(project_id, ''), COALESCE(project_slug, ''), COALESCE(app_slug, ''),
+			COALESCE(volume_name, ''), COALESCE(volume_type, ''),
+			COALESCE(namespace, ''), COALESCE(resource_type, ''), COALESCE(resource_name, '')`,
 		now, staleBefore, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query volume deletions: %w", err)
@@ -655,7 +669,9 @@ func (s *Store) ClaimVolumeDeletions(ctx context.Context, limit int) ([]PendingV
 	var dels []PendingVolumeDeletion
 	for rows.Next() {
 		var d PendingVolumeDeletion
-		if err := rows.Scan(&d.ID, &d.Namespace, &d.ResourceType, &d.ResourceName); err != nil {
+		if err := rows.Scan(&d.ID,
+			&d.ProjectID, &d.ProjectSlug, &d.AppSlug, &d.VolumeName, &d.VolumeType,
+			&d.LegacyNamespace, &d.LegacyResourceType, &d.LegacyResourceName); err != nil {
 			return nil, fmt.Errorf("scan volume deletion row: %w", err)
 		}
 		dels = append(dels, d)

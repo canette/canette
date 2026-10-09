@@ -401,7 +401,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 	for _, v := range cfg.Volumes {
 		switch v.Type {
 		case "pvc":
-			pvcName := cfg.AppSlug + "-" + v.Name
+			pvcName := libk8s.PVCName(cfg.AppSlug, v.Name)
 			pvcs = append(pvcs, map[string]interface{}{
 				"apiVersion": "v1",
 				"kind":       "PersistentVolumeClaim",
@@ -438,7 +438,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 			})
 
 		case "configmap":
-			cmName := cfg.AppSlug + "-" + v.Name + "-cfg"
+			cmName := libk8s.VolumeConfigMapName(cfg.AppSlug, v.Name)
 			filename := path.Base(v.MountPath)
 			configMaps = append(configMaps, map[string]interface{}{
 				"apiVersion": "v1",
