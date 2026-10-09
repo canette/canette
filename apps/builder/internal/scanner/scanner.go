@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	corev1 "k8s.io/api/core/v1"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 )
 

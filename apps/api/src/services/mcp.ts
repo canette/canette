@@ -6,6 +6,13 @@ import { listProjects, createProject, getProjectByRef } from "./projects"
 import { listApps, createApp, getAppById } from "./apps"
 import { createDeployment, listDeployments, getDeploymentLogs, getDeploymentById } from "./deployments"
 import { listTeams } from "./teams"
+import { listHostnames } from "./hostnames"
+import { getAppPodTarget } from "./app-logs"
+import { fetchFromLogstreamer } from "./logstreamer"
+import type { AppMetricsUsage, AppRuntimeLogs } from "@canette/types"
+
+const DEFAULT_LOG_LINES = 100
+const MAX_LOG_LINES = 1000
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -100,6 +107,48 @@ export const TOOLS = [
       required: ["deployment_id"],
     },
   },
+  {
+    name: "get_app",
+    description:
+      "Get an app's configuration and current state: live URL, custom hostnames, latest deployment (status and error), and runtime health. Start here when checking whether an app is up.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+      },
+      required: ["app_id"],
+    },
+  },
+  {
+    name: "get_runtime_logs",
+    description:
+      "Get recent logs from the app's running container (not the build). Returns the newest pod's status (phase, ready, restarts, waiting reason such as CrashLoopBackOff, last exit code) plus its last log lines. If the container is crash-looping, logs from the previous crashed instance are returned automatically. Use this when a deployment built fine but the app fails to start or misbehaves. For cronjob apps, returns the most recent run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        lines: { type: "number", description: `Number of log lines to return (default ${DEFAULT_LOG_LINES}, max ${MAX_LOG_LINES})` },
+        previous: { type: "boolean", description: "Force logs from the previous (crashed) container instance" },
+        deployment_id: {
+          type: "string",
+          description: "Only look at pods of this deployment (default: the app's newest pod, whichever deployment it belongs to)",
+        },
+      },
+      required: ["app_id"],
+    },
+  },
+  {
+    name: "get_app_metrics",
+    description:
+      "Get current runtime metrics for the app's live deployment: per-pod ready state, restart count, last termination reason (e.g. OOMKilled) and CPU/memory usage against requests/limits. CPU/memory usage requires metrics-server on the cluster; usageAvailable is false when it is missing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+      },
+      required: ["app_id"],
+    },
+  },
 ]
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -120,6 +169,14 @@ function err(message: string): ToolResult {
 function arg(args: Record<string, unknown>, key: string): string | undefined {
   const v = args[key]
   return typeof v === "string" ? v : undefined
+}
+
+function argBool(args: Record<string, unknown>, key: string): boolean | undefined {
+  const v = args[key]
+  if (typeof v === "boolean") return v
+  if (v === "true") return true
+  if (v === "false") return false
+  return undefined
 }
 
 function argNum(args: Record<string, unknown>, key: string): number | undefined {
@@ -223,6 +280,66 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!logs.length) return ok({ message: "No build logs found (image-based deployments skip the build stage)" })
         const text = logs.map((l) => l.line).join("\n")
         return { content: [{ type: "text", text }] }
+      }
+
+      case "get_app": {
+        const appId = arg(args, "app_id")
+        if (!appId) return err("app_id is required")
+        const app = await getAppById(db, appId, userId)
+        if (!app) return err("App not found or access denied")
+        const [hostnames, { items }] = await Promise.all([
+          listHostnames(db, appId),
+          listDeployments(db, appId, 1),
+        ])
+        return ok({ ...app, hostnames: hostnames.map((h) => h.hostname), latestDeployment: items[0] ?? null })
+      }
+
+      case "get_runtime_logs": {
+        const appId = arg(args, "app_id")
+        if (!appId) return err("app_id is required")
+        const podTarget = await getAppPodTarget(db, appId, userId)
+        if (!podTarget) return err("App not found or access denied")
+
+        const lines = argNum(args, "lines") ?? DEFAULT_LOG_LINES
+        if (!Number.isInteger(lines) || lines < 1) return err("lines must be a positive integer")
+        const params: Record<string, string> = { lines: String(Math.min(lines, MAX_LOG_LINES)) }
+        if (argBool(args, "previous")) params.previous = "true"
+
+        const deploymentId = arg(args, "deployment_id")
+        if (deploymentId) {
+          const deployment = await getDeploymentById(db, deploymentId, userId)
+          if (!deployment || deployment.appId !== appId) return err("Deployment not found for this app")
+          params.deployment_id = deploymentId
+        }
+
+        // Not scoped to the live deployment: a rollout that crash-loops never
+        // becomes live, and its pod is exactly the one worth looking at.
+        const result = await fetchFromLogstreamer<AppRuntimeLogs>("/logs/tail", podTarget, params, {
+          scopeToLiveDeployment: false,
+        })
+        if (!result) return err("Could not reach the log service — try again shortly")
+        if (!result.found) {
+          return ok({
+            message: "No pods found for this app — it may not be deployed yet, be stopped, or (for cronjobs) not have run yet",
+          })
+        }
+        const { logs, ...status } = result
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(status, null, 2) },
+            { type: "text", text: logs || "(no log output)" },
+          ],
+        }
+      }
+
+      case "get_app_metrics": {
+        const appId = arg(args, "app_id")
+        if (!appId) return err("app_id is required")
+        const podTarget = await getAppPodTarget(db, appId, userId)
+        if (!podTarget) return err("App not found or access denied")
+        const usage = await fetchFromLogstreamer<AppMetricsUsage>("/metrics/usage", podTarget)
+        if (!usage) return err("Could not reach the metrics service — try again shortly")
+        return ok(usage)
       }
 
       default:

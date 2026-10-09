@@ -72,6 +72,9 @@ The MCP server uses standard OAuth 2.1 with PKCE. You do not need to create or m
 | `list_deployments` | List recent deployments for an app — use this to find a `deployment_id` when troubleshooting a deployment not triggered in this session |
 | `get_deployment` | Get the status and details of a deployment — provide `app_id` for the latest, or `deployment_id` for a specific one |
 | `get_build_logs` | Fetch full build logs for a deployment — useful for diagnosing build failures |
+| `get_app` | Get an app's current state — live URL, custom hostnames, latest deployment and runtime health |
+| `get_runtime_logs` | Fetch recent logs and pod status (restarts, `CrashLoopBackOff`, exit code) from the running app. Automatically returns the crashed container's logs when the app is crash-looping |
+| `get_app_metrics` | Get per-pod readiness, restarts, last termination reason (e.g. `OOMKilled`) and CPU/memory usage. Usage requires metrics-server on the cluster |
 
 ### Example prompts
 
@@ -84,6 +87,11 @@ The agent will create a project, create an app pointing at the repository, and t
 > "My canette app `my-app` is failing to deploy — what's wrong?"
 
 The agent will fetch the latest deployment status and build logs, then explain the error.
+
+**Debugging a running app:**
+> "`my-app` deployed but returns 502 — why?"
+
+The agent will check the app's state, read the runtime logs and pod status (including the output of a crashed container), and look at memory usage to spot an `OOMKilled` restart.
 
 ## Prerequisites
 

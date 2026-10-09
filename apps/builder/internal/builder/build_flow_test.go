@@ -45,9 +45,9 @@ func (f *fakeStore) GetGitCredential(_ context.Context, _ string) (*store.GitCre
 	return nil, nil
 }
 func (f *fakeStore) SetDeploymentCanetteConfig(_ context.Context, _, _ string) error { return nil }
-func (f *fakeStore) UpdateCommitSha(_ context.Context, _, _ string) error             { return nil }
-func (f *fakeStore) MarkScanning(_ context.Context, _, _ string) error                { return nil }
-func (f *fakeStore) SetScanResults(_ context.Context, _, _, _, _ string) error        { return nil }
+func (f *fakeStore) UpdateCommitSha(_ context.Context, _, _ string) error            { return nil }
+func (f *fakeStore) MarkScanning(_ context.Context, _, _ string) error               { return nil }
+func (f *fakeStore) SetScanResults(_ context.Context, _, _, _, _ string) error       { return nil }
 func (f *fakeStore) MarkDeploying(_ context.Context, id, _ string) error {
 	f.markedDeploy = append(f.markedDeploy, id)
 	return nil
@@ -95,7 +95,7 @@ func newBuildFlowBuilder(t *testing.T, fs *fakeStore, k8s *fake.Clientset, authT
 			GitInitImage:     "registry.example.com/canette-git-init:latest",
 			RegistryAuthType: authType,
 		},
-		nil,            // cryptoKey — not needed (no git credentials in these tests)
+		nil, // cryptoKey — not needed (no git credentials in these tests)
 		zap.NewNop(),
 		time.Second,
 		1,

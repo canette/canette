@@ -23,8 +23,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	libk8s "canette.dev/lib/k8s"
 	"canette.dev/lib/env"
+	libk8s "canette.dev/lib/k8s"
 )
 
 func main() {
@@ -103,7 +103,8 @@ func newMux(log *zap.Logger, client kubernetes.Interface, metricsClient rest.Int
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.Handle("GET /stream", requireSecret(secret, streamHandler(log, client)))
+	mux.Handle("GET /logs/stream", requireSecret(secret, streamHandler(log, client)))
+	mux.Handle("GET /logs/tail", requireSecret(secret, logsTailHandler(log, client)))
 	mux.Handle("GET /metrics/usage", requireSecret(secret, metricsUsageHandler(log, client, metricsClient)))
 	mux.Handle("GET /metrics/timeseries", requireSecret(secret, timeseriesHandler(log, promClient)))
 	return mux
@@ -411,4 +412,3 @@ func loadKubeConfig() (*rest.Config, error) {
 	kubeconfig := env.EnvOr("KUBECONFIG", clientcmd.RecommendedHomeFile)
 	return clientcmd.BuildConfigFromFlags("", kubeconfig)
 }
-

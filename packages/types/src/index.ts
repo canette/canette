@@ -280,6 +280,23 @@ export interface AppMetricsTimeseries {
   memoryBytes?: AppMetricsSeriesPoint[]
 }
 
+// AppRuntimeLogs is a one-shot tail of an app's newest pod (logstreamer
+// GET /logs/tail). found is false when the app has no pods at all.
+export interface AppRuntimeLogs {
+  found: boolean
+  pod?: string
+  phase?: string
+  ready: boolean
+  restarts: number
+  waitingReason?: string // e.g. "CrashLoopBackOff", "ImagePullBackOff"
+  lastTerminationReason?: string
+  lastExitCode?: number
+  // true when logs come from the previous (crashed) container instance
+  previous: boolean
+  logs: string
+  logsError?: string
+}
+
 // MetricsInfo is the read-only metrics config served from env vars (Helm values).
 export interface MetricsInfo {
   enabled: boolean

@@ -46,6 +46,9 @@ The controller reads desired state from the database and reconciles it with the 
 ### Gateway API only — no legacy Ingress
 canette generates `HTTPRoute` and `Gateway` resources. Never generate `networking.k8s.io/v1 Ingress` resources. The `gatewayClassName` comes from Helm values and is the only place implementation-specific knowledge lives.
 
+### Kubernetes naming lives in Go only
+Namespaces and K8s resource names are a Kubernetes concern and are computed only on the Go side, through `packages/golib/k8s` (e.g. `AppNamespace()`). The API never computes, stores or passes a namespace or K8s resource name. It works with domain identifiers (`project_id`, `project_slug`, `app_slug`, volume name, deployment ID), and the Go services resolve those to K8s names. Duplicating that logic in TypeScript means it can silently drift, which orphans resources. Examples of the right shape: `queued_namespace_cleanups` stores `project_id` + `project_slug`, and the API sends the logstreamer `project_id`/`project_slug`/`app`, never a namespace. Known violation still to fix: `apps/api/src/services/volumes.ts` (`appNamespace()`/`k8sResourceName()`), tracked in [canette/canette#233](https://github.com/canette/canette/issues/233). Do not add new ones.
+
 ### Database
 PostgreSQL via the `pg` npm package (TypeScript) and `jackc/pgx/v5` (Go). Never modify the schema without a migration file.
 
@@ -145,6 +148,7 @@ Auth is handled by `better-auth` embedded in the API server. Supported providers
 - The API proxies `GET /api/v1/apps/:id/logs/stream` and `GET /api/v1/apps/:id/metrics/usage` to it — the logstreamer is never exposed directly
 - Logs: on connection, polls for a `Running` pod with label `canette.dev/app=<appSlug>`, opens a following log stream, emits `event: log` SSE frames and `event: ping` keep-alives every 3 s. Logs are never stored — pure live stream, no database involvement
 - Metrics: `GET /metrics/usage` reads pod health (ready/restart count) and declared resources from the core Pods API (always available), and current CPU/memory usage from `metrics.k8s.io` (metrics-server) when installed — degrades gracefully (`usageAvailable: false`) when it isn't
+- `GET /logs/tail` is a one-shot, non-following counterpart to the SSE stream, used by the API's MCP tools (`get_runtime_logs`): returns JSON with the app's newest pod (any phase, optionally scoped by `deployment_id`), its status (ready/restarts/waiting reason/last exit) and the last N lines of the app container (never the authgate sidecar), falling back to the previous container instance when the current one is crash-looping. `found: false` with HTTP 200 when the app has no pods
 - `GET /metrics/timeseries` (Step 2 of [canette/canette#168](https://github.com/canette/canette/issues/168), implemented) additionally reads CPU/memory-over-time from an optional Prometheus-compatible query API (`apps/logstreamer/prometheus.go`) — a small bundled in-chart Prometheus (`metrics.prometheus.bundled`, no operator/CRDs, scrapes kubelet cAdvisor cluster-wide via the apiserver-proxy path) or a BYO `metrics.prometheus.externalUrl` (Prometheus/Thanos/Mimir/VictoriaMetrics all share the same PromQL HTTP API), with `externalUrl` taking precedence. Same graceful-degradation shape as `/metrics/usage`: returns `available: false` with HTTP 200 (never an error) whenever Prometheus isn't configured or a query fails, so the UI's stat tiles and charts silently fall back to the instant-only view. Queries are scoped with `namespace="<ns>", pod=~"<appSlug>-.*"` since a project namespace can host multiple apps and cAdvisor metrics carry no `canette.dev/*` labels — the Deployment name always equals the app slug, so this reliably isolates one app's pods. Step 3 (Traefik traffic adapter) is still future work
 - Authenticated via a shared secret (`LOGSTREAMER_SECRET`) passed as `Authorization: Bearer` — must match the value configured in the API
 - Restricted to in-cluster traffic only via NetworkPolicy (only the API pod may reach port 8080)
@@ -160,14 +164,14 @@ Auth is handled by `better-auth` embedded in the API server. Supported providers
 
 ## Database schema (current)
 
-Tables: `teams`, `team_members`, `projects`, `apps`, `deployments`, `build_logs`, `secrets`, `env_vars`, `app_volumes`, `pending_volume_deletions`, `app_hostnames`, `git_credentials`, `webhook_secrets`, `admin_settings`, `scan_sboms`, `pending_namespace_deletions`. Better-auth owns `user`, `session`, `account`, `verification` (note: `user` not `users`).
+Tables: `teams`, `team_members`, `projects`, `apps`, `deployments`, `build_logs`, `secrets`, `env_vars`, `app_volumes`, `pending_volume_deletions`, `app_hostnames`, `git_credentials`, `webhook_secrets`, `admin_settings`, `scan_sboms`, `queued_namespace_cleanups`. Better-auth owns `user`, `session`, `account`, `verification` (note: `user` not `users`).
 
 Ownership is team-based: every user gets a personal team at registration, projects/apps hang off a team, and `git_credentials` are scoped to a team (`teamId`, nullable for system-wide credentials) rather than an individual user. `git_credentials` columns: `id`, `team_id` (FK → teams, null for system credentials), `name`, `provider` enum(`github|gitlab|gitea|generic`), `type` enum(`pat|ssh_key|github_app`), `encrypted_value` (AES-256-GCM — stores the PAT token, SSH private key, or GitHub App private key), `installation_id`/`connected_by_user_id` (github_app type only), `created_at`. The `known_hosts` value for SSH credentials is not secret and is stored as plain text in a separate `ssh_known_hosts` column. Apps reference credentials via `apps.git_credential_id`.
 
 `app_volumes` columns: `id`, `app_id`, `name`, `type` enum(`pvc|emptyDir|configmap`), `mount_path`, `config` (JSON, shape depends on `type`), `created_at`, `updated_at` — unique on `(app_id, name)` and `(app_id, mount_path)`. Async PVC/ConfigMap cleanup goes through `pending_volume_deletions` (controller claims rows via `FOR UPDATE SKIP LOCKED`).
 
 Key invariants:
-- `projects.slug` — globally unique, lowercase alphanumeric + hyphens, max 50 chars. Used as part of the K8s namespace: `can-{id[:7]}-{slug}`. Immutable after creation (changing it would orphan all K8s resources).
+- `projects.slug` — globally unique, lowercase alphanumeric + hyphens, max 50 chars. Used as part of the K8s namespace: `can-{id[:8]}-{slug[:50]}` (computed only in Go by `AppNamespace()` in `packages/golib/k8s`). Immutable after creation (changing it would orphan all K8s resources).
 - `apps.slug` — unique within the project, lowercase alphanumeric + hyphens, max 63 chars. Used as the K8s container/resource name.
 - `apps.project_id` references `projects.id` — deleting a project cascades to apps
 - `apps.deployment_type` is an enum: `web | private | cronjob` — controls what K8s resources the controller generates (see Component responsibilities → controller); `cronjob` requires `apps.schedule` (cron expression)
@@ -350,6 +354,7 @@ JS/TS linting is **oxlint**, configured by a single `.oxlintrc.json` at the repo
 - Never write Go in `apps/api` or `apps/ui`
 - Never write TypeScript in `apps/controller` or `apps/builder`
 - Never hardcode a namespace — namespaces come from project config or Helm values
+- Never compute a Kubernetes namespace or resource name in `apps/api` or `apps/ui` — pass domain identifiers and let the Go services resolve them via `packages/golib/k8s`
 - Never skip HMAC validation on incoming webhooks
 - Never return a secret value from the API after it has been stored
 - Never run build jobs as root

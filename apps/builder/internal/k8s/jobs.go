@@ -76,8 +76,8 @@ func CreateRegistryAuthSecret(ctx context.Context, client kubernetes.Interface, 
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
-				libk8s.LabelComponent:  "builder",
+				libk8s.LabelManagedBy: libk8s.LabelManagedByVal,
+				libk8s.LabelComponent: "builder",
 			},
 		},
 		Type: corev1.SecretTypeDockerConfigJson,
@@ -96,7 +96,7 @@ func CreateRegistryAuthSecret(ctx context.Context, client kubernetes.Interface, 
 // canetteConfig is the UI-configured canette.yaml YAML string (may be empty); it is
 // passed into the container as CANETTE_CONFIG so the build binary can use it as a base
 // layer before the repo's canette.yaml overrides it.
-func ptrBool(v bool) *bool   { return &v }
+func ptrBool(v bool) *bool    { return &v }
 func ptrInt32(v int32) *int32 { return &v }
 func ptrInt64(v int64) *int64 { return &v }
 
@@ -120,9 +120,9 @@ func BuildJob(
 	optional := true
 
 	labels := map[string]string{
-		libk8s.LabelManagedBy:   libk8s.LabelManagedByVal,
-		libk8s.LabelComponent:   "builder",
-		libk8s.LabelDeployment:  deploymentID,
+		libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
+		libk8s.LabelComponent:  "builder",
+		libk8s.LabelDeployment: deploymentID,
 	}
 
 	workspaceVolumeQuota := resource.MustParse("500Mi")
@@ -311,8 +311,8 @@ func CreateGitCredSecret(
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				libk8s.LabelManagedBy:  libk8s.LabelManagedByVal,
-				libk8s.LabelComponent:  "builder",
+				libk8s.LabelManagedBy: libk8s.LabelManagedByVal,
+				libk8s.LabelComponent: "builder",
 			},
 		},
 		Data: data,

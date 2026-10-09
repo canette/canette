@@ -67,7 +67,7 @@ APP_SLUG=<appSlug>
 SECRET=<your-logstreamer-secret>
 
 curl -N -H "Authorization: Bearer ${SECRET}" \
-  "http://localhost:8080/stream?project_id=${PROJECT_ID}&project_slug=${PROJECT_SLUG}&app=${APP_SLUG}"
+  "http://localhost:8080/logs/stream?project_id=${PROJECT_ID}&project_slug=${PROJECT_SLUG}&app=${APP_SLUG}"
 ```
 
 You should see SSE-formatted output like:
