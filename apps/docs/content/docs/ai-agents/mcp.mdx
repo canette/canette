@@ -67,11 +67,14 @@ The MCP server uses standard OAuth 2.1 with PKCE. You do not need to create or m
 | `list_projects` | List all projects you have access to |
 | `list_apps` | List apps within a project |
 | `create_project` | Create a new project (uses your personal team by default) |
-| `create_app` | Create an app in a project, configured to build from a Git repository |
+| `create_app` | Create an app in a project — built from a Git repository (including monorepo subdirectories and private repositories) or run from a Docker image, as a `web`, `private` or `cronjob` app |
+| `update_app` | Change an existing app's settings, such as branch, port or image tag — applied on the next deployment |
+| `list_git_credentials` | List the Git credentials a project can use for private repositories (names and types only, never tokens or keys) |
 | `trigger_deployment` | Trigger a new deployment for an existing app |
 | `list_deployments` | List recent deployments for an app — use this to find a `deployment_id` when troubleshooting a deployment not triggered in this session |
 | `get_deployment` | Get the status and details of a deployment — provide `app_id` for the latest, or `deployment_id` for a specific one |
 | `get_build_logs` | Fetch full build logs for a deployment — useful for diagnosing build failures |
+| `redeploy_deployment` | Roll back by deploying an earlier deployment's image again, without rebuilding |
 | `get_app` | Get an app's current state — live URL, custom hostnames, latest deployment and runtime health |
 | `get_runtime_logs` | Fetch recent logs and pod status (restarts, `CrashLoopBackOff`, exit code) from the running app. Automatically returns the crashed container's logs when the app is crash-looping |
 | `get_app_metrics` | Get per-pod readiness, restarts, last termination reason (e.g. `OOMKilled`) and CPU/memory usage. Usage requires metrics-server on the cluster |
@@ -102,6 +105,11 @@ The agent will check the app's state, read the runtime logs and pod status (incl
 > "`my-app` crashes on startup — fix it"
 
 The agent will read the runtime logs, spot a missing variable such as `LOG_LEVEL`, set it and redeploy. If the missing value is a secret (for example `DATABASE_URL`), it will ask you to add it in the canette UI.
+
+**Rolling back:**
+> "The latest deploy of `my-app` is broken — roll back to the previous version"
+
+The agent will list recent deployments, pick the last one that was live, and redeploy its image. The rollback uses the app's current settings and environment variables, not the ones from the earlier deployment.
 
 ## Prerequisites
 
