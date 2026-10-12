@@ -7,12 +7,18 @@ import { listApps, createApp, getAppById } from "./apps"
 import { createDeployment, listDeployments, getDeploymentLogs, getDeploymentById } from "./deployments"
 import { listTeams } from "./teams"
 import { listHostnames } from "./hostnames"
+import { listEnvVars, upsertEnvVar, deleteEnvVar, MAX_ENV_VALUE_BYTES } from "./env-vars"
+import { listSecrets } from "./secrets"
 import { getAppPodTarget } from "./app-logs"
 import { fetchFromLogstreamer } from "./logstreamer"
 import type { AppMetricsUsage, AppRuntimeLogs } from "@canette/types"
 
 const DEFAULT_LOG_LINES = 100
 const MAX_LOG_LINES = 1000
+
+// Env vars are snapshotted when a deployment is triggered, so a change does
+// nothing to the running app until the next one.
+const ENV_CHANGE_NOTE = "Takes effect on the next deployment — call trigger_deployment to apply it."
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -147,6 +153,44 @@ export const TOOLS = [
         app_id: { type: "string", description: "App ID" },
       },
       required: ["app_id"],
+    },
+  },
+  {
+    name: "list_env_vars",
+    description:
+      "List an app's environment variables (keys and values) and the names of its secrets. Secret values are never returned. Use this to check whether a variable the app needs is missing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+      },
+      required: ["app_id"],
+    },
+  },
+  {
+    name: "set_env_var",
+    description:
+      "Create or update a plaintext environment variable on an app. Takes effect on the next deployment. Do NOT use this for secrets (passwords, tokens, API keys, connection strings with credentials): values are stored unencrypted and are readable by the whole team. Ask the user to add secrets under the app's Environment settings in the canette UI instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        key: { type: "string", description: "Variable name: uppercase letters, digits and underscores (e.g. LOG_LEVEL)" },
+        value: { type: "string", description: "Variable value (max 10 KB)" },
+      },
+      required: ["app_id", "key", "value"],
+    },
+  },
+  {
+    name: "delete_env_var",
+    description: "Delete an environment variable from an app. Takes effect on the next deployment. Cannot delete secrets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        key: { type: "string", description: "Variable name" },
+      },
+      required: ["app_id", "key"],
     },
   },
 ]
@@ -340,6 +384,44 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const usage = await fetchFromLogstreamer<AppMetricsUsage>("/metrics/usage", podTarget)
         if (!usage) return err("Could not reach the metrics service — try again shortly")
         return ok(usage)
+      }
+
+      case "list_env_vars": {
+        const appId = arg(args, "app_id")
+        if (!appId) return err("app_id is required")
+        const app = await getAppById(db, appId, userId)
+        if (!app) return err("App not found or access denied")
+        const [envVars, secrets] = await Promise.all([listEnvVars(db, appId), listSecrets(db, appId)])
+        return ok({
+          envVars: envVars.map((v) => ({ key: v.key, value: v.value })),
+          secretKeys: secrets.map((s) => s.key),
+        })
+      }
+
+      case "set_env_var": {
+        const appId = arg(args, "app_id")
+        const key = arg(args, "key")
+        const value = arg(args, "value")
+        if (!appId) return err("app_id is required")
+        if (!key) return err("key is required")
+        if (value === undefined) return err("value is required")
+        if (Buffer.byteLength(value, "utf8") > MAX_ENV_VALUE_BYTES) return err("Value exceeds 10 KB limit")
+        const app = await getAppById(db, appId, userId)
+        if (!app) return err("App not found or access denied")
+        const envVar = await upsertEnvVar(db, appId, key, value)
+        return ok({ key: envVar.key, value: envVar.value, note: ENV_CHANGE_NOTE })
+      }
+
+      case "delete_env_var": {
+        const appId = arg(args, "app_id")
+        const key = arg(args, "key")
+        if (!appId) return err("app_id is required")
+        if (!key) return err("key is required")
+        const app = await getAppById(db, appId, userId)
+        if (!app) return err("App not found or access denied")
+        const deleted = await deleteEnvVar(db, appId, key)
+        if (!deleted) return err(`No environment variable named ${key} on this app`)
+        return ok({ deleted: key, note: ENV_CHANGE_NOTE })
       }
 
       default:

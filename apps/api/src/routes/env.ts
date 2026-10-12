@@ -4,7 +4,7 @@ import { requireAuth } from "../middleware/require-auth"
 import type { AppEnv } from "../types"
 import { ServiceError } from "../services/errors"
 import { getAppById } from "../services/apps"
-import { listEnvVars, upsertEnvVar, deleteEnvVar } from "../services/env-vars"
+import { listEnvVars, upsertEnvVar, deleteEnvVar, MAX_ENV_VALUE_BYTES } from "../services/env-vars"
 import { listSecrets, upsertSecret, deleteSecret } from "../services/secrets"
 
 export const envRouter = new Hono<AppEnv>()
@@ -24,8 +24,6 @@ envRouter.get("/apps/:id/env", async (c) => {
   return c.json({ envVars, secrets })
 })
 
-const MAX_VALUE_BYTES = 10 * 1024 // 10 KB
-
 // Upsert an env var
 // PUT /api/v1/apps/:id/env/:key
 envRouter.put("/apps/:id/env/:key", async (c) => {
@@ -34,7 +32,7 @@ envRouter.put("/apps/:id/env/:key", async (c) => {
   if (!app) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
   const body = await c.req.json<{ value: string }>()
   const value = body.value ?? ""
-  if (Buffer.byteLength(value, "utf8") > MAX_VALUE_BYTES) {
+  if (Buffer.byteLength(value, "utf8") > MAX_ENV_VALUE_BYTES) {
     return c.json({ error: "Value exceeds 10 KB limit", code: "VALUE_TOO_LARGE" }, 400)
   }
   try {
@@ -65,7 +63,7 @@ envRouter.put("/apps/:id/secrets/:key", async (c) => {
   if (!app) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
   const body = await c.req.json<{ value: string }>()
   const value = body.value ?? ""
-  if (Buffer.byteLength(value, "utf8") > MAX_VALUE_BYTES) {
+  if (Buffer.byteLength(value, "utf8") > MAX_ENV_VALUE_BYTES) {
     return c.json({ error: "Value exceeds 10 KB limit", code: "VALUE_TOO_LARGE" }, 400)
   }
   try {
