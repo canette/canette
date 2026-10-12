@@ -182,4 +182,106 @@ describe("services/mcp runtime diagnostics", () => {
       }
     })
   })
+
+  describe("app configuration", () => {
+    const PROJECT_ID = "11111111-2222-3333-4444-555555555555"
+
+    beforeAll(async () => {
+      const now = new Date().toISOString()
+      await db.insertInto("git_credentials").values({
+        id: "credId", team_id: "teamId", name: "Deploy token", provider: "github", type: "pat",
+        encrypted_value: "ciphertext", ssh_known_hosts: null, installation_id: null,
+        connected_by_user_id: null, created_at: now,
+      }).execute()
+    })
+
+    it("list_git_credentials returns names and types but never the stored value", async () => {
+      const result = await handleTool("list_git_credentials", { project_id: "test-project" }, "userId")
+      expect(JSON.parse(text(result))).toEqual([
+        { id: "credId", name: "Deploy token", provider: "github", type: "pat", scope: "team" },
+      ])
+      expect(text(result)).not.toContain("ciphertext")
+    })
+
+    it("create_app supports monorepo paths and private repositories", async () => {
+      const result = await handleTool(
+        "create_app",
+        {
+          project_id: PROJECT_ID, name: "Docs", slug: "docs",
+          git_url: "https://github.com/example/mono", app_path: "apps/docs", git_credential_id: "credId",
+        },
+        "userId"
+      )
+      expect(result.isError).toBeUndefined()
+      const app = JSON.parse(text(result))
+      expect(app.sourceType).toBe("git")
+      expect(app.gitBranch).toBe("main")
+      expect(app.appPath).toBe("apps/docs")
+      expect(app.gitCredentialId).toBe("credId")
+      expect(app.port).toBe(3000)
+    })
+
+    it("create_app supports image-based cronjobs and validates them", async () => {
+      const base = { project_id: PROJECT_ID, name: "Nightly", slug: "nightly", source_type: "image", image_url: "ghcr.io/example/job" }
+
+      const noSchedule = await handleTool("create_app", { ...base, deployment_type: "cronjob" }, "userId")
+      expect(noSchedule.isError).toBe(true)
+
+      const result = await handleTool("create_app", { ...base, deployment_type: "cronjob", schedule: "0 2 * * *" }, "userId")
+      expect(result.isError).toBeUndefined()
+      const app = JSON.parse(text(result))
+      expect(app.sourceType).toBe("image")
+      expect(app.imageTag).toBe("latest")
+      expect(app.deploymentType).toBe("cronjob")
+      expect(app.schedule).toBe("0 2 * * *")
+
+      const noSource = await handleTool("create_app", { project_id: PROJECT_ID, name: "Empty", slug: "empty" }, "userId")
+      expect(noSource.isError).toBe(true)
+    })
+
+    it("update_app changes only the fields passed", async () => {
+      const created = JSON.parse(text(await handleTool(
+        "create_app",
+        { project_id: PROJECT_ID, name: "Api", slug: "api", git_url: "https://github.com/example/api", git_credential_id: "credId" },
+        "userId"
+      )))
+
+      const result = await handleTool("update_app", { app_id: created.id, git_branch: "develop", port: "8080" }, "userId")
+      expect(result.isError).toBeUndefined()
+      const updated = JSON.parse(text(result))
+      expect(updated.gitBranch).toBe("develop")
+      expect(updated.port).toBe(8080)
+      expect(updated.name).toBe("Api")
+      expect(updated.gitCredentialId).toBe("credId")
+      expect(updated.note).toContain("trigger_deployment")
+
+      const cleared = JSON.parse(text(await handleTool("update_app", { app_id: created.id, git_credential_id: null }, "userId")))
+      expect(cleared.gitCredentialId).toBeUndefined()
+
+      const empty = await handleTool("update_app", { app_id: created.id }, "userId")
+      expect(empty.isError).toBe(true)
+      const toCron = await handleTool("update_app", { app_id: created.id, deployment_type: "cronjob", schedule: "@daily" }, "userId")
+      expect(toCron.isError).toBe(true)
+      const outsider = await handleTool("update_app", { app_id: created.id, port: 9000 }, "outsiderId")
+      expect(outsider.isError).toBe(true)
+    })
+
+    it("redeploy_deployment reuses a built image and rejects one without", async () => {
+      const deployment = JSON.parse(text(await handleTool("trigger_deployment", { app_id: appId }, "userId")))
+
+      const noImage = await handleTool("redeploy_deployment", { deployment_id: deployment.id }, "userId")
+      expect(noImage.isError).toBe(true)
+      expect(text(noImage)).toContain("no built image")
+
+      await db.updateTable("deployments").set({ image_digest: "sha256:abc", status: "live" }).where("id", "=", deployment.id).execute()
+      const result = await handleTool("redeploy_deployment", { deployment_id: deployment.id }, "userId")
+      expect(result.isError).toBeUndefined()
+      const redeployed = JSON.parse(text(result))
+      expect(redeployed.id).not.toBe(deployment.id)
+      expect(redeployed.appId).toBe(appId)
+
+      const outsider = await handleTool("redeploy_deployment", { deployment_id: deployment.id }, "outsiderId")
+      expect(outsider.isError).toBe(true)
+    })
+  })
 })

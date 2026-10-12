@@ -3,22 +3,41 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { db } from "../db/db"
 import { ServiceError } from "./errors"
 import { listProjects, createProject, getProjectByRef } from "./projects"
-import { listApps, createApp, getAppById } from "./apps"
-import { createDeployment, listDeployments, getDeploymentLogs, getDeploymentById } from "./deployments"
+import { listApps, createApp, updateApp, getAppById } from "./apps"
+import {
+  createDeployment,
+  listDeployments,
+  getDeploymentLogs,
+  getDeploymentById,
+  redeployDeployment,
+} from "./deployments"
 import { listTeams } from "./teams"
 import { listHostnames } from "./hostnames"
 import { listEnvVars, upsertEnvVar, deleteEnvVar, MAX_ENV_VALUE_BYTES } from "./env-vars"
 import { listSecrets } from "./secrets"
+import { listTeamCredentials } from "./git-credentials"
 import { getAppPodTarget } from "./app-logs"
 import { fetchFromLogstreamer } from "./logstreamer"
-import type { AppMetricsUsage, AppRuntimeLogs } from "@canette/types"
+import type { AppDeploymentType, AppMetricsUsage, AppRuntimeLogs, AppSourceType } from "@canette/types"
 
 const DEFAULT_LOG_LINES = 100
 const MAX_LOG_LINES = 1000
 
-// Env vars are snapshotted when a deployment is triggered, so a change does
-// nothing to the running app until the next one.
-const ENV_CHANGE_NOTE = "Takes effect on the next deployment — call trigger_deployment to apply it."
+// Shared by create_app and update_app. Values are validated by the apps service.
+const APP_SOURCE_PROPERTIES = {
+  source_type: { type: "string", enum: ["git", "image"], description: "Build from a Git repository ('git') or run a prebuilt Docker image ('image')" },
+  git_url: { type: "string", description: "Git repository URL (HTTPS or SSH) — for source_type 'git'" },
+  git_branch: { type: "string", description: "Git branch to build from" },
+  app_path: { type: "string", description: "Subdirectory of the repository that contains the app, for monorepos (e.g. 'apps/web')" },
+  image_url: { type: "string", description: "Docker image without tag (e.g. 'ghcr.io/org/app') — for source_type 'image'" },
+  image_tag: { type: "string", description: "Docker image tag" },
+  port: { type: "number", description: "Port the app listens on (not used for cronjob apps)" },
+  schedule: { type: "string", description: "Cron expression (e.g. '0 2 * * *' or '@daily') — required for deployment_type 'cronjob'" },
+} as const
+
+// App settings and env vars are snapshotted when a deployment is triggered,
+// so a change does nothing to the running app until the next one.
+const NEXT_DEPLOYMENT_NOTE = "Takes effect on the next deployment — call trigger_deployment to apply it."
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -55,18 +74,59 @@ export const TOOLS = [
   },
   {
     name: "create_app",
-    description: "Create a new app within a project and configure it to build from a Git repository.",
+    description:
+      "Create a new app within a project, built from a Git repository (default) or run from a prebuilt Docker image. For a private repository, pass a git_credential_id from list_git_credentials. Does not deploy — call trigger_deployment afterwards.",
     inputSchema: {
       type: "object",
       properties: {
         project_id: { type: "string", description: "Project ID" },
         name: { type: "string", description: "Human-readable app name" },
         slug: { type: "string", description: "URL-friendly identifier (lowercase alphanumeric and hyphens, max 63 chars)" },
-        git_url: { type: "string", description: "Git repository URL (HTTPS or SSH)" },
-        git_branch: { type: "string", description: "Git branch to build from (default: main)" },
-        port: { type: "number", description: "Port the app listens on (default: 3000)" },
+        ...APP_SOURCE_PROPERTIES,
+        deployment_type: {
+          type: "string",
+          enum: ["web", "private", "cronjob"],
+          description:
+            "'web' gets a public URL (default), 'private' is reachable only inside the cluster, 'cronjob' runs on a schedule. An app cannot be changed to or from 'cronjob' later.",
+        },
+        git_credential_id: { type: "string", description: "Git credential ID for a private repository (from list_git_credentials)" },
       },
-      required: ["project_id", "name", "slug", "git_url"],
+      required: ["project_id", "name", "slug"],
+    },
+  },
+  {
+    name: "update_app",
+    description:
+      "Change an existing app's settings, such as its branch, port or image tag. Only the fields you pass are changed. Takes effect on the next deployment.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        name: { type: "string", description: "Human-readable app name" },
+        ...APP_SOURCE_PROPERTIES,
+        deployment_type: {
+          type: "string",
+          enum: ["web", "private"],
+          description: "Switch between 'web' (public URL) and 'private' (cluster-internal). Cannot change to or from 'cronjob'.",
+        },
+        git_credential_id: {
+          type: ["string", "null"],
+          description: "Git credential ID (from list_git_credentials). Pass null to remove the credential.",
+        },
+      },
+      required: ["app_id"],
+    },
+  },
+  {
+    name: "list_git_credentials",
+    description:
+      "List the Git credentials available to a project (its team's credentials plus system-wide ones), for use as git_credential_id on a private repository. Returns names and types only — never tokens or keys. Credentials are created in the canette UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Project ID or slug" },
+      },
+      required: ["project_id"],
     },
   },
   {
@@ -109,6 +169,18 @@ export const TOOLS = [
       type: "object",
       properties: {
         deployment_id: { type: "string", description: "Deployment ID" },
+      },
+      required: ["deployment_id"],
+    },
+  },
+  {
+    name: "redeploy_deployment",
+    description:
+      "Roll back (or re-run) by deploying the image of an earlier deployment again, without rebuilding. Creates a new deployment that uses that deployment's image with the app's CURRENT settings and env vars. Use list_deployments to find a previous deployment that was live. Only works for deployments that have a built image.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deployment_id: { type: "string", description: "ID of the earlier deployment whose image should be deployed again" },
       },
       required: ["deployment_id"],
     },
@@ -215,6 +287,22 @@ function arg(args: Record<string, unknown>, key: string): string | undefined {
   return typeof v === "string" ? v : undefined
 }
 
+// appPatch reads the settings shared by create_app and update_app, leaving out
+// anything the caller didn't pass so the service applies its own defaults.
+function appPatch(args: Record<string, unknown>) {
+  return {
+    sourceType: arg(args, "source_type") as AppSourceType | undefined,
+    deploymentType: arg(args, "deployment_type") as AppDeploymentType | undefined,
+    gitUrl: arg(args, "git_url"),
+    gitBranch: arg(args, "git_branch"),
+    appPath: arg(args, "app_path"),
+    imageUrl: arg(args, "image_url"),
+    imageTag: arg(args, "image_tag"),
+    port: argNum(args, "port"),
+    schedule: arg(args, "schedule"),
+  }
+}
+
 function argBool(args: Record<string, unknown>, key: string): boolean | undefined {
   const v = args[key]
   if (typeof v === "boolean") return v
@@ -273,21 +361,57 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const projectId = arg(args, "project_id")
         const name = arg(args, "name")
         const slug = arg(args, "slug")
-        const gitUrl = arg(args, "git_url")
         if (!projectId) return err("project_id is required")
         if (!name) return err("name is required")
         if (!slug) return err("slug is required")
-        if (!gitUrl) return err("git_url is required")
 
         const app = await createApp(db, projectId, userId, {
           name,
           slug,
-          sourceType: "git",
-          gitUrl,
-          gitBranch: arg(args, "git_branch") ?? "main",
-          port: argNum(args, "port") ?? 3000,
+          ...appPatch(args),
+          gitCredentialId: arg(args, "git_credential_id"),
         })
         return ok(app)
+      }
+
+      case "update_app": {
+        const appId = arg(args, "app_id")
+        if (!appId) return err("app_id is required")
+
+        const patch: Parameters<typeof updateApp>[3] = { name: arg(args, "name"), ...appPatch(args) }
+        // null (or an empty string) removes the credential; absent leaves it alone.
+        if ("git_credential_id" in args) patch.gitCredentialId = arg(args, "git_credential_id") || null
+        if (Object.values(patch).every((v) => v === undefined)) return err("Pass at least one setting to change")
+
+        const app = await updateApp(db, appId, userId, patch)
+        if (!app) return err("App not found or access denied")
+        return ok({ ...app, note: NEXT_DEPLOYMENT_NOTE })
+      }
+
+      case "list_git_credentials": {
+        const projectId = arg(args, "project_id")
+        if (!projectId) return err("project_id is required")
+        const project = await getProjectByRef(db, projectId, userId)
+        if (!project) return err("Project not found or access denied")
+        const credentials = await listTeamCredentials(db, project.teamId, userId)
+        if (!credentials) return err("Project not found or access denied")
+        return ok(
+          credentials.map((c) => ({
+            id: c.id,
+            name: c.name,
+            provider: c.provider,
+            type: c.type,
+            scope: c.teamId === null ? "system" : "team",
+          }))
+        )
+      }
+
+      case "redeploy_deployment": {
+        const deploymentId = arg(args, "deployment_id")
+        if (!deploymentId) return err("deployment_id is required")
+        const deployment = await redeployDeployment(db, deploymentId, userId)
+        if (!deployment) return err("Deployment not found or access denied")
+        return ok(deployment)
       }
 
       case "list_deployments": {
@@ -409,7 +533,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const app = await getAppById(db, appId, userId)
         if (!app) return err("App not found or access denied")
         const envVar = await upsertEnvVar(db, appId, key, value)
-        return ok({ key: envVar.key, value: envVar.value, note: ENV_CHANGE_NOTE })
+        return ok({ key: envVar.key, value: envVar.value, note: NEXT_DEPLOYMENT_NOTE })
       }
 
       case "delete_env_var": {
@@ -421,7 +545,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!app) return err("App not found or access denied")
         const deleted = await deleteEnvVar(db, appId, key)
         if (!deleted) return err(`No environment variable named ${key} on this app`)
-        return ok({ deleted: key, note: ENV_CHANGE_NOTE })
+        return ok({ deleted: key, note: NEXT_DEPLOYMENT_NOTE })
       }
 
       default:
