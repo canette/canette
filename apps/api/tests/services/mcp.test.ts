@@ -124,4 +124,62 @@ describe("services/mcp runtime diagnostics", () => {
     const failed = await handleTool("get_app_metrics", { app_id: appId }, "userId")
     expect(failed.isError).toBe(true)
   })
+
+  describe("env vars", () => {
+    it("sets, lists and deletes an env var", async () => {
+      const set = await handleTool("set_env_var", { app_id: appId, key: "LOG_LEVEL", value: "debug" }, "userId")
+      expect(set.isError).toBeUndefined()
+      expect(JSON.parse(text(set)).note).toContain("trigger_deployment")
+
+      const listed = JSON.parse(text(await handleTool("list_env_vars", { app_id: appId }, "userId")))
+      expect(listed.envVars).toEqual([{ key: "LOG_LEVEL", value: "debug" }])
+
+      // An empty string is a valid value, not a missing argument.
+      const emptied = await handleTool("set_env_var", { app_id: appId, key: "LOG_LEVEL", value: "" }, "userId")
+      expect(emptied.isError).toBeUndefined()
+
+      const deleted = await handleTool("delete_env_var", { app_id: appId, key: "LOG_LEVEL" }, "userId")
+      expect(deleted.isError).toBeUndefined()
+      const again = await handleTool("delete_env_var", { app_id: appId, key: "LOG_LEVEL" }, "userId")
+      expect(again.isError).toBe(true)
+    })
+
+    it("rejects invalid, reserved and oversized input", async () => {
+      for (const args of [
+        { app_id: appId, key: "lower-case", value: "x" },
+        { app_id: appId, key: "PORT", value: "8080" },
+        { app_id: appId, key: "BIG", value: "x".repeat(10 * 1024 + 1) },
+        { app_id: appId, key: "NO_VALUE" },
+      ]) {
+        const result = await handleTool("set_env_var", args, "userId")
+        expect(result.isError).toBe(true)
+      }
+    })
+
+    it("lists secret names without values and refuses to shadow a secret", async () => {
+      const now = new Date().toISOString()
+      await db.insertInto("secrets").values({
+        id: "secretId", app_id: appId, key: "DATABASE_URL", encrypted_value: "ciphertext",
+        created_at: now, updated_at: now,
+      }).execute()
+
+      const result = await handleTool("list_env_vars", { app_id: appId }, "userId")
+      expect(JSON.parse(text(result)).secretKeys).toEqual(["DATABASE_URL"])
+      expect(text(result)).not.toContain("ciphertext")
+
+      const shadow = await handleTool("set_env_var", { app_id: appId, key: "DATABASE_URL", value: "x" }, "userId")
+      expect(shadow.isError).toBe(true)
+    })
+
+    it("denies access to users outside the app's team", async () => {
+      for (const [tool, args] of [
+        ["list_env_vars", {}],
+        ["set_env_var", { key: "A", value: "b" }],
+        ["delete_env_var", { key: "A" }],
+      ] as const) {
+        const result = await handleTool(tool, { app_id: appId, ...args }, "outsiderId")
+        expect(result.isError).toBe(true)
+      }
+    })
+  })
 })

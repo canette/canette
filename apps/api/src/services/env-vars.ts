@@ -20,6 +20,8 @@ function mapEnvVar(row: EnvVarRow): EnvVar {
   }
 }
 
+export const MAX_ENV_VALUE_BYTES = 10 * 1024 // 10 KB
+
 // ── Key validation ────────────────────────────────────────────────────────────
 
 function isValidKey(key: string): boolean {
@@ -57,6 +59,23 @@ export async function upsertEnvVar(
       `${key} is set automatically by canette and can't be overridden — configure the runtime port instead`,
       "RESERVED_KEY",
       400
+    )
+  }
+
+  // A plaintext env var must never shadow a secret of the same name — which
+  // of the two would reach the container is not something callers should
+  // have to reason about.
+  const secret = await db
+    .selectFrom("secrets")
+    .select("id")
+    .where("app_id", "=", appId)
+    .where("key", "=", key)
+    .executeTakeFirst()
+  if (secret) {
+    throw new ServiceError(
+      `${key} is already set as a secret on this app — delete the secret first to replace it with a plain environment variable`,
+      "CONFLICT",
+      409
     )
   }
 

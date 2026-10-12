@@ -75,6 +75,11 @@ The MCP server uses standard OAuth 2.1 with PKCE. You do not need to create or m
 | `get_app` | Get an app's current state — live URL, custom hostnames, latest deployment and runtime health |
 | `get_runtime_logs` | Fetch recent logs and pod status (restarts, `CrashLoopBackOff`, exit code) from the running app. Automatically returns the crashed container's logs when the app is crash-looping |
 | `get_app_metrics` | Get per-pod readiness, restarts, last termination reason (e.g. `OOMKilled`) and CPU/memory usage. Usage requires metrics-server on the cluster |
+| `list_env_vars` | List an app's environment variables and the names of its secrets (secret values are never returned) |
+| `set_env_var` | Create or update a plaintext environment variable — applied on the next deployment |
+| `delete_env_var` | Delete an environment variable — applied on the next deployment |
+
+Secrets can't be set or deleted through MCP. Agents can see which secret names exist, but values are added in the canette UI so they never pass through the AI client.
 
 ### Example prompts
 
@@ -92,6 +97,11 @@ The agent will fetch the latest deployment status and build logs, then explain t
 > "`my-app` deployed but returns 502 — why?"
 
 The agent will check the app's state, read the runtime logs and pod status (including the output of a crashed container), and look at memory usage to spot an `OOMKilled` restart.
+
+**Fixing missing configuration:**
+> "`my-app` crashes on startup — fix it"
+
+The agent will read the runtime logs, spot a missing variable such as `LOG_LEVEL`, set it and redeploy. If the missing value is a secret (for example `DATABASE_URL`), it will ask you to add it in the canette UI.
 
 ## Prerequisites
 
