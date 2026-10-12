@@ -3,12 +3,29 @@
 import { useId, useMemo, useState } from "react"
 import type { AppMetricsSeriesPoint } from "@canette/types"
 
+// niceCeil rounds a value up to the next "round" step within its order of
+// magnitude (1, 1.5, 2, 3, 4, 5, 6, 8, 10 × 10^n), so a y-axis ceiling derived
+// from it only moves when the data crosses a step, not on every new sample.
+function niceCeil(v: number): number {
+  if (v <= 0) return 1
+  const magnitude = 10 ** Math.floor(Math.log10(v))
+  const fraction = v / magnitude
+  const step = [1, 1.5, 2, 3, 4, 5, 6, 8, 10].find((s) => fraction <= s) ?? 10
+  return step * magnitude
+}
+
 // buildLinePath turns a series into one or more SVG path "d" segments, split
 // wherever the gap between consecutive samples is more than 2x the series'
 // typical step — e.g. a Prometheus restart leaving a hole in query_range
 // output. Drawing a straight line across a real gap would misrepresent data
 // that was never collected, so each contiguous run becomes its own segment.
-function buildLinePath(points: AppMetricsSeriesPoint[], width: number, height: number, pad = 2): { segments: string[]; coords: { x: number; y: number; point: AppMetricsSeriesPoint }[] } {
+//
+// With zeroBased the y-axis runs from 0 to a rounded-up ceiling instead of
+// hugging the data's own min/max. The data-fitted axis rescales whenever the
+// window's min or max shifts, which on a tall chart redraws the whole line for
+// a change of a few millicores; a fixed baseline keeps the shape stable across
+// polls and makes the line's height proportional to actual usage.
+function buildLinePath(points: AppMetricsSeriesPoint[], width: number, height: number, pad = 2, zeroBased = false): { segments: string[]; coords: { x: number; y: number; point: AppMetricsSeriesPoint }[] } {
   if (points.length === 0) return { segments: [], coords: [] }
 
   const minT = points[0].t
@@ -24,9 +41,12 @@ function buildLinePath(points: AppMetricsSeriesPoint[], width: number, height: n
   // min/max always stay inside the plotted range.
   const maxAbs = Math.max(Math.abs(rawMinV), Math.abs(rawMaxV))
   const minSpan = Math.max(maxAbs * 0.05, 1e-9)
-  const spanV = Math.max(rawMaxV - rawMinV, minSpan)
-  const midV = (rawMinV + rawMaxV) / 2
-  const minV = midV - spanV / 2
+  let spanV = Math.max(rawMaxV - rawMinV, minSpan)
+  let minV = (rawMinV + rawMaxV) / 2 - spanV / 2
+  if (zeroBased && rawMinV >= 0) {
+    minV = 0
+    spanV = niceCeil(rawMaxV)
+  }
 
   const innerW = width - pad * 2
   const innerH = height - pad * 2
@@ -96,7 +116,7 @@ export function TimeseriesChart({ points, formatValue, height = 120, className }
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
   const gradientId = useId()
 
-  const { segments, coords } = useMemo(() => buildLinePath(points, width, height, 8), [points, height])
+  const { segments, coords } = useMemo(() => buildLinePath(points, width, height, 8, true), [points, height])
 
   if (points.length === 0 || coords.length === 0) {
     // Matches the chart's own height plus the caption row's height (mt-1 + one
