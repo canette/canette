@@ -12,6 +12,7 @@ export interface Database {
     emailVerified: boolean
     image: string | null
     role: string
+    banned: boolean | null
     createdAt: string
     updatedAt: string
   }

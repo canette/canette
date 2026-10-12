@@ -60,6 +60,8 @@ The MCP server uses standard OAuth 2.1 with PKCE. You do not need to create or m
 4. After login, the client receives an access token automatically
 5. The token is valid for 1 hour; the client will re-authenticate when it expires
 
+An access token is tied to the browser session you authorized it from. Signing out of canette in that browser ends the client's access immediately, and the client will ask you to authorize again.
+
 ## Available tools
 
 | Tool | Description |

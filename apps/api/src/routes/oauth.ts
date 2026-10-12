@@ -6,6 +6,7 @@ import {
   issueAuthCode,
   exchangeAuthCode,
   issueAccessToken,
+  isCrossOriginBrowserRequest,
 } from "../services/oauth"
 
 export const wellKnownRouter = new Hono()
@@ -113,6 +114,13 @@ oauthRouter.get("/authorize", async (c) => {
 // Called by the UI consent page server action after the user clicks Authorize.
 // Re-validates all OAuth params, checks session, and issues the auth code.
 oauthRouter.post("/confirm", async (c) => {
+  // This endpoint is only ever called server-to-server by the UI's consent
+  // action. A browser request from any other page must never reach it — the
+  // session cookie alone is not proof that the user saw the consent screen.
+  if (isCrossOriginBrowserRequest(c.req.raw.headers, process.env.UI_URL ?? "http://localhost:3000")) {
+    return c.json({ error: "access_denied" }, 403)
+  }
+
   const q = c.req.query()
   const { client_id, response_type, code_challenge, code_challenge_method, redirect_uri, state } = q
 
@@ -135,7 +143,7 @@ oauthRouter.post("/confirm", async (c) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers })
   if (!session) return c.json({ error: "unauthorized" }, 401)
 
-  const code = issueAuthCode(session.user.id, code_challenge, redirect_uri)
+  const code = issueAuthCode(session.user.id, session.session.id, code_challenge, redirect_uri)
 
   const redirectUrl = new URL(redirect_uri)
   redirectUrl.searchParams.set("code", code)
@@ -164,9 +172,9 @@ oauthRouter.post("/token", async (c) => {
     return c.json({ error: "invalid_request", error_description: "code, code_verifier, and redirect_uri are required" }, 400)
   }
 
-  const userId = exchangeAuthCode(code, code_verifier, redirect_uri)
-  if (!userId) return c.json({ error: "invalid_grant" }, 400)
+  const grant = exchangeAuthCode(code, code_verifier, redirect_uri)
+  if (!grant) return c.json({ error: "invalid_grant" }, 400)
 
-  const token = await issueAccessToken(userId)
+  const token = await issueAccessToken(grant.userId, grant.sessionId)
   return c.json({ access_token: token, token_type: "Bearer", expires_in: 3600 })
 })
