@@ -7,11 +7,30 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator"
 import { authorizeAction, denyAction } from "./actions"
 
+// Everything a token lets an MCP client do. Keep in sync with TOOLS in
+// apps/api/src/services/mcp.ts — a user must never grant more than this says.
 const TOOL_DESCRIPTIONS = [
-  "List and create projects and apps",
-  "Trigger deployments",
-  "Read deployment status and build logs",
+  "List and create projects and apps, and change app settings",
+  "Trigger deployments and roll back to earlier ones",
+  "Read deployment status, build logs, runtime logs and metrics",
+  "Read, change and delete environment variables",
+  "See the names of secrets and Git credentials, never their values",
 ]
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
+
+// Where the authorization code is sent after the user clicks Authorize — the
+// one thing on this screen the client cannot fake. Returns null for a
+// redirect_uri that isn't a usable http(s) URL.
+function describeDestination(redirectUri: string): { origin: string; loopback: boolean } | null {
+  try {
+    const url = new URL(redirectUri)
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null
+    return { origin: url.origin, loopback: LOOPBACK_HOSTS.has(url.hostname) }
+  } catch {
+    return null
+  }
+}
 
 export function ConsentScreen({
   clientName,
@@ -26,6 +45,7 @@ export function ConsentScreen({
 }) {
   const [authorizing, startAuthorize] = useTransition()
   const [denying, startDeny] = useTransition()
+  const destination = describeDestination(redirectUri)
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
@@ -38,7 +58,8 @@ export function ConsentScreen({
             {clientName} wants to access canette
           </CardTitle>
           <CardDescription>
-            This will allow <strong>{clientName}</strong> to act on your behalf.
+            This will allow it to act on your behalf. The name above is what the app calls itself;
+            canette can&apos;t verify it.
           </CardDescription>
         </CardHeader>
 
@@ -55,6 +76,29 @@ export function ConsentScreen({
             </ul>
           </div>
 
+          {destination?.loopback ? (
+            <div className="rounded-md border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+              <p>Access will be sent to an app on this computer:</p>
+              <p className="mt-1 font-mono text-xs text-foreground break-all">{destination.origin}</p>
+            </div>
+          ) : (
+            <div className="rounded-md border border-warning-line bg-warning-soft px-4 py-3 text-sm text-warning-text">
+              {destination ? (
+                <>
+                  <p className="font-medium">Access will be sent to another site:</p>
+                  <p className="mt-1 font-mono text-xs break-all">{destination.origin}</p>
+                  <p className="mt-2">
+                    Only continue if you started this yourself and recognise this address.
+                  </p>
+                </>
+              ) : (
+                <p className="font-medium">
+                  This request has no valid return address and can&apos;t be authorized.
+                </p>
+              )}
+            </div>
+          )}
+
           <Separator />
 
           <form
@@ -63,7 +107,7 @@ export function ConsentScreen({
             className="contents"
           >
             <input type="hidden" name="qs" value={qs} />
-            <Button type="submit" className="w-full" disabled={authorizing || denying}>
+            <Button type="submit" className="w-full" disabled={!destination || authorizing || denying}>
               {authorizing ? "Authorizing…" : "Authorize"}
             </Button>
           </form>
