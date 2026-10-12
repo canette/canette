@@ -36,8 +36,26 @@ const APP_SOURCE_PROPERTIES = {
 } as const
 
 // App settings and env vars are snapshotted when a deployment is triggered,
-// so a change does nothing to the running app until the next one.
-const NEXT_DEPLOYMENT_NOTE = "Takes effect on the next deployment — call trigger_deployment to apply it."
+// so a change does nothing to the running app until the next one. Which tool
+// applies it matters: env vars and runtime settings are not build inputs, so
+// redeploying the existing image is enough, while trigger_deployment runs a
+// full build for a Git app. Agents default to the latter unless told otherwise.
+const REDEPLOY_NOTE =
+  "Takes effect on the next deployment. This change does not need a new build: apply it with redeploy_deployment on the app's latest live deployment (get_app or list_deployments gives the ID), which reuses the built image. Only use trigger_deployment if the app has no deployment with a built image yet."
+const REBUILD_NOTE =
+  "Takes effect on the next deployment. This changes what the app is built or run from, so call trigger_deployment to apply it."
+
+// update_app arguments that change the source an image comes from. Anything
+// else (name, port, schedule, deployment type) is applied at deploy time only.
+const SOURCE_ARGS = ["source_type", "git_url", "git_branch", "app_path", "image_url", "image_tag", "git_credential_id"]
+
+// Sent to the client at initialize, alongside the per-tool descriptions.
+const SERVER_INSTRUCTIONS = [
+  "canette builds apps from Git into an image and deploys that image. There are two ways to start a deployment, and picking the right one matters:",
+  "- trigger_deployment fetches the latest commit and runs a full build (minutes) before deploying. Use it when the source changed: new commits, or a different repository, branch, app path, credential or image tag. Also use it for an app's first deployment.",
+  "- redeploy_deployment deploys an already-built image again (seconds) with the app's current settings, env vars and secrets. Use it when only configuration changed: env vars, secrets, port, schedule, deployment type, volumes, hostnames or password protection. Env vars are injected at runtime, not at build time, so a rebuild is never needed for them.",
+  "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's latest live deployment.",
+].join("\n")
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -99,7 +117,7 @@ export const TOOLS = [
   {
     name: "update_app",
     description:
-      "Change an existing app's settings, such as its branch, port or image tag. Only the fields you pass are changed. Takes effect on the next deployment.",
+      "Change an existing app's settings, such as its branch, port or image tag. Only the fields you pass are changed. Takes effect on the next deployment: after changing the source (repository, branch, app path, credential, image) call trigger_deployment; after changing only runtime settings (port, schedule, deployment type, name) call redeploy_deployment on the latest live deployment instead, which skips the build.",
     inputSchema: {
       type: "object",
       properties: {
@@ -133,7 +151,8 @@ export const TOOLS = [
   },
   {
     name: "trigger_deployment",
-    description: "Trigger a new deployment for an existing app.",
+    description:
+      "Build and deploy an app from its source: for a Git app this fetches the latest commit and runs a full image build (minutes) before deploying; for a Docker image app it deploys the configured image tag. Use this for the first deployment and whenever the source changed (new commits, branch, repository, image tag). Do NOT use it just to apply changed env vars, secrets or runtime settings — use redeploy_deployment for that, which reuses the existing image and skips the build.",
     inputSchema: {
       type: "object",
       properties: {
@@ -178,11 +197,11 @@ export const TOOLS = [
   {
     name: "redeploy_deployment",
     description:
-      "Roll back (or re-run) by deploying the image of an earlier deployment again, without rebuilding. Creates a new deployment that uses that deployment's image with the app's CURRENT settings and env vars. Use list_deployments to find a previous deployment that was live. Only works for deployments that have a built image.",
+      "Deploy an already-built image again, without rebuilding (seconds instead of minutes). Creates a new deployment that uses the given deployment's image with the app's CURRENT settings, env vars and secrets. Two uses: (1) apply configuration changes — after set_env_var, delete_env_var, a secret change or a runtime-only update_app, pass the app's latest live deployment; (2) roll back — pass an earlier deployment that was live. Use list_deployments to find the ID. Only works for deployments that have a built image and are live, stopped or failed.",
     inputSchema: {
       type: "object",
       properties: {
-        deployment_id: { type: "string", description: "ID of the earlier deployment whose image should be deployed again" },
+        deployment_id: { type: "string", description: "ID of the deployment whose image should be deployed again: the latest live one to apply configuration changes, an earlier one to roll back" },
       },
       required: ["deployment_id"],
     },
@@ -244,7 +263,7 @@ export const TOOLS = [
   {
     name: "set_env_var",
     description:
-      "Create or update a plaintext environment variable on an app. Takes effect on the next deployment. Do NOT use this for secrets (passwords, tokens, API keys, connection strings with credentials): values are stored unencrypted and are readable by the whole team. Ask the user to add secrets under the app's Environment settings in the canette UI instead.",
+      "Create or update a plaintext environment variable on an app. Takes effect on the next deployment; env vars are injected at runtime, so apply the change with redeploy_deployment on the latest live deployment, not trigger_deployment (no rebuild needed). Do NOT use this for secrets (passwords, tokens, API keys, connection strings with credentials): values are stored unencrypted and are readable by the whole team. Ask the user to add secrets under the app's Environment settings in the canette UI instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -257,7 +276,8 @@ export const TOOLS = [
   },
   {
     name: "delete_env_var",
-    description: "Delete an environment variable from an app. Takes effect on the next deployment. Cannot delete secrets.",
+    description:
+      "Delete an environment variable from an app. Takes effect on the next deployment; apply it with redeploy_deployment on the latest live deployment, not trigger_deployment (no rebuild needed). Cannot delete secrets.",
     inputSchema: {
       type: "object",
       properties: {
@@ -387,7 +407,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
 
         const app = await updateApp(db, appId, userId, patch)
         if (!app) return err("App not found or access denied")
-        return ok({ ...app, note: NEXT_DEPLOYMENT_NOTE })
+        const sourceChanged = SOURCE_ARGS.some((key) => key in args)
+        return ok({ ...app, note: sourceChanged ? REBUILD_NOTE : REDEPLOY_NOTE })
       }
 
       case "list_git_credentials": {
@@ -535,7 +556,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const app = await getAppById(db, appId, userId)
         if (!app) return err("App not found or access denied")
         const envVar = await upsertEnvVar(db, appId, key, value)
-        return ok({ key: envVar.key, value: envVar.value, note: NEXT_DEPLOYMENT_NOTE })
+        return ok({ key: envVar.key, value: envVar.value, note: REDEPLOY_NOTE })
       }
 
       case "delete_env_var": {
@@ -547,7 +568,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!app) return err("App not found or access denied")
         const deleted = await deleteEnvVar(db, appId, key)
         if (!deleted) return err(`No environment variable named ${key} on this app`)
-        return ok({ deleted: key, note: NEXT_DEPLOYMENT_NOTE })
+        return ok({ deleted: key, note: REDEPLOY_NOTE })
       }
 
       default:
@@ -562,7 +583,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
 export function buildMcpServer(userId: string): Server {
   const server = new Server(
     { name: "canette", version: process.env.APP_VERSION ?? "development" },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   )
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
