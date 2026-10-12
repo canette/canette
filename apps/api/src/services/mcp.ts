@@ -41,6 +41,8 @@ const NEXT_DEPLOYMENT_NOTE = "Takes effect on the next deployment — call trigg
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
+// When a tool here grants a new kind of access, update the permission list on
+// the OAuth consent screen (apps/ui/src/app/oauth/authorize/consent-screen.tsx).
 export const TOOLS = [
   {
     name: "list_projects",
