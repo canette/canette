@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { Info } from "lucide-react"
 import { StatTile } from "@/components/ui/stat-tile"
+import { Skeleton } from "@/components/ui/skeleton"
 import { TimeseriesChart } from "@/components/ui/sparkline"
 import { PodHealthList } from "@/components/pod-health-list"
 import { formatBytes, formatCpu, sumMetric, usageTile } from "@/lib/metrics-format"
@@ -22,9 +23,36 @@ function MetricsSection({ title, children }: { title: string; children: ReactNod
   )
 }
 
+// Placeholder mirroring the loaded layout (two stat tiles + pod list) so the
+// tab doesn't flash the "no running pods" empty state before the first fetch.
+function MetricsSkeleton() {
+  return (
+    <div className="flex flex-col gap-8">
+      <MetricsSection title="Resource usage">
+        <div className="grid grid-cols-2 gap-3">
+          {[0, 1].map((i) => (
+            <div key={i} className="rounded-lg border border-border bg-card p-4 flex flex-col gap-1.5">
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="h-8 w-24" />
+              <Skeleton className="h-1.5 rounded-full" />
+              <Skeleton className="h-4 w-32" />
+            </div>
+          ))}
+        </div>
+      </MetricsSection>
+      <MetricsSection title="Pod health">
+        <div className="rounded-md border border-border px-3 py-2">
+          <Skeleton className="h-4 w-48" />
+        </div>
+      </MetricsSection>
+    </div>
+  )
+}
+
 export default function MetricsPage() {
   const { app } = useAppContext()
   const [usage, setUsage] = useState<AppMetricsUsage | null>(null)
+  const [loading, setLoading] = useState(true)
   const [timeseries, setTimeseries] = useState<AppMetricsTimeseries | null>(null)
 
   useEffect(() => {
@@ -35,6 +63,8 @@ export default function MetricsPage() {
         if (!cancelled) setUsage(u)
       } catch {
         if (!cancelled) setUsage(null)
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     }
     load()
@@ -62,6 +92,8 @@ export default function MetricsPage() {
       clearInterval(interval)
     }
   }, [app.id])
+
+  if (loading) return <MetricsSkeleton />
 
   if (!usage || usage.pods.length === 0) {
     return <p className="text-sm text-muted-foreground">No running pods to report metrics for.</p>

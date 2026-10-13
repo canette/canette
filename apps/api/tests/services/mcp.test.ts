@@ -129,7 +129,8 @@ describe("services/mcp runtime diagnostics", () => {
     it("sets, lists and deletes an env var", async () => {
       const set = await handleTool("set_env_var", { app_id: appId, key: "LOG_LEVEL", value: "debug" }, "userId")
       expect(set.isError).toBeUndefined()
-      expect(JSON.parse(text(set)).note).toContain("trigger_deployment")
+      // Env vars are runtime-only: the agent must be steered to a redeploy, not a rebuild.
+      expect(JSON.parse(text(set)).note).toContain("apply it with redeploy_deployment")
 
       const listed = JSON.parse(text(await handleTool("list_env_vars", { app_id: appId }, "userId")))
       expect(listed.envVars).toEqual([{ key: "LOG_LEVEL", value: "debug" }])
@@ -253,7 +254,11 @@ describe("services/mcp runtime diagnostics", () => {
       expect(updated.port).toBe(8080)
       expect(updated.name).toBe("Api")
       expect(updated.gitCredentialId).toBe("credId")
-      expect(updated.note).toContain("trigger_deployment")
+      // A branch change alters the build source, so this one does need a build.
+      expect(updated.note).toContain("call trigger_deployment")
+
+      const portOnly = JSON.parse(text(await handleTool("update_app", { app_id: created.id, port: "9090" }, "userId")))
+      expect(portOnly.note).toContain("apply it with redeploy_deployment")
 
       const cleared = JSON.parse(text(await handleTool("update_app", { app_id: created.id, git_credential_id: null }, "userId")))
       expect(cleared.gitCredentialId).toBeUndefined()

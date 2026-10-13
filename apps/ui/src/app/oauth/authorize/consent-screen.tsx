@@ -49,7 +49,7 @@ export function ConsentScreen({
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
+      <Card className="w-full max-w-sm sm:max-w-lg">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-2">
             <CanetteLogo className="size-16 p-1" />

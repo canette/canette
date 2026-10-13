@@ -5,10 +5,6 @@ description: Connect AI agents (Claude Code, Cursor, Codex) to your canette inst
 
 import { Callout } from "fumadocs-ui/components/callout"
 
-<Callout type="warn">
-  The MCP server is an MVP. The available tools cover the core deploy and troubleshoot workflows. More tools and resources will be added in future releases.
-</Callout>
-
 canette exposes a [Model Context Protocol](https://modelcontextprotocol.io) server at `/mcp` on your instance. AI agents can use it to deploy repositories, check deployment status, and diagnose failures — all through natural language instructions.
 
 ## Connecting an AI client
@@ -70,21 +66,30 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `list_apps` | List apps within a project |
 | `create_project` | Create a new project (uses your personal team by default) |
 | `create_app` | Create an app in a project — built from a Git repository (including monorepo subdirectories and private repositories) or run from a Docker image, as a `web`, `private` or `cronjob` app |
-| `update_app` | Change an existing app's settings, such as branch, port or image tag — applied on the next deployment |
+| `update_app` | Change an existing app's settings, such as branch, port or image tag — applied on the next deployment (a rebuild for source changes, a redeploy for runtime settings) |
 | `list_git_credentials` | List the Git credentials a project can use for private repositories (names and types only, never tokens or keys) |
-| `trigger_deployment` | Trigger a new deployment for an existing app |
+| `trigger_deployment` | Build and deploy an app from its source — fetches the latest commit and runs a full build for a Git app. For the first deployment and whenever the code or source changed |
 | `list_deployments` | List recent deployments for an app — use this to find a `deployment_id` when troubleshooting a deployment not triggered in this session |
 | `get_deployment` | Get the status and details of a deployment — provide `app_id` for the latest, or `deployment_id` for a specific one |
 | `get_build_logs` | Fetch full build logs for a deployment — useful for diagnosing build failures |
-| `redeploy_deployment` | Roll back by deploying an earlier deployment's image again, without rebuilding |
+| `redeploy_deployment` | Deploy an already-built image again, without rebuilding, using the app's current settings and environment — to apply configuration changes or to roll back |
 | `get_app` | Get an app's current state — live URL, custom hostnames, latest deployment and runtime health |
 | `get_runtime_logs` | Fetch recent logs and pod status (restarts, `CrashLoopBackOff`, exit code) from the running app. Automatically returns the crashed container's logs when the app is crash-looping |
 | `get_app_metrics` | Get per-pod readiness, restarts, last termination reason (e.g. `OOMKilled`) and CPU/memory usage. Usage requires metrics-server on the cluster |
 | `list_env_vars` | List an app's environment variables and the names of its secrets (secret values are never returned) |
-| `set_env_var` | Create or update a plaintext environment variable — applied on the next deployment |
-| `delete_env_var` | Delete an environment variable — applied on the next deployment |
+| `set_env_var` | Create or update a plaintext environment variable — applied on the next deployment, a redeploy is enough |
+| `delete_env_var` | Delete an environment variable — applied on the next deployment, a redeploy is enough |
 
 Secrets can't be set or deleted through MCP. Agents can see which secret names exist, but values are added in the canette UI so they never pass through the AI client.
+
+### Rebuild or redeploy
+
+There are two ways for an agent to start a deployment, and the server tells the agent which one to use:
+
+- **`trigger_deployment`** builds the app from its source and then deploys it. For a Git app that means fetching the latest commit and running a full image build, which takes minutes. It is needed when the source changed: new commits, or a different repository, branch, app path, Git credential or image tag.
+- **`redeploy_deployment`** deploys an image that is already built, with the app's current settings, environment variables and secrets. It takes seconds. It is enough when only configuration changed: environment variables, secrets, port, schedule, deployment type, volumes, hostnames or password protection.
+
+Environment variables are injected when the app starts, not when it is built, so changing one never requires a rebuild. After `set_env_var`, `delete_env_var` or a runtime-only `update_app`, the tool result tells the agent to redeploy the app's latest live deployment. You should not have to spell this out in your prompt.
 
 ### Example prompts
 
@@ -106,7 +111,12 @@ The agent will check the app's state, read the runtime logs and pod status (incl
 **Fixing missing configuration:**
 > "`my-app` crashes on startup — fix it"
 
-The agent will read the runtime logs, spot a missing variable such as `LOG_LEVEL`, set it and redeploy. If the missing value is a secret (for example `DATABASE_URL`), it will ask you to add it in the canette UI.
+The agent will read the runtime logs, spot a missing variable such as `LOG_LEVEL`, set it and redeploy the existing image without rebuilding. If the missing value is a secret (for example `DATABASE_URL`), it will ask you to add it in the canette UI.
+
+**Changing configuration:**
+> "Set `LOG_LEVEL` to `debug` on `my-app`"
+
+The agent will set the variable and redeploy the app's current image. No build runs, so the change is live in seconds.
 
 **Rolling back:**
 > "The latest deploy of `my-app` is broken — roll back to the previous version"
