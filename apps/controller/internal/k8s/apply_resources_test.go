@@ -127,3 +127,69 @@ func TestClearRollingUpdateForRecreate_NoopCases(t *testing.T) {
 		}
 	}
 }
+
+func pvcObj(storageClass string) *unstructured.Unstructured {
+	spec := map[string]interface{}{"accessModes": []interface{}{"ReadWriteOnce"}}
+	if storageClass != "" {
+		spec["storageClassName"] = storageClass
+	}
+	return unstructuredObj("v1", "PersistentVolumeClaim", "my-app-data", spec)
+}
+
+func desiredPVC(storageClass string) map[string]interface{} {
+	return pvcObj(storageClass).Object
+}
+
+func TestKeepLiveStorageClass_NewPVCUnchanged(t *testing.T) {
+	desired := desiredPVC("fast-ssd")
+	got, err := keepLiveStorageClass(context.Background(), newFakeDynamic(), testNamespace, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if class, _, _ := unstructured.NestedString(got, "spec", "storageClassName"); class != "fast-ssd" {
+		t.Errorf("storageClassName = %q, want fast-ssd", class)
+	}
+}
+
+func TestKeepLiveStorageClass_ExistingPVCKeepsItsClass(t *testing.T) {
+	dyn := newFakeDynamic(pvcObj("standard"))
+	desired := desiredPVC("fast-ssd")
+	got, err := keepLiveStorageClass(context.Background(), dyn, testNamespace, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if class, _, _ := unstructured.NestedString(got, "spec", "storageClassName"); class != "standard" {
+		t.Errorf("storageClassName = %q, want the live value standard", class)
+	}
+	// The caller's object must not be modified.
+	if class, _, _ := unstructured.NestedString(desired, "spec", "storageClassName"); class != "fast-ssd" {
+		t.Errorf("desired PVC was mutated: storageClassName = %q", class)
+	}
+}
+
+func TestKeepLiveStorageClass_ExistingPVCWithoutClass(t *testing.T) {
+	dyn := newFakeDynamic(pvcObj(""))
+	got, err := keepLiveStorageClass(context.Background(), dyn, testNamespace, desiredPVC("fast-ssd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := unstructured.NestedString(got, "spec", "storageClassName"); found {
+		t.Error("expected storageClassName to be left out when the live PVC has none")
+	}
+}
+
+func TestApplyOrDelete_DeletesWhenNil(t *testing.T) {
+	quota := unstructuredObj("v1", "ResourceQuota", resourceQuotaName, map[string]interface{}{})
+	dyn := newFakeDynamic(quota)
+	if err := applyOrDelete(context.Background(), dyn, gvrResourceQuota, testNamespace, resourceQuotaName, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err := dyn.Resource(gvrResourceQuota).Namespace(testNamespace).Get(context.Background(), resourceQuotaName, metav1.GetOptions{})
+	if !errors.IsNotFound(err) {
+		t.Errorf("expected stale quota to be deleted, got err=%v", err)
+	}
+	// Nothing to delete is fine too.
+	if err := applyOrDelete(context.Background(), dyn, gvrLimitRange, testNamespace, limitRangeName, nil); err != nil {
+		t.Errorf("deleting a missing LimitRange: %v", err)
+	}
+}

@@ -1049,3 +1049,115 @@ func TestBuildResources_AuthgateSidecarHasResources(t *testing.T) {
 		}
 	}
 }
+
+// ── Namespace policy and storage (issue #250, part 2) ────────────────────────
+
+func namespaceLabels(t *testing.T, res AppResources) map[string]interface{} {
+	t.Helper()
+	meta, _ := res.Namespace["metadata"].(map[string]interface{})
+	labels, ok := meta["labels"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Namespace labels missing")
+	}
+	return labels
+}
+
+func TestBuildResources_PodSecurityLabels(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NetworkPolicyEnabled = true
+	cfg.NamespacePolicy.PodSecurity = PodSecurityLevels{Enforce: "baseline", Warn: "restricted", Audit: "restricted"}
+	res := BuildResources(cfg)
+
+	labels := namespaceLabels(t, res)
+	want := map[string]string{
+		"pod-security.kubernetes.io/enforce": "baseline",
+		"pod-security.kubernetes.io/warn":    "restricted",
+		"pod-security.kubernetes.io/audit":   "restricted",
+	}
+	for k, v := range want {
+		if labels[k] != v {
+			t.Errorf("namespace label %s = %v, want %s", k, labels[k], v)
+		}
+	}
+	if labels[libk8s.LabelProject] != "my-project" {
+		t.Error("namespace lost its canette labels")
+	}
+
+	// PSA labels belong on the Namespace only.
+	npMeta, _ := res.NetworkPolicy["metadata"].(map[string]interface{})
+	npLabels, _ := npMeta["labels"].(map[string]interface{})
+	if _, ok := npLabels["pod-security.kubernetes.io/enforce"]; ok {
+		t.Error("PSA labels must not be added to the NetworkPolicy")
+	}
+}
+
+func TestBuildResources_PodSecurityEmptyLevelOmitted(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NamespacePolicy.PodSecurity = PodSecurityLevels{Enforce: "baseline"}
+	labels := namespaceLabels(t, BuildResources(cfg))
+	if labels["pod-security.kubernetes.io/enforce"] != "baseline" {
+		t.Error("expected enforce label")
+	}
+	for _, mode := range []string{"warn", "audit"} {
+		if _, ok := labels["pod-security.kubernetes.io/"+mode]; ok {
+			t.Errorf("expected no %s label for an empty level", mode)
+		}
+	}
+}
+
+func TestBuildResources_NoQuotaOrLimitRangeByDefault(t *testing.T) {
+	res := BuildResources(baseDeployConfig())
+	if res.ResourceQuota != nil {
+		t.Error("expected no ResourceQuota by default")
+	}
+	if res.LimitRange != nil {
+		t.Error("expected no LimitRange by default")
+	}
+}
+
+func TestBuildResources_QuotaAndLimitRange(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NamespacePolicy.QuotaHard = map[string]interface{}{"requests.cpu": "4", "requests.storage": "50Gi"}
+	cfg.NamespacePolicy.LimitRangeLimits = []interface{}{
+		map[string]interface{}{"type": "Container", "max": map[string]interface{}{"cpu": "2"}},
+	}
+	res := BuildResources(cfg)
+	ns := AppNamespace(cfg.ProjectID, cfg.ProjectSlug)
+
+	q := res.ResourceQuota
+	if q == nil || q["kind"] != "ResourceQuota" {
+		t.Fatalf("expected a ResourceQuota, got %v", q)
+	}
+	qMeta, _ := q["metadata"].(map[string]interface{})
+	if qMeta["name"] != "canette-quota" || qMeta["namespace"] != ns {
+		t.Errorf("quota name/namespace = %v/%v", qMeta["name"], qMeta["namespace"])
+	}
+	qSpec, _ := q["spec"].(map[string]interface{})
+	hard, _ := qSpec["hard"].(map[string]interface{})
+	if hard["requests.cpu"] != "4" || hard["requests.storage"] != "50Gi" {
+		t.Errorf("quota hard = %v", hard)
+	}
+
+	lr := res.LimitRange
+	if lr == nil || lr["kind"] != "LimitRange" {
+		t.Fatalf("expected a LimitRange, got %v", lr)
+	}
+	lrMeta, _ := lr["metadata"].(map[string]interface{})
+	if lrMeta["name"] != "canette-limits" || lrMeta["namespace"] != ns {
+		t.Errorf("limitrange name/namespace = %v/%v", lrMeta["name"], lrMeta["namespace"])
+	}
+	lrSpec, _ := lr["spec"].(map[string]interface{})
+	if limits, _ := lrSpec["limits"].([]interface{}); len(limits) != 1 {
+		t.Errorf("limitrange limits = %v, want 1 entry", lrSpec["limits"])
+	}
+}
+
+func TestBuildResources_PVCStorageClassName(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.StorageClassName = "fast-ssd"
+	cfg.Volumes = []VolumeSpec{{Name: "data", Type: "pvc", MountPath: "/data", Size: "1Gi"}}
+	spec, _ := BuildResources(cfg).PVCs[0]["spec"].(map[string]interface{})
+	if spec["storageClassName"] != "fast-ssd" {
+		t.Errorf("storageClassName = %v, want fast-ssd", spec["storageClassName"])
+	}
+}

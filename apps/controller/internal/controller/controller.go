@@ -31,6 +31,8 @@ type Config struct {
 	RegistryHost            string // Registry host extracted from PullRepo (e.g., "registry.example.com")
 	AuthgateImage           string // canette-authgate sidecar image ref, only used when an app's password gate is enabled
 	Workload                k8sres.WorkloadDefaults
+	NamespacePolicy         k8sres.NamespacePolicy
+	StorageClassName        string // PVC storage class for new volumes; empty uses the cluster default
 }
 
 // Controller polls for deploying deployments and reconciles them.
@@ -257,9 +259,11 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 			Enabled:      cfg.PasswordGate.Enabled,
 			PasswordHash: cfg.PasswordGate.PasswordHash,
 		},
-		AuthgateImage: c.cfg.AuthgateImage,
-		Healthcheck:   healthcheckSpec(cfg.Healthcheck),
-		Workload:      c.cfg.Workload,
+		AuthgateImage:    c.cfg.AuthgateImage,
+		Healthcheck:      healthcheckSpec(cfg.Healthcheck),
+		Workload:         c.cfg.Workload,
+		NamespacePolicy:  c.cfg.NamespacePolicy,
+		StorageClassName: c.cfg.StorageClassName,
 	}
 }
 

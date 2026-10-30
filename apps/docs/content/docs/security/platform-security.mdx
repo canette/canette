@@ -105,6 +105,22 @@ canette uses three tiers of namespaces:
 
 Build jobs cannot reach app namespaces or the control plane namespace. App namespaces cannot reach `canette-system` directly — all communication goes through the API.
 
+### Pod Security Admission
+
+Every project namespace carries [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/) labels. They give a cluster-enforced safety net that doesn't depend on what the controller generates:
+
+| Label | Default | Effect |
+|-------|---------|--------|
+| `pod-security.kubernetes.io/enforce` | `baseline` | Kubernetes rejects pods that break the [baseline](https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline) level, such as privileged containers, host networking or `hostPath` volumes. |
+| `pod-security.kubernetes.io/warn` | `restricted` | Kubernetes returns a warning when an app doesn't meet the stricter `restricted` level. The controller logs each warning once. These show which apps could run in hardened mode. |
+| `pod-security.kubernetes.io/audit` | `restricted` | Same check, recorded in the API server audit log. |
+
+Ordinary apps meet `baseline` without changes. Set the levels with the `controller.podSecurity.*` Helm values, or set one to `""` to drop that label. A namespace gets the new labels on its next deploy. Pods that are already running are never evicted.
+
+### Resource quotas (optional)
+
+Admins can cap what one project may use in total with a `ResourceQuota` (`canette-quota`), and limit single containers or volumes with a `LimitRange` (`canette-limits`). Both are off by default and configured with the `controller.namespaceQuota` and `controller.namespaceLimitRange` Helm values. When a quota is set, leave room for one extra pod: a rolling update starts the new pod before stopping the old one.
+
 ---
 
 ## App workload defaults

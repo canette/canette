@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -81,6 +83,9 @@ func run(log *zap.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load kubeconfig: %w", err)
 	}
+	// Route API server warnings (e.g. Pod Security "would violate restricted"
+	// on every app apply) to the structured log instead of stderr.
+	restCfg.WarningHandler = newWarningLogger(log)
 
 	k8sClient, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
@@ -131,6 +136,10 @@ func run(log *zap.Logger) error {
 	if err != nil {
 		return err
 	}
+	nsPolicy, err := loadNamespacePolicy()
+	if err != nil {
+		return err
+	}
 
 	imagePullSecretsEnabled := env.EnvOr("IMAGE_PULL_SECRETS_ENABLED", "true") == "true"
 	networkPolicyEnabled := env.EnvOr("NETWORK_POLICY_ENABLED", "true") == "true"
@@ -150,6 +159,8 @@ func run(log *zap.Logger) error {
 		RegistryHost:            registryHost,
 		AuthgateImage:           authgateImage,
 		Workload:                workload,
+		NamespacePolicy:         nsPolicy,
+		StorageClassName:        os.Getenv("STORAGE_CLASS_NAME"),
 	}
 
 	// ── Run ───────────────────────────────────────────────────────────────────
@@ -208,6 +219,76 @@ func loadWorkloadDefaults() (k8sres.WorkloadDefaults, error) {
 		}
 	}
 	return w, nil
+}
+
+// loadNamespacePolicy reads the per-namespace settings set from Helm values
+// (controller.podSecurity, controller.namespaceQuota, controller.namespaceLimitRange).
+func loadNamespacePolicy() (k8sres.NamespacePolicy, error) {
+	var p k8sres.NamespacePolicy
+	levels := []struct {
+		key string
+		def string
+		dst *string
+	}{
+		{"POD_SECURITY_ENFORCE", "baseline", &p.PodSecurity.Enforce},
+		{"POD_SECURITY_WARN", "restricted", &p.PodSecurity.Warn},
+		{"POD_SECURITY_AUDIT", "restricted", &p.PodSecurity.Audit},
+	}
+	for _, l := range levels {
+		v, set := os.LookupEnv(l.key)
+		if !set {
+			v = l.def
+		}
+		switch v {
+		case "", "privileged", "baseline", "restricted":
+			*l.dst = v
+		default:
+			return p, fmt.Errorf("invalid %s %q: must be privileged, baseline, restricted or empty", l.key, v)
+		}
+	}
+
+	if v := os.Getenv("NAMESPACE_QUOTA_HARD"); v != "" {
+		if err := json.Unmarshal([]byte(v), &p.QuotaHard); err != nil {
+			return p, fmt.Errorf("invalid NAMESPACE_QUOTA_HARD: must be a JSON object: %w", err)
+		}
+	}
+	if v := os.Getenv("NAMESPACE_LIMIT_RANGE_LIMITS"); v != "" {
+		if err := json.Unmarshal([]byte(v), &p.LimitRangeLimits); err != nil {
+			return p, fmt.Errorf("invalid NAMESPACE_LIMIT_RANGE_LIMITS: must be a JSON list: %w", err)
+		}
+	}
+	return p, nil
+}
+
+// warningLogger logs API server warnings once each. Pod Security warnings
+// repeat on every apply of the same app, so repeats are dropped.
+type warningLogger struct {
+	log  *zap.Logger
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+func newWarningLogger(log *zap.Logger) *warningLogger {
+	return &warningLogger{log: log, seen: map[string]struct{}{}}
+}
+
+func (w *warningLogger) HandleWarningHeader(_ int, _ string, text string) {
+	if text == "" {
+		return
+	}
+	w.mu.Lock()
+	_, dup := w.seen[text]
+	if !dup {
+		// Bound memory: start over rather than grow without limit.
+		if len(w.seen) >= 1000 {
+			w.seen = map[string]struct{}{}
+		}
+		w.seen[text] = struct{}{}
+	}
+	w.mu.Unlock()
+	if !dup {
+		w.log.Info("kubernetes api warning", zap.String("warning", text))
+	}
 }
 
 func loadKubeConfig() (*rest.Config, error) {

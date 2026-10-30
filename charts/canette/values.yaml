@@ -381,6 +381,49 @@ controller:
       activeDeadlineSeconds: 21600 # 6h
       # Delete finished Jobs and their pods after this many seconds.
       ttlSecondsAfterFinished: 86400 # 1 day
+  # Pod Security Admission levels set as labels on every app namespace:
+  # privileged | baseline | restricted, or "" to leave the label off.
+  # enforce rejects pods that break the level. warn and audit only report:
+  # warn returns a warning to the controller (logged once per message), audit
+  # adds an annotation to the API server audit log. warn/audit at
+  # "restricted" show which apps could run in hardened mode.
+  podSecurity:
+    enforce: baseline
+    warn: restricted
+    audit: restricted
+  # Optional ResourceQuota (canette-quota) in every project namespace, capping
+  # the total CPU/memory/storage of all apps in the project. Keep headroom
+  # for one extra pod: rolling updates start the new pod before stopping the
+  # old one. Disabling it removes the quota from namespaces on their next deploy.
+  namespaceQuota:
+    enabled: false
+    # ResourceQuota spec.hard, e.g.:
+    # hard:
+    #   requests.cpu: "4"
+    #   requests.memory: 8Gi
+    #   limits.cpu: "8"
+    #   limits.memory: 16Gi
+    #   requests.storage: 50Gi
+    #   persistentvolumeclaims: "10"
+    hard: {}
+  # Optional LimitRange (canette-limits) in every project namespace, e.g. to
+  # cap a single container or set defaults for containers without resources.
+  namespaceLimitRange:
+    enabled: false
+    # LimitRange spec.limits, e.g.:
+    # limits:
+    #   - type: Container
+    #     max:
+    #       cpu: "2"
+    #       memory: 4Gi
+    #   - type: PersistentVolumeClaim
+    #     max:
+    #       storage: 20Gi
+    limits: []
+  # StorageClass for new app PersistentVolumeClaims. Empty uses the cluster's
+  # default StorageClass. Only affects new volumes: a PVC's class can't be
+  # changed after it is created, so existing ones keep theirs.
+  storageClassName: ""
   resources:
     requests:
       cpu: 100m

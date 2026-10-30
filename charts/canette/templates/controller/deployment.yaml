@@ -83,6 +83,22 @@ spec:
               value: {{ .Values.controller.workloads.cronJob.activeDeadlineSeconds | int | quote }}
             - name: CRONJOB_TTL_SECONDS_AFTER_FINISHED
               value: {{ .Values.controller.workloads.cronJob.ttlSecondsAfterFinished | int | quote }}
+            - name: POD_SECURITY_ENFORCE
+              value: {{ .Values.controller.podSecurity.enforce | quote }}
+            - name: POD_SECURITY_WARN
+              value: {{ .Values.controller.podSecurity.warn | quote }}
+            - name: POD_SECURITY_AUDIT
+              value: {{ .Values.controller.podSecurity.audit | quote }}
+            {{- if .Values.controller.namespaceQuota.enabled }}
+            - name: NAMESPACE_QUOTA_HARD
+              value: {{ .Values.controller.namespaceQuota.hard | toJson | quote }}
+            {{- end }}
+            {{- if .Values.controller.namespaceLimitRange.enabled }}
+            - name: NAMESPACE_LIMIT_RANGE_LIMITS
+              value: {{ .Values.controller.namespaceLimitRange.limits | toJson | quote }}
+            {{- end }}
+            - name: STORAGE_CLASS_NAME
+              value: {{ .Values.controller.storageClassName | quote }}
             {{- if and (eq (include "canette.imagePullSecretsEnabled" .) "true") (include "canette.registryAuthSecretName" .) }}
             - name: REGISTRY_AUTH_CONFIG_FILE
               value: /run/secrets/registry-auth/config.json

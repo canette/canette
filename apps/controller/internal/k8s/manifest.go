@@ -17,6 +17,12 @@ func RenderManifest(res AppResources) (string, error) {
 	if res.NetworkPolicy != nil {
 		objs = append(objs, res.NetworkPolicy)
 	}
+	if res.ResourceQuota != nil {
+		objs = append(objs, res.ResourceQuota)
+	}
+	if res.LimitRange != nil {
+		objs = append(objs, res.LimitRange)
+	}
 	if res.Secret != nil {
 		objs = append(objs, redactSecret(res.Secret))
 	}
