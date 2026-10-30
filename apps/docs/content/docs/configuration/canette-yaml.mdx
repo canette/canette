@@ -75,4 +75,5 @@ When a deployment is triggered, canette determines the build method in this orde
 - Unknown fields are silently ignored (forward compatibility)
 - `env` values are stored in plaintext in your repo — do not put secrets here
 - `secrets` lists names only; values must be set via the UI or API
+- With `replicas` greater than 1, pods are spread across nodes and zones where possible, and a disruption budget keeps node drains from stopping more than one at a time. See [App workload defaults](/docs/security/platform-security#app-workload-defaults). Apps with a [Persistent Volume](/docs/configuration/volumes#how-apps-with-a-persistent-volume-are-deployed) are limited to 1 replica
 - `build.context` and `build.dockerfile` are paths relative to the app root (the directory set as **App path** in the UI), not the repo root

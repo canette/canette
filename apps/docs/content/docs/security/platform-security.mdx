@@ -123,9 +123,9 @@ Every app canette deploys gets these settings. They need no configuration and do
 
 **Deployment** (web and private apps)
 
-- **Rollout strategy:** apps without a persistent volume use a rolling update with `maxUnavailable: 0` and `maxSurge: 1`, so the new pod is ready before the old one stops. Apps with a persistent volume use `Recreate`, because a `ReadWriteOnce` volume can only be attached to one node at a time and a rolling update could get stuck. This means a short downtime on each deploy for apps with a persistent volume.
+- **Rollout strategy:** apps without a persistent volume use a rolling update with `maxUnavailable: 0` and `maxSurge: 1`, so the new pod is ready before the old one stops. Apps with a persistent volume use `Recreate`, because a `ReadWriteOnce` volume can only be attached to one node at a time and a rolling update could get stuck. This means a short downtime on each deploy for apps with a persistent volume (see [Volumes](/docs/configuration/volumes#how-apps-with-a-persistent-volume-are-deployed)).
 - **History:** only the last 3 old ReplicaSets are kept (`revisionHistoryLimit`).
-- **More than one replica:** pods are spread across zones and nodes where possible (`topologySpreadConstraints` with `ScheduleAnyway`), and a `PodDisruptionBudget` with `maxUnavailable: 1` stops a node drain from taking every replica down at once. The budget is removed when the app goes back to one replica.
+- **More than one replica** (not possible for apps with a persistent volume): pods are spread across zones and nodes where possible (`topologySpreadConstraints` with `ScheduleAnyway`), and a `PodDisruptionBudget` with `maxUnavailable: 1` stops a node drain from taking every replica down at once. The budget is removed when the app goes back to one replica.
 
 **CronJob**
 
