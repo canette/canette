@@ -179,13 +179,13 @@ func run(log *zap.Logger) error {
 
 // loadWorkloadDefaults reads the platform-wide workload settings set from
 // Helm values (controller.workloads). The fallbacks match the chart defaults;
-// 0 leaves a field to the Kubernetes default.
+// -1 leaves a field to the Kubernetes default, 0 is passed through as is.
 func loadWorkloadDefaults() (k8sres.WorkloadDefaults, error) {
 	var w k8sres.WorkloadDefaults
 	fields := []struct {
 		key string
 		def int
-		dst *int
+		dst **int
 	}{
 		{"TERMINATION_GRACE_PERIOD_SECONDS", 30, &w.TerminationGracePeriodSeconds},
 		{"REVISION_HISTORY_LIMIT", 3, &w.RevisionHistoryLimit},
@@ -195,16 +195,17 @@ func loadWorkloadDefaults() (k8sres.WorkloadDefaults, error) {
 		{"CRONJOB_TTL_SECONDS_AFTER_FINISHED", 86400, &w.CronJobTTLSecondsAfterFinished},
 	}
 	for _, f := range fields {
-		*f.dst = f.def
-		v := os.Getenv(f.key)
-		if v == "" {
-			continue
+		n := f.def
+		if v := os.Getenv(f.key); v != "" {
+			parsed, err := strconv.Atoi(v)
+			if err != nil || parsed < -1 {
+				return w, fmt.Errorf("invalid %s %q: must be an integer >= 0, or -1 to leave it unset", f.key, v)
+			}
+			n = parsed
 		}
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return w, fmt.Errorf("invalid %s %q: must be a non-negative integer", f.key, v)
+		if n >= 0 {
+			*f.dst = &n
 		}
-		*f.dst = n
 	}
 	return w, nil
 }

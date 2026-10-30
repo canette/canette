@@ -27,14 +27,15 @@ type AppResources struct {
 }
 
 // WorkloadDefaults holds platform-wide workload settings from Helm values.
-// A zero value means "leave the field out" and use the Kubernetes default.
+// A nil field means "leave it out" and use the Kubernetes default. 0 is a
+// real value (e.g. backoffLimit: 0 means no retries).
 type WorkloadDefaults struct {
-	TerminationGracePeriodSeconds  int
-	RevisionHistoryLimit           int
-	CronJobStartingDeadlineSeconds int
-	CronJobBackoffLimit            int
-	CronJobActiveDeadlineSeconds   int
-	CronJobTTLSecondsAfterFinished int
+	TerminationGracePeriodSeconds  *int
+	RevisionHistoryLimit           *int
+	CronJobStartingDeadlineSeconds *int
+	CronJobBackoffLimit            *int
+	CronJobActiveDeadlineSeconds   *int
+	CronJobTTLSecondsAfterFinished *int
 }
 
 // Resources holds resolved Kubernetes resource requests and limits.
@@ -106,11 +107,11 @@ type DeployConfig struct {
 	Workload             WorkloadDefaults
 }
 
-// setIfPositive sets m[key] = v only when v > 0, so unset defaults are left
-// to Kubernetes.
-func setIfPositive(m map[string]interface{}, key string, v int) {
-	if v > 0 {
-		m[key] = v
+// setIfSet sets m[key] = *v only when v is non-nil, so unset defaults are
+// left to Kubernetes.
+func setIfSet(m map[string]interface{}, key string, v *int) {
+	if v != nil {
+		m[key] = *v
 	}
 }
 
@@ -516,7 +517,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 			"seccompProfile": map[string]interface{}{"type": "RuntimeDefault"},
 		},
 	}
-	setIfPositive(podSpec, "terminationGracePeriodSeconds", cfg.Workload.TerminationGracePeriodSeconds)
+	setIfSet(podSpec, "terminationGracePeriodSeconds", cfg.Workload.TerminationGracePeriodSeconds)
 
 	// Password-gate sidecar: only meaningful for apps with a Service/HTTPRoute,
 	// so it's skipped entirely for CronJobs even if PasswordGate.Enabled is set
@@ -604,11 +605,11 @@ func BuildResources(cfg DeployConfig) AppResources {
 				"spec":     podSpec,
 			},
 		}
-		setIfPositive(jobSpec, "backoffLimit", cfg.Workload.CronJobBackoffLimit)
+		setIfSet(jobSpec, "backoffLimit", cfg.Workload.CronJobBackoffLimit)
 		// With concurrencyPolicy: Forbid, a hung run would otherwise block
 		// every later run forever.
-		setIfPositive(jobSpec, "activeDeadlineSeconds", cfg.Workload.CronJobActiveDeadlineSeconds)
-		setIfPositive(jobSpec, "ttlSecondsAfterFinished", cfg.Workload.CronJobTTLSecondsAfterFinished)
+		setIfSet(jobSpec, "activeDeadlineSeconds", cfg.Workload.CronJobActiveDeadlineSeconds)
+		setIfSet(jobSpec, "ttlSecondsAfterFinished", cfg.Workload.CronJobTTLSecondsAfterFinished)
 
 		cronJobSpec := map[string]interface{}{
 			"schedule":                   cfg.Schedule,
@@ -619,7 +620,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 		}
 		// Avoids a burst of missed runs (or "too many missed start times")
 		// after controller or cluster downtime.
-		setIfPositive(cronJobSpec, "startingDeadlineSeconds", cfg.Workload.CronJobStartingDeadlineSeconds)
+		setIfSet(cronJobSpec, "startingDeadlineSeconds", cfg.Workload.CronJobStartingDeadlineSeconds)
 
 		cronJob = map[string]interface{}{
 			"apiVersion": "batch/v1",
@@ -681,7 +682,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 				"spec":     podSpec,
 			},
 		}
-		setIfPositive(deploymentSpec, "revisionHistoryLimit", cfg.Workload.RevisionHistoryLimit)
+		setIfSet(deploymentSpec, "revisionHistoryLimit", cfg.Workload.RevisionHistoryLimit)
 
 		deployment = map[string]interface{}{
 			"apiVersion": "apps/v1",

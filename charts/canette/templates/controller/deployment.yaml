@@ -72,17 +72,17 @@ spec:
             - name: NETWORK_POLICY_ENABLED
               value: {{ .Values.controller.networkPolicy.enabled | quote }}
             - name: TERMINATION_GRACE_PERIOD_SECONDS
-              value: {{ .Values.controller.workloads.terminationGracePeriodSeconds | quote }}
+              value: {{ .Values.controller.workloads.terminationGracePeriodSeconds | int | quote }}
             - name: REVISION_HISTORY_LIMIT
-              value: {{ .Values.controller.workloads.revisionHistoryLimit | quote }}
+              value: {{ .Values.controller.workloads.revisionHistoryLimit | int | quote }}
             - name: CRONJOB_STARTING_DEADLINE_SECONDS
-              value: {{ .Values.controller.workloads.cronJob.startingDeadlineSeconds | quote }}
+              value: {{ .Values.controller.workloads.cronJob.startingDeadlineSeconds | int | quote }}
             - name: CRONJOB_BACKOFF_LIMIT
-              value: {{ .Values.controller.workloads.cronJob.backoffLimit | quote }}
+              value: {{ .Values.controller.workloads.cronJob.backoffLimit | int | quote }}
             - name: CRONJOB_ACTIVE_DEADLINE_SECONDS
-              value: {{ .Values.controller.workloads.cronJob.activeDeadlineSeconds | quote }}
+              value: {{ .Values.controller.workloads.cronJob.activeDeadlineSeconds | int | quote }}
             - name: CRONJOB_TTL_SECONDS_AFTER_FINISHED
-              value: {{ .Values.controller.workloads.cronJob.ttlSecondsAfterFinished | quote }}
+              value: {{ .Values.controller.workloads.cronJob.ttlSecondsAfterFinished | int | quote }}
             {{- if and (eq (include "canette.imagePullSecretsEnabled" .) "true") (include "canette.registryAuthSecretName" .) }}
             - name: REGISTRY_AUTH_CONFIG_FILE
               value: /run/secrets/registry-auth/config.json

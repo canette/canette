@@ -776,14 +776,16 @@ func TestBuildResources_NetworkPolicyPodSelectorEmpty(t *testing.T) {
 
 // ── Secure-by-default workload settings (issue #250) ─────────────────────────
 
+func intPtr(v int) *int { return &v }
+
 func testWorkloadDefaults() WorkloadDefaults {
 	return WorkloadDefaults{
-		TerminationGracePeriodSeconds:  30,
-		RevisionHistoryLimit:           3,
-		CronJobStartingDeadlineSeconds: 300,
-		CronJobBackoffLimit:            2,
-		CronJobActiveDeadlineSeconds:   21600,
-		CronJobTTLSecondsAfterFinished: 86400,
+		TerminationGracePeriodSeconds:  intPtr(30),
+		RevisionHistoryLimit:           intPtr(3),
+		CronJobStartingDeadlineSeconds: intPtr(300),
+		CronJobBackoffLimit:            intPtr(2),
+		CronJobActiveDeadlineSeconds:   intPtr(21600),
+		CronJobTTLSecondsAfterFinished: intPtr(86400),
 	}
 }
 
@@ -859,26 +861,49 @@ func TestBuildResources_SecurePodDefaultsCronJob(t *testing.T) {
 	assertSecurePodDefaults(t, podSpec)
 }
 
-func TestBuildResources_ZeroWorkloadDefaultsOmitted(t *testing.T) {
-	cfg := baseDeployConfig() // Workload left zero
+func TestBuildResources_UnsetWorkloadDefaultsOmitted(t *testing.T) {
+	cfg := baseDeployConfig() // Workload fields left nil
 	res := BuildResources(cfg)
 	if _, ok := deploymentPodSpec(t, res)["terminationGracePeriodSeconds"]; ok {
-		t.Error("terminationGracePeriodSeconds should be omitted when 0")
+		t.Error("terminationGracePeriodSeconds should be omitted when unset")
 	}
 	if _, ok := deploymentSpec(t, res)["revisionHistoryLimit"]; ok {
-		t.Error("revisionHistoryLimit should be omitted when 0")
+		t.Error("revisionHistoryLimit should be omitted when unset")
 	}
 
 	cfg.IsCronJob = true
 	cfg.Schedule = "@daily"
 	cronSpec, jobSpec, _ := cronJobSpecs(t, BuildResources(cfg))
 	if _, ok := cronSpec["startingDeadlineSeconds"]; ok {
-		t.Error("startingDeadlineSeconds should be omitted when 0")
+		t.Error("startingDeadlineSeconds should be omitted when unset")
 	}
 	for _, k := range []string{"backoffLimit", "activeDeadlineSeconds", "ttlSecondsAfterFinished"} {
 		if _, ok := jobSpec[k]; ok {
-			t.Errorf("jobTemplate.spec.%s should be omitted when 0", k)
+			t.Errorf("jobTemplate.spec.%s should be omitted when unset", k)
 		}
+	}
+}
+
+func TestBuildResources_ZeroWorkloadValuesPassedThrough(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Workload = WorkloadDefaults{
+		TerminationGracePeriodSeconds: intPtr(0),
+		RevisionHistoryLimit:          intPtr(0),
+		CronJobBackoffLimit:           intPtr(0),
+	}
+	res := BuildResources(cfg)
+	if got, ok := deploymentPodSpec(t, res)["terminationGracePeriodSeconds"]; !ok || got != 0 {
+		t.Errorf("terminationGracePeriodSeconds = %v (present %v), want 0", got, ok)
+	}
+	if got, ok := deploymentSpec(t, res)["revisionHistoryLimit"]; !ok || got != 0 {
+		t.Errorf("revisionHistoryLimit = %v (present %v), want 0", got, ok)
+	}
+
+	cfg.IsCronJob = true
+	cfg.Schedule = "@daily"
+	_, jobSpec, _ := cronJobSpecs(t, BuildResources(cfg))
+	if got, ok := jobSpec["backoffLimit"]; !ok || got != 0 {
+		t.Errorf("backoffLimit = %v (present %v), want 0", got, ok)
 	}
 }
 

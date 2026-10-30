@@ -154,7 +154,7 @@ These values are snapshotted into each deployment at trigger time. Changing them
 
 ### App workload defaults
 
-Applied to every user app. `0` leaves a field unset, so the Kubernetes default applies. See [App workload defaults](/docs/security/platform-security#app-workload-defaults).
+Applied to every user app. `-1` leaves a field unset, so the Kubernetes default applies. `0` is a real value, for example `backoffLimit: 0` means a failed run is not retried. See [App workload defaults](/docs/security/platform-security#app-workload-defaults).
 
 | Value | Default | Description |
 |-------|---------|-------------|

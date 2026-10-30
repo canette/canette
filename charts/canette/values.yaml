@@ -361,8 +361,9 @@ controller:
   # entirely if an app needs to reach another namespace or a private endpoint.
   networkPolicy:
     enabled: true
-  # Defaults applied to every user app workload. 0 leaves a field unset, so the
-  # Kubernetes default applies.
+  # Defaults applied to every user app workload. -1 leaves a field unset, so
+  # the Kubernetes default applies. 0 is a real value (e.g. backoffLimit: 0
+  # means no retries).
   workloads:
     # Seconds an app gets after SIGTERM before it is killed.
     terminationGracePeriodSeconds: 30
