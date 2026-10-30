@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -32,6 +34,8 @@ var (
 
 	gvrNetworkPolicy = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
 	gvrPDB           = schema.GroupVersionResource{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"}
+	gvrResourceQuota = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "resourcequotas"}
+	gvrLimitRange    = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "limitranges"}
 )
 
 const fieldManager = "can-controller"
@@ -84,6 +88,20 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 			return fmt.Errorf("delete stale networkpolicy: %w", err)
 		}
 	}
+	// Quota and LimitRange go before any workload, so new pods get the
+	// LimitRange defaults. When disabled, any copy left from an earlier
+	// configuration is deleted (idempotent), like the NetworkPolicy above.
+	if err := applyOrDelete(ctx, dyn, gvrResourceQuota, ns, resourceQuotaName, res.ResourceQuota); err != nil {
+		return fmt.Errorf("resourcequota: %w", err)
+	}
+	if res.ResourceQuota != nil {
+		if err := waitForQuotaUsage(ctx, dyn, ns, resourceQuotaName); err != nil {
+			return fmt.Errorf("resourcequota: %w", err)
+		}
+	}
+	if err := applyOrDelete(ctx, dyn, gvrLimitRange, ns, limitRangeName, res.LimitRange); err != nil {
+		return fmt.Errorf("limitrange: %w", err)
+	}
 	if res.Secret != nil {
 		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.Secret); err != nil {
 			return fmt.Errorf("apply secret: %w", err)
@@ -109,6 +127,10 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 	}
 	for i, pvc := range res.PVCs {
 		pvcName, _ := objectName(pvc)
+		pvc, err := keepLiveStorageClass(ctx, dyn, ns, pvc)
+		if err != nil {
+			return fmt.Errorf("pvc[%d] %s: %w", i, pvcName, err)
+		}
 		if err := ApplyResource(ctx, dyn, gvrPVC, ns, pvc); err != nil {
 			return fmt.Errorf("apply pvc[%d] %s: %w", i, pvcName, err)
 		}
@@ -161,6 +183,79 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 		}
 	}
 	return nil
+}
+
+// applyOrDelete applies obj, or deletes the resource called name when obj is nil.
+func applyOrDelete(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, obj map[string]interface{}) error {
+	if obj != nil {
+		return ApplyResource(ctx, dyn, gvr, namespace, obj)
+	}
+	return DeleteResource(ctx, dyn, gvr, namespace, name)
+}
+
+// How long ApplyAll waits for a new ResourceQuota's usage to be calculated.
+// Variables so tests can shorten them.
+var (
+	quotaUsageTimeout  = 10 * time.Second
+	quotaUsageInterval = 250 * time.Millisecond
+)
+
+// waitForQuotaUsage waits until the quota controller has calculated
+// status.used for every resource in the quota's spec.hard. Until then the
+// API server rejects anything the quota counts ("status unknown for quota"),
+// so the PVCs, Secrets and ConfigMaps applied right after a new or changed
+// quota would fail. Returns at once when usage is already known. On timeout
+// it returns nil and lets the deploy go ahead: if an object is still
+// rejected, the deploy fails with the API server's own error.
+func waitForQuotaUsage(ctx context.Context, dyn dynamic.Interface, namespace, name string) error {
+	err := wait.PollUntilContextTimeout(ctx, quotaUsageInterval, quotaUsageTimeout, true, func(ctx context.Context) (bool, error) {
+		q, err := dyn.Resource(gvrResourceQuota).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("get resourcequota %s: %w", name, err)
+		}
+		hard, _, _ := unstructured.NestedMap(q.Object, "spec", "hard")
+		used, _, _ := unstructured.NestedMap(q.Object, "status", "used")
+		for k := range hard {
+			if _, ok := used[k]; !ok {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil && ctx.Err() == nil && wait.Interrupted(err) {
+		return nil
+	}
+	return err
+}
+
+// keepLiveStorageClass returns the PVC to apply with spec.storageClassName
+// set to the live PVC's value when the PVC already exists. The field is
+// immutable, so applying a different class (e.g. after the Helm value
+// changed) would fail every deploy of that app. New PVCs are returned as is.
+func keepLiveStorageClass(ctx context.Context, dyn dynamic.Interface, namespace string, pvc map[string]interface{}) (map[string]interface{}, error) {
+	name, _ := objectName(pvc)
+	live, err := dyn.Resource(gvrPVC).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return pvc, nil
+		}
+		return nil, fmt.Errorf("get pvc: %w", err)
+	}
+	liveClass, found, _ := unstructured.NestedString(live.Object, "spec", "storageClassName")
+
+	spec, _ := pvc["spec"].(map[string]interface{})
+	newSpec := make(map[string]interface{}, len(spec)+1)
+	for k, v := range spec {
+		newSpec[k] = v
+	}
+	if found {
+		newSpec["storageClassName"] = liveClass
+	} else {
+		delete(newSpec, "storageClassName")
+	}
+	out := shallowCopy(pvc)
+	out["spec"] = newSpec
+	return out, nil
 }
 
 // clearRollingUpdateForRecreate removes spec.strategy.rollingUpdate from a live

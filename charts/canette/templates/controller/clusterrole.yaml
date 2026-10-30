@@ -43,6 +43,10 @@ rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
     verbs: ["create", "get", "patch", "delete"]
+  # Optional per-project ResourceQuota (canette-quota) and LimitRange (canette-limits)
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["create", "get", "patch", "delete"]
   # PodDisruptionBudget for apps running more than one replica
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]

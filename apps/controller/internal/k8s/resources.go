@@ -23,7 +23,9 @@ type AppResources struct {
 	NetworkPolicy   map[string]interface{} // nil when NetworkPolicyEnabled is false
 	// PodDisruptionBudget is nil for CronJobs and single-replica apps.
 	PodDisruptionBudget map[string]interface{}
-	AppSlug             string // needed by apply.go to clean up a stale AuthgateSecret when AuthgateSecret is nil
+	ResourceQuota       map[string]interface{} // nil when NamespacePolicy.QuotaHard is empty
+	LimitRange          map[string]interface{} // nil when NamespacePolicy.LimitRangeLimits is empty
+	AppSlug             string                 // needed by apply.go to clean up a stale AuthgateSecret when AuthgateSecret is nil
 }
 
 // WorkloadDefaults holds platform-wide workload settings from Helm values.
@@ -36,6 +38,28 @@ type WorkloadDefaults struct {
 	CronJobBackoffLimit            *int
 	CronJobActiveDeadlineSeconds   *int
 	CronJobTTLSecondsAfterFinished *int
+}
+
+// PodSecurityLevels are the Pod Security Admission levels set as labels on
+// every app namespace. An empty level leaves that label off.
+type PodSecurityLevels struct {
+	Enforce string
+	Warn    string
+	Audit   string
+	// Version ("latest" or e.g. "v1.30") pins the policy version each level is
+	// checked against, set as the matching *-version label. Empty leaves the
+	// version labels off, which Kubernetes treats as "latest".
+	Version string
+}
+
+// NamespacePolicy holds platform-wide settings for every app namespace,
+// set from Helm values.
+type NamespacePolicy struct {
+	PodSecurity PodSecurityLevels
+	// QuotaHard is a ResourceQuota spec.hard map. Empty means no quota.
+	QuotaHard map[string]interface{}
+	// LimitRangeLimits is a LimitRange spec.limits list. Empty means no LimitRange.
+	LimitRangeLimits []interface{}
 }
 
 // Resources holds resolved Kubernetes resource requests and limits.
@@ -105,6 +129,8 @@ type DeployConfig struct {
 	AuthgateImage        string           // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
 	Healthcheck          *HealthcheckSpec // nil when canette.yaml has no healthcheck block
 	Workload             WorkloadDefaults
+	NamespacePolicy      NamespacePolicy
+	StorageClassName     string // PVC storage class; empty uses the cluster default
 }
 
 // setIfSet sets m[key] = *v only when v is non-nil, so unset defaults are
@@ -180,6 +206,10 @@ func authgateSecretName(appSlug string) string {
 
 const networkPolicyName = "canette-default"
 
+const resourceQuotaName = "canette-quota"
+
+const limitRangeName = "canette-limits"
+
 // BuildResources constructs all K8s resource manifests for an app deployment.
 func BuildResources(cfg DeployConfig) AppResources {
 	ns := AppNamespace(cfg.ProjectID, cfg.ProjectSlug)
@@ -229,13 +259,50 @@ func BuildResources(cfg DeployConfig) AppResources {
 		nsLabels[libk8s.LabelOwner] = cfg.ProjectOwner
 	}
 
+	// Pod Security Admission labels go on the Namespace only, not on the
+	// namespace-level policy objects that reuse nsLabels below.
+	namespaceLabels := make(map[string]interface{}, len(nsLabels)+6)
+	for k, v := range nsLabels {
+		namespaceLabels[k] = v
+	}
+	for mode, level := range map[string]string{
+		"enforce": cfg.NamespacePolicy.PodSecurity.Enforce,
+		"warn":    cfg.NamespacePolicy.PodSecurity.Warn,
+		"audit":   cfg.NamespacePolicy.PodSecurity.Audit,
+	} {
+		if level != "" {
+			namespaceLabels["pod-security.kubernetes.io/"+mode] = level
+			if v := cfg.NamespacePolicy.PodSecurity.Version; v != "" {
+				namespaceLabels["pod-security.kubernetes.io/"+mode+"-version"] = v
+			}
+		}
+	}
+
 	namespace := map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "Namespace",
 		"metadata": map[string]interface{}{
 			"name":   ns,
-			"labels": nsLabels,
+			"labels": namespaceLabels,
 		},
+	}
+
+	var resourceQuota, limitRange map[string]interface{}
+	if len(cfg.NamespacePolicy.QuotaHard) > 0 {
+		resourceQuota = map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ResourceQuota",
+			"metadata":   resourceMeta(resourceQuotaName, ns, nsLabels, nil),
+			"spec":       map[string]interface{}{"hard": cfg.NamespacePolicy.QuotaHard},
+		}
+	}
+	if len(cfg.NamespacePolicy.LimitRangeLimits) > 0 {
+		limitRange = map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "LimitRange",
+			"metadata":   resourceMeta(limitRangeName, ns, nsLabels, nil),
+			"spec":       map[string]interface{}{"limits": cfg.NamespacePolicy.LimitRangeLimits},
+		}
 	}
 
 	var networkPolicy map[string]interface{}
@@ -439,6 +506,17 @@ func BuildResources(cfg DeployConfig) AppResources {
 		switch v.Type {
 		case "pvc":
 			pvcName := libk8s.PVCName(cfg.AppSlug, v.Name)
+			pvcSpec := map[string]interface{}{
+				"accessModes": []interface{}{"ReadWriteOnce"},
+				"resources": map[string]interface{}{
+					"requests": map[string]interface{}{"storage": v.Size},
+				},
+			}
+			// Omitted when empty, so the cluster's default StorageClass applies.
+			// apply.go keeps an existing PVC's class, since the field is immutable.
+			if cfg.StorageClassName != "" {
+				pvcSpec["storageClassName"] = cfg.StorageClassName
+			}
 			pvcs = append(pvcs, map[string]interface{}{
 				"apiVersion": "v1",
 				"kind":       "PersistentVolumeClaim",
@@ -447,12 +525,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 					"namespace": ns,
 					"labels":    labels,
 				},
-				"spec": map[string]interface{}{
-					"accessModes": []interface{}{"ReadWriteOnce"},
-					"resources": map[string]interface{}{
-						"requests": map[string]interface{}{"storage": v.Size},
-					},
-				},
+				"spec": pvcSpec,
 			})
 			podVolumes = append(podVolumes, map[string]interface{}{
 				"name":                  v.Name,
@@ -784,6 +857,8 @@ func BuildResources(cfg DeployConfig) AppResources {
 		AuthgateSecret:      authgateSecretObj,
 		NetworkPolicy:       networkPolicy,
 		PodDisruptionBudget: pdb,
+		ResourceQuota:       resourceQuota,
+		LimitRange:          limitRange,
 		AppSlug:             cfg.AppSlug,
 	}
 }

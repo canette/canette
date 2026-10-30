@@ -165,6 +165,22 @@ Applied to every user app. `-1` leaves a field unset, so the Kubernetes default 
 | `controller.workloads.cronJob.activeDeadlineSeconds` | `21600` | Max runtime of one run (6h) |
 | `controller.workloads.cronJob.ttlSecondsAfterFinished` | `86400` | Delete finished Jobs and their pods after this many seconds (1 day) |
 
+### Namespace policy and storage
+
+Applied to every project namespace on its next deploy. See [Pod Security Admission](/docs/security/platform-security#pod-security-admission) and [Resource quotas](/docs/security/platform-security#resource-quotas-optional).
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `controller.podSecurity.enforce` | `baseline` | Pod Security level enforced on app pods: `privileged`, `baseline`, `restricted`, or `""` for no label |
+| `controller.podSecurity.warn` | `restricted` | Level that only produces a warning, logged by the controller (without the app's name) |
+| `controller.podSecurity.audit` | `restricted` | Level that only adds an entry to the API server audit log, with the namespace and workload |
+| `controller.podSecurity.version` | `latest` | Policy version the levels are checked against: `latest` or a Kubernetes minor version such as `v1.30` |
+| `controller.namespaceQuota.enabled` | `false` | Create a `ResourceQuota` (`canette-quota`) in every project namespace |
+| `controller.namespaceQuota.hard` | `{}` | The quota's `spec.hard`, e.g. `requests.cpu: "4"`, `requests.storage: 50Gi` |
+| `controller.namespaceLimitRange.enabled` | `false` | Create a `LimitRange` (`canette-limits`) in every project namespace |
+| `controller.namespaceLimitRange.limits` | `[]` | The LimitRange's `spec.limits` list |
+| `controller.storageClassName` | `""` | StorageClass for new app Persistent Volumes. Empty uses the cluster default. Existing volumes keep their class, since it can't be changed after creation. |
+
 ### BuildKit
 
 | Value | Default | Description |

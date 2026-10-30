@@ -64,6 +64,7 @@ The volume name used for the underlying Kubernetes resource is derived automatic
 
 - **Config File** contents can be edited in place from the Volumes tab (the underlying `ConfigMap` is updated)
 - **Ephemeral** size limits can be changed via the API, but the settings page does not currently expose an edit control for it — remove and re-add the volume to change its size from the UI
+- A Persistent Volume uses the StorageClass set by your admin (`controller.storageClassName`), or the cluster's default class. The class is fixed when the volume is created
 - **Persistent Volume** configuration (size) is immutable after creation — the underlying `PersistentVolumeClaim` already exists and cannot be resized through canette
 - Deleting a Persistent Volume or Config File volume permanently deletes the underlying Kubernetes resource and its data; deleting an Ephemeral volume has no separate cleanup since it never persisted anything
 
