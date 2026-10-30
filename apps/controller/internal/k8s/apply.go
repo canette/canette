@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -91,6 +93,11 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 	// configuration is deleted (idempotent), like the NetworkPolicy above.
 	if err := applyOrDelete(ctx, dyn, gvrResourceQuota, ns, resourceQuotaName, res.ResourceQuota); err != nil {
 		return fmt.Errorf("resourcequota: %w", err)
+	}
+	if res.ResourceQuota != nil {
+		if err := waitForQuotaUsage(ctx, dyn, ns, resourceQuotaName); err != nil {
+			return fmt.Errorf("resourcequota: %w", err)
+		}
 	}
 	if err := applyOrDelete(ctx, dyn, gvrLimitRange, ns, limitRangeName, res.LimitRange); err != nil {
 		return fmt.Errorf("limitrange: %w", err)
@@ -184,6 +191,41 @@ func applyOrDelete(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupV
 		return ApplyResource(ctx, dyn, gvr, namespace, obj)
 	}
 	return DeleteResource(ctx, dyn, gvr, namespace, name)
+}
+
+// How long ApplyAll waits for a new ResourceQuota's usage to be calculated.
+// Variables so tests can shorten them.
+var (
+	quotaUsageTimeout  = 10 * time.Second
+	quotaUsageInterval = 250 * time.Millisecond
+)
+
+// waitForQuotaUsage waits until the quota controller has calculated
+// status.used for every resource in the quota's spec.hard. Until then the
+// API server rejects anything the quota counts ("status unknown for quota"),
+// so the PVCs, Secrets and ConfigMaps applied right after a new or changed
+// quota would fail. Returns at once when usage is already known. On timeout
+// it returns nil and lets the deploy go ahead: if an object is still
+// rejected, the deploy fails with the API server's own error.
+func waitForQuotaUsage(ctx context.Context, dyn dynamic.Interface, namespace, name string) error {
+	err := wait.PollUntilContextTimeout(ctx, quotaUsageInterval, quotaUsageTimeout, true, func(ctx context.Context) (bool, error) {
+		q, err := dyn.Resource(gvrResourceQuota).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("get resourcequota %s: %w", name, err)
+		}
+		hard, _, _ := unstructured.NestedMap(q.Object, "spec", "hard")
+		used, _, _ := unstructured.NestedMap(q.Object, "status", "used")
+		for k := range hard {
+			if _, ok := used[k]; !ok {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil && ctx.Err() == nil && wait.Interrupted(err) {
+		return nil
+	}
+	return err
 }
 
 // keepLiveStorageClass returns the PVC to apply with spec.storageClassName

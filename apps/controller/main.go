@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -221,6 +222,10 @@ func loadWorkloadDefaults() (k8sres.WorkloadDefaults, error) {
 	return w, nil
 }
 
+// podSecurityVersionRe matches the version format of the
+// pod-security.kubernetes.io/<mode>-version labels, e.g. v1.30.
+var podSecurityVersionRe = regexp.MustCompile(`^v1\.[0-9]+$`)
+
 // loadNamespacePolicy reads the per-namespace settings set from Helm values
 // (controller.podSecurity, controller.namespaceQuota, controller.namespaceLimitRange).
 func loadNamespacePolicy() (k8sres.NamespacePolicy, error) {
@@ -245,6 +250,11 @@ func loadNamespacePolicy() (k8sres.NamespacePolicy, error) {
 		default:
 			return p, fmt.Errorf("invalid %s %q: must be privileged, baseline, restricted or empty", l.key, v)
 		}
+	}
+
+	p.PodSecurity.Version = env.EnvOr("POD_SECURITY_VERSION", "latest")
+	if v := p.PodSecurity.Version; v != "latest" && !podSecurityVersionRe.MatchString(v) {
+		return p, fmt.Errorf("invalid POD_SECURITY_VERSION %q: must be latest or a Kubernetes minor version like v1.30", v)
 	}
 
 	if v := os.Getenv("NAMESPACE_QUOTA_HARD"); v != "" {

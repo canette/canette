@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -191,5 +192,63 @@ func TestApplyOrDelete_DeletesWhenNil(t *testing.T) {
 	// Nothing to delete is fine too.
 	if err := applyOrDelete(context.Background(), dyn, gvrLimitRange, testNamespace, limitRangeName, nil); err != nil {
 		t.Errorf("deleting a missing LimitRange: %v", err)
+	}
+}
+
+func quotaObj(used map[string]interface{}) *unstructured.Unstructured {
+	q := unstructuredObj("v1", "ResourceQuota", resourceQuotaName, map[string]interface{}{
+		"hard": map[string]interface{}{"requests.cpu": "4", "persistentvolumeclaims": "10"},
+	})
+	if used != nil {
+		q.Object["status"] = map[string]interface{}{"used": used}
+	}
+	return q
+}
+
+func shortQuotaWait(t *testing.T) {
+	t.Helper()
+	timeout, interval := quotaUsageTimeout, quotaUsageInterval
+	quotaUsageTimeout, quotaUsageInterval = 50*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { quotaUsageTimeout, quotaUsageInterval = timeout, interval })
+}
+
+func TestWaitForQuotaUsage_ReturnsWhenUsageKnown(t *testing.T) {
+	shortQuotaWait(t)
+	dyn := newFakeDynamic(quotaObj(map[string]interface{}{"requests.cpu": "0", "persistentvolumeclaims": "0"}))
+	start := time.Now()
+	if err := waitForQuotaUsage(context.Background(), dyn, testNamespace, resourceQuotaName); err != nil {
+		t.Fatalf("waitForQuotaUsage: %v", err)
+	}
+	if time.Since(start) >= quotaUsageTimeout {
+		t.Error("expected an immediate return when usage is already known")
+	}
+}
+
+func TestWaitForQuotaUsage_TimeoutIsNotAnError(t *testing.T) {
+	shortQuotaWait(t)
+	// Usage known for only one of the two resources.
+	dyn := newFakeDynamic(quotaObj(map[string]interface{}{"requests.cpu": "0"}))
+	start := time.Now()
+	if err := waitForQuotaUsage(context.Background(), dyn, testNamespace, resourceQuotaName); err != nil {
+		t.Fatalf("expected nil on timeout, got %v", err)
+	}
+	if time.Since(start) < quotaUsageTimeout {
+		t.Error("expected to wait until the timeout while usage is incomplete")
+	}
+}
+
+func TestWaitForQuotaUsage_MissingQuotaIsAnError(t *testing.T) {
+	shortQuotaWait(t)
+	if err := waitForQuotaUsage(context.Background(), newFakeDynamic(), testNamespace, resourceQuotaName); err == nil {
+		t.Error("expected an error when the quota doesn't exist")
+	}
+}
+
+func TestWaitForQuotaUsage_CancelledContextIsAnError(t *testing.T) {
+	shortQuotaWait(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitForQuotaUsage(ctx, newFakeDynamic(quotaObj(nil)), testNamespace, resourceQuotaName); err == nil {
+		t.Error("expected an error when the context is cancelled")
 	}
 }

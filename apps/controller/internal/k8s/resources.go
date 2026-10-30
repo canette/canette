@@ -46,6 +46,10 @@ type PodSecurityLevels struct {
 	Enforce string
 	Warn    string
 	Audit   string
+	// Version ("latest" or e.g. "v1.30") pins the policy version each level is
+	// checked against, set as the matching *-version label. Empty leaves the
+	// version labels off, which Kubernetes treats as "latest".
+	Version string
 }
 
 // NamespacePolicy holds platform-wide settings for every app namespace,
@@ -257,7 +261,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 
 	// Pod Security Admission labels go on the Namespace only, not on the
 	// namespace-level policy objects that reuse nsLabels below.
-	namespaceLabels := make(map[string]interface{}, len(nsLabels)+3)
+	namespaceLabels := make(map[string]interface{}, len(nsLabels)+6)
 	for k, v := range nsLabels {
 		namespaceLabels[k] = v
 	}
@@ -268,6 +272,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 	} {
 		if level != "" {
 			namespaceLabels["pod-security.kubernetes.io/"+mode] = level
+			if v := cfg.NamespacePolicy.PodSecurity.Version; v != "" {
+				namespaceLabels["pod-security.kubernetes.io/"+mode+"-version"] = v
+			}
 		}
 	}
 

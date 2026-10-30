@@ -1105,6 +1105,21 @@ func TestBuildResources_PodSecurityEmptyLevelOmitted(t *testing.T) {
 	}
 }
 
+func TestBuildResources_PodSecurityVersionLabels(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.NamespacePolicy.PodSecurity = PodSecurityLevels{Enforce: "baseline", Warn: "restricted", Version: "v1.30"}
+	labels := namespaceLabels(t, BuildResources(cfg))
+	for _, mode := range []string{"enforce", "warn"} {
+		if got := labels["pod-security.kubernetes.io/"+mode+"-version"]; got != "v1.30" {
+			t.Errorf("%s-version = %v, want v1.30", mode, got)
+		}
+	}
+	// No version label for a mode whose level is off.
+	if _, ok := labels["pod-security.kubernetes.io/audit-version"]; ok {
+		t.Error("expected no audit-version label when audit is off")
+	}
+}
+
 func TestBuildResources_NoQuotaOrLimitRangeByDefault(t *testing.T) {
 	res := BuildResources(baseDeployConfig())
 	if res.ResourceQuota != nil {

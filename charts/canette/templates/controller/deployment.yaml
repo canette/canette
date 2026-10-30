@@ -89,6 +89,8 @@ spec:
               value: {{ .Values.controller.podSecurity.warn | quote }}
             - name: POD_SECURITY_AUDIT
               value: {{ .Values.controller.podSecurity.audit | quote }}
+            - name: POD_SECURITY_VERSION
+              value: {{ .Values.controller.podSecurity.version | quote }}
             {{- if .Values.controller.namespaceQuota.enabled }}
             - name: NAMESPACE_QUOTA_HARD
               value: {{ .Values.controller.namespaceQuota.hard | toJson | quote }}

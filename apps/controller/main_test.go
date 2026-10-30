@@ -9,12 +9,12 @@ import (
 )
 
 func TestLoadNamespacePolicy_Defaults(t *testing.T) {
-	for _, k := range []string{"POD_SECURITY_ENFORCE", "POD_SECURITY_WARN", "POD_SECURITY_AUDIT", "NAMESPACE_QUOTA_HARD", "NAMESPACE_LIMIT_RANGE_LIMITS"} {
+	for _, k := range []string{"POD_SECURITY_ENFORCE", "POD_SECURITY_WARN", "POD_SECURITY_AUDIT", "POD_SECURITY_VERSION", "NAMESPACE_QUOTA_HARD", "NAMESPACE_LIMIT_RANGE_LIMITS"} {
 		t.Setenv(k, "")
 	}
 	// t.Setenv above makes the test restore the originals afterwards. The PSA
 	// variables must be unset, not empty: an empty level means "no label".
-	unsetenv(t, "POD_SECURITY_ENFORCE", "POD_SECURITY_WARN", "POD_SECURITY_AUDIT")
+	unsetenv(t, "POD_SECURITY_ENFORCE", "POD_SECURITY_WARN", "POD_SECURITY_AUDIT", "POD_SECURITY_VERSION")
 
 	p, err := loadNamespacePolicy()
 	if err != nil {
@@ -25,6 +25,26 @@ func TestLoadNamespacePolicy_Defaults(t *testing.T) {
 	}
 	if p.QuotaHard != nil || p.LimitRangeLimits != nil {
 		t.Error("expected no quota or LimitRange by default")
+	}
+	if p.PodSecurity.Version != "latest" {
+		t.Errorf("version = %q, want latest", p.PodSecurity.Version)
+	}
+}
+
+func TestLoadNamespacePolicy_Version(t *testing.T) {
+	t.Setenv("POD_SECURITY_VERSION", "v1.30")
+	p, err := loadNamespacePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.PodSecurity.Version != "v1.30" {
+		t.Errorf("version = %q, want v1.30", p.PodSecurity.Version)
+	}
+	for _, bad := range []string{"1.30", "v1.30.2", "v2.0", "newest"} {
+		t.Setenv("POD_SECURITY_VERSION", bad)
+		if _, err := loadNamespacePolicy(); err == nil {
+			t.Errorf("expected an error for POD_SECURITY_VERSION=%q", bad)
+		}
 	}
 }
 

@@ -112,10 +112,14 @@ Every project namespace carries [Pod Security Admission](https://kubernetes.io/d
 | Label | Default | Effect |
 |-------|---------|--------|
 | `pod-security.kubernetes.io/enforce` | `baseline` | Kubernetes rejects pods that break the [baseline](https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline) level, such as privileged containers, host networking or `hostPath` volumes. |
-| `pod-security.kubernetes.io/warn` | `restricted` | Kubernetes returns a warning when an app doesn't meet the stricter `restricted` level. The controller logs each warning once. These show which apps could run in hardened mode. |
-| `pod-security.kubernetes.io/audit` | `restricted` | Same check, recorded in the API server audit log. |
+| `pod-security.kubernetes.io/warn` | `restricted` | Kubernetes returns a warning when an app doesn't meet the stricter `restricted` level. The controller logs each warning once, but the message doesn't name the app. |
+| `pod-security.kubernetes.io/audit` | `restricted` | Same check, recorded in the API server audit log together with the namespace and workload. Use this to find which apps could run in hardened mode. |
 
 Ordinary apps meet `baseline` without changes. Set the levels with the `controller.podSecurity.*` Helm values, or set one to `""` to drop that label. A namespace gets the new labels on its next deploy. Pods that are already running are never evicted.
+
+`controller.podSecurity.version` sets the matching `*-version` labels. The default `latest` checks against the cluster's current Kubernetes version. Pin it (for example `v1.30`) if a cluster upgrade shouldn't change which pods are allowed.
+
+The Helm values are the only source for these labels. If someone changes a label on a project namespace by hand (for example to allow a privileged pod), the controller resets it on that project's next deploy.
 
 ### Resource quotas (optional)
 

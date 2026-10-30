@@ -384,13 +384,20 @@ controller:
   # Pod Security Admission levels set as labels on every app namespace:
   # privileged | baseline | restricted, or "" to leave the label off.
   # enforce rejects pods that break the level. warn and audit only report:
-  # warn returns a warning to the controller (logged once per message), audit
-  # adds an annotation to the API server audit log. warn/audit at
-  # "restricted" show which apps could run in hardened mode.
+  # warn returns a warning to the controller (logged once per message, without
+  # the app's name), audit adds an annotation to the API server audit log. Use
+  # the audit log to see which apps don't meet "restricted" and could run in
+  # hardened mode.
+  # These values are the only source for the labels: the controller resets a
+  # label someone changed by hand on the app's next deploy.
   podSecurity:
     enforce: baseline
     warn: restricted
     audit: restricted
+    # Policy version the levels are checked against: "latest" or a Kubernetes
+    # minor version such as "v1.30". Pinning it keeps a cluster upgrade from
+    # tightening the rules and rejecting pods that ran fine before.
+    version: latest
   # Optional ResourceQuota (canette-quota) in every project namespace, capping
   # the total CPU/memory/storage of all apps in the project. Keep headroom
   # for one extra pod: rolling updates start the new pod before stopping the
