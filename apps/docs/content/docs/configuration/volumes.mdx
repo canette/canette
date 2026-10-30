@@ -25,6 +25,20 @@ Use **Persistent Volume** for databases and anything that needs to survive a red
   Adding a **Persistent Volume** locks the app to 1 replica — the underlying disk (e.g. an EBS volume) is `ReadWriteOnce` and can only be attached to one pod at a time. canette rejects the volume if `replicas` in `canette.yaml` is already greater than 1, and rejects raising `replicas` while a PVC is attached.
 </Callout>
 
+## How apps with a Persistent Volume are deployed
+
+Apps without a Persistent Volume use a rolling update: the new pod starts and becomes ready before the old pod is stopped, so a deploy causes no downtime.
+
+Apps **with** a Persistent Volume use the `Recreate` strategy instead: the old pod is stopped completely before the new pod starts. Because the volume is `ReadWriteOnce`, a rolling update could leave the new pod waiting for a volume the old pod still holds, and the deploy would get stuck. Even when both pods land on the same node, two copies of the app writing to the same data at once (for example a SQLite file) can corrupt it. `Recreate` rules out both.
+
+What this means for you:
+
+- **Each deploy has a short downtime** while the old pod stops, the volume moves, and the new pod starts. This usually takes seconds, and up to about a minute on cloud disks.
+- **A broken release takes the app down.** With a rolling update, a new version that crashes leaves the old pod serving traffic. With `Recreate`, the old pod is already gone, so the app stays down until you redeploy a working version.
+- Adding a Persistent Volume to an existing app switches it to `Recreate` on its next deploy. Removing the last one switches it back to a rolling update.
+
+**Ephemeral** and **Config File** volumes don't change the strategy. See [App workload defaults](/docs/security/platform-security#app-workload-defaults) for the other settings every app gets.
+
 ## Mount path rules
 
 - Must be an absolute path (starts with `/`), 253 characters or fewer, and must not contain `..` or `//`

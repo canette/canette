@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -30,6 +31,7 @@ var (
 	gvrConfigMap  = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
 
 	gvrNetworkPolicy = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	gvrPDB           = schema.GroupVersionResource{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"}
 )
 
 const fieldManager = "can-controller"
@@ -121,10 +123,28 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 		if err := ApplyResource(ctx, dyn, gvrCronJob, ns, res.CronJob); err != nil {
 			return fmt.Errorf("apply cronjob: %w", err)
 		}
+		// The app may have been a multi-replica web/private app before.
+		if err := DeleteResource(ctx, dyn, gvrPDB, ns, res.AppSlug); err != nil {
+			return fmt.Errorf("delete stale poddisruptionbudget: %w", err)
+		}
 		return nil
+	}
+	if err := clearRollingUpdateForRecreate(ctx, dyn, ns, res.Deployment); err != nil {
+		return fmt.Errorf("prepare deployment strategy: %w", err)
 	}
 	if err := ApplyResource(ctx, dyn, gvrDeployment, ns, res.Deployment); err != nil {
 		return fmt.Errorf("apply deployment: %w", err)
+	}
+	if res.PodDisruptionBudget != nil {
+		if err := ApplyResource(ctx, dyn, gvrPDB, ns, res.PodDisruptionBudget); err != nil {
+			return fmt.Errorf("apply poddisruptionbudget: %w", err)
+		}
+	} else {
+		// Replicas dropped back to 1 — a leftover maxUnavailable: 1 PDB would
+		// block node drains entirely, so remove it.
+		if err := DeleteResource(ctx, dyn, gvrPDB, ns, res.AppSlug); err != nil {
+			return fmt.Errorf("delete stale poddisruptionbudget: %w", err)
+		}
 	}
 	if err := ApplyResource(ctx, dyn, gvrService, ns, res.Service); err != nil {
 		return fmt.Errorf("apply service: %w", err)
@@ -139,6 +159,36 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 		if err := DeleteResource(ctx, dyn, gvrHTTPRoute, ns, appName); err != nil {
 			return fmt.Errorf("delete stale httproute: %w", err)
 		}
+	}
+	return nil
+}
+
+// clearRollingUpdateForRecreate removes spec.strategy.rollingUpdate from a live
+// Deployment before it is switched to the Recreate strategy. The API server
+// rejects Recreate while rollingUpdate is set, and server-side apply won't
+// remove it when it came from API defaulting, since no field manager owns it.
+// No-op when the desired strategy isn't Recreate or the Deployment doesn't exist.
+func clearRollingUpdateForRecreate(ctx context.Context, dyn dynamic.Interface, namespace string, desired map[string]interface{}) error {
+	desiredType, _, _ := unstructured.NestedString(desired, "spec", "strategy", "type")
+	if desiredType != "Recreate" {
+		return nil
+	}
+	name, _ := objectName(desired)
+	live, err := dyn.Resource(gvrDeployment).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get deployment %s: %w", name, err)
+	}
+	if _, found, _ := unstructured.NestedMap(live.Object, "spec", "strategy", "rollingUpdate"); !found {
+		return nil
+	}
+	patch := []byte(`{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}`)
+	if _, err := dyn.Resource(gvrDeployment).Namespace(namespace).Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{
+		FieldManager: fieldManager,
+	}); err != nil {
+		return fmt.Errorf("patch deployment %s strategy: %w", name, err)
 	}
 	return nil
 }
@@ -329,7 +379,7 @@ func DeleteNamespace(ctx context.Context, dyn dynamic.Interface, namespace strin
 	return nil
 }
 
-// TeardownApp deletes the app's Deployment, Service, HTTPRoute, and ConfigMaps.
+// TeardownApp deletes the app's Deployment, Service, HTTPRoute, PodDisruptionBudget, and ConfigMaps.
 // The Namespace, Secret, and PVCs are left in place. PVCs hold user data and
 // are preserved across Stop so the app can be restarted without data loss —
 // they are reclaimed only when the project (namespace) is deleted.
@@ -341,6 +391,9 @@ func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug 
 		return err
 	}
 	if err := DeleteResource(ctx, dyn, gvrHTTPRoute, namespace, appSlug); err != nil {
+		return err
+	}
+	if err := DeleteResource(ctx, dyn, gvrPDB, namespace, appSlug); err != nil {
 		return err
 	}
 	if err := deleteConfigMapsForApp(ctx, dyn, namespace, appSlug); err != nil {
@@ -370,10 +423,14 @@ func deleteConfigMapsForApp(ctx context.Context, dyn dynamic.Interface, namespac
 	return nil
 }
 
-// TeardownCronJob deletes the app's CronJob.
+// TeardownCronJob deletes the app's CronJob, plus any PodDisruptionBudget left
+// over from when the app was a multi-replica web/private app.
 // The Namespace and Secret are left in place (cheap; reused on next deploy).
 func TeardownCronJob(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
-	return DeleteResource(ctx, dyn, gvrCronJob, namespace, appSlug)
+	if err := DeleteResource(ctx, dyn, gvrCronJob, namespace, appSlug); err != nil {
+		return err
+	}
+	return DeleteResource(ctx, dyn, gvrPDB, namespace, appSlug)
 }
 
 // DeleteAllPodsForApp force-deletes all pods for an app. Used by teardown to

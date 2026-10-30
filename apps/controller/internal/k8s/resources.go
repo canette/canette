@@ -21,7 +21,21 @@ type AppResources struct {
 	ConfigMaps      []map[string]interface{}
 	AuthgateSecret  map[string]interface{} // nil unless PasswordGate is enabled (never set for CronJobs)
 	NetworkPolicy   map[string]interface{} // nil when NetworkPolicyEnabled is false
-	AppSlug         string                 // needed by apply.go to clean up a stale AuthgateSecret when AuthgateSecret is nil
+	// PodDisruptionBudget is nil for CronJobs and single-replica apps.
+	PodDisruptionBudget map[string]interface{}
+	AppSlug             string // needed by apply.go to clean up a stale AuthgateSecret when AuthgateSecret is nil
+}
+
+// WorkloadDefaults holds platform-wide workload settings from Helm values.
+// A nil field means "leave it out" and use the Kubernetes default. 0 is a
+// real value (e.g. backoffLimit: 0 means no retries).
+type WorkloadDefaults struct {
+	TerminationGracePeriodSeconds  *int
+	RevisionHistoryLimit           *int
+	CronJobStartingDeadlineSeconds *int
+	CronJobBackoffLimit            *int
+	CronJobActiveDeadlineSeconds   *int
+	CronJobTTLSecondsAfterFinished *int
 }
 
 // Resources holds resolved Kubernetes resource requests and limits.
@@ -90,6 +104,24 @@ type DeployConfig struct {
 	PasswordGate         PasswordGateConfig
 	AuthgateImage        string           // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
 	Healthcheck          *HealthcheckSpec // nil when canette.yaml has no healthcheck block
+	Workload             WorkloadDefaults
+}
+
+// setIfSet sets m[key] = *v only when v is non-nil, so unset defaults are
+// left to Kubernetes.
+func setIfSet(m map[string]interface{}, key string, v *int) {
+	if v != nil {
+		m[key] = *v
+	}
+}
+
+func hasPVC(volumes []VolumeSpec) bool {
+	for _, v := range volumes {
+		if v.Type == "pvc" {
+			return true
+		}
+	}
+	return false
 }
 
 // shortSHA returns the first 7 characters of a commit SHA for display as a version label,
@@ -360,6 +392,11 @@ func BuildResources(cfg DeployConfig) AppResources {
 		"image":     cfg.ImageRef,
 		"env":       envList,
 		"resources": resourceSpec,
+		// Blocks setuid escalation (e.g. sudo). Root dropping privileges via
+		// gosu/su-exec still works. Stricter settings live in hardened mode (#251).
+		"securityContext": map[string]interface{}{
+			"allowPrivilegeEscalation": false,
+		},
 	}
 	if len(cfg.Command) > 0 {
 		containerSpec["command"] = cfg.Command
@@ -469,7 +506,18 @@ func BuildResources(cfg DeployConfig) AppResources {
 
 	podSpec := map[string]interface{}{
 		"containers": []interface{}{containerSpec},
+		// Apps never need the K8s API; without a token, a compromised app can't
+		// read namespace secrets such as canette-registry-creds.
+		"automountServiceAccountToken": false,
+		// All apps in a project share a namespace, so service links would inject
+		// e.g. REDIS_PORT=tcp://... from a sibling app named "redis" and break
+		// apps that expect a port number there.
+		"enableServiceLinks": false,
+		"securityContext": map[string]interface{}{
+			"seccompProfile": map[string]interface{}{"type": "RuntimeDefault"},
+		},
 	}
+	setIfSet(podSpec, "terminationGracePeriodSeconds", cfg.Workload.TerminationGracePeriodSeconds)
 
 	// Password-gate sidecar: only meaningful for apps with a Service/HTTPRoute,
 	// so it's skipped entirely for CronJobs even if PasswordGate.Enabled is set
@@ -522,6 +570,12 @@ func BuildResources(cfg DeployConfig) AppResources {
 				"readOnlyRootFilesystem":   true,
 				"capabilities":             map[string]interface{}{"drop": []interface{}{"ALL"}},
 			},
+			// Explicit resources so a namespace ResourceQuota on cpu/memory
+			// doesn't reject password-gated pods.
+			"resources": map[string]interface{}{
+				"requests": map[string]interface{}{"cpu": "10m", "memory": "16Mi"},
+				"limits":   map[string]interface{}{"cpu": "100m", "memory": "64Mi"},
+			},
 			"livenessProbe": map[string]interface{}{
 				"httpGet": map[string]interface{}{"path": authgateHealthzPath, "port": authgateSidecarPort},
 			},
@@ -541,44 +595,100 @@ func BuildResources(cfg DeployConfig) AppResources {
 		}
 	}
 
-	var deployment, service, httpRoute, cronJob map[string]interface{}
+	var deployment, service, httpRoute, cronJob, pdb map[string]interface{}
 
 	if cfg.IsCronJob {
 		podSpec["restartPolicy"] = "OnFailure"
+		jobSpec := map[string]interface{}{
+			"template": map[string]interface{}{
+				"metadata": templateMeta(labels, annotations),
+				"spec":     podSpec,
+			},
+		}
+		setIfSet(jobSpec, "backoffLimit", cfg.Workload.CronJobBackoffLimit)
+		// With concurrencyPolicy: Forbid, a hung run would otherwise block
+		// every later run forever.
+		setIfSet(jobSpec, "activeDeadlineSeconds", cfg.Workload.CronJobActiveDeadlineSeconds)
+		setIfSet(jobSpec, "ttlSecondsAfterFinished", cfg.Workload.CronJobTTLSecondsAfterFinished)
+
+		cronJobSpec := map[string]interface{}{
+			"schedule":                   cfg.Schedule,
+			"concurrencyPolicy":          "Forbid",
+			"failedJobsHistoryLimit":     3,
+			"successfulJobsHistoryLimit": 3,
+			"jobTemplate":                map[string]interface{}{"spec": jobSpec},
+		}
+		// Avoids a burst of missed runs (or "too many missed start times")
+		// after controller or cluster downtime.
+		setIfSet(cronJobSpec, "startingDeadlineSeconds", cfg.Workload.CronJobStartingDeadlineSeconds)
+
 		cronJob = map[string]interface{}{
 			"apiVersion": "batch/v1",
 			"kind":       "CronJob",
 			"metadata":   resourceMeta(cfg.AppSlug, ns, labels, annotations),
-			"spec": map[string]interface{}{
-				"schedule":                   cfg.Schedule,
-				"concurrencyPolicy":          "Forbid",
-				"failedJobsHistoryLimit":     3,
-				"successfulJobsHistoryLimit": 3,
-				"jobTemplate": map[string]interface{}{
-					"spec": map[string]interface{}{
-						"template": map[string]interface{}{
-							"metadata": templateMeta(labels, annotations),
-							"spec":     podSpec,
-						},
-					},
-				},
-			},
+			"spec":       cronJobSpec,
 		}
 	} else {
+		// A ReadWriteOnce PVC can only attach to one node at a time, so a
+		// rolling update can deadlock with the new pod waiting for the volume
+		// the old pod still holds. Apps with a PVC use Recreate instead.
+		strategy := map[string]interface{}{
+			"type": "RollingUpdate",
+			"rollingUpdate": map[string]interface{}{
+				"maxUnavailable": 0,
+				"maxSurge":       1,
+			},
+		}
+		if hasPVC(cfg.Volumes) {
+			strategy = map[string]interface{}{"type": "Recreate"}
+		}
+
+		if cfg.Replicas > 1 {
+			// matchLabelKeys scopes the spread to the pods of one ReplicaSet, so
+			// old pods being replaced during a rollout don't skew it.
+			spread := func(topologyKey string) map[string]interface{} {
+				return map[string]interface{}{
+					"maxSkew":           1,
+					"topologyKey":       topologyKey,
+					"whenUnsatisfiable": "ScheduleAnyway",
+					"labelSelector":     map[string]interface{}{"matchLabels": selectorLabels},
+					"matchLabelKeys":    []interface{}{"pod-template-hash"},
+				}
+			}
+			podSpec["topologySpreadConstraints"] = []interface{}{
+				spread("topology.kubernetes.io/zone"),
+				spread("kubernetes.io/hostname"),
+			}
+
+			pdb = map[string]interface{}{
+				"apiVersion": "policy/v1",
+				"kind":       "PodDisruptionBudget",
+				"metadata":   resourceMeta(cfg.AppSlug, ns, labels, nil),
+				"spec": map[string]interface{}{
+					"maxUnavailable": 1,
+					"selector":       map[string]interface{}{"matchLabels": selectorLabels},
+				},
+			}
+		}
+
+		deploymentSpec := map[string]interface{}{
+			"replicas": cfg.Replicas,
+			"strategy": strategy,
+			"selector": map[string]interface{}{
+				"matchLabels": selectorLabels,
+			},
+			"template": map[string]interface{}{
+				"metadata": templateMeta(labels, annotations),
+				"spec":     podSpec,
+			},
+		}
+		setIfSet(deploymentSpec, "revisionHistoryLimit", cfg.Workload.RevisionHistoryLimit)
+
 		deployment = map[string]interface{}{
 			"apiVersion": "apps/v1",
 			"kind":       "Deployment",
 			"metadata":   resourceMeta(cfg.AppSlug, ns, labels, annotations),
-			"spec": map[string]interface{}{
-				"replicas": cfg.Replicas,
-				"selector": map[string]interface{}{
-					"matchLabels": selectorLabels,
-				},
-				"template": map[string]interface{}{
-					"metadata": templateMeta(labels, annotations),
-					"spec":     podSpec,
-				},
-			},
+			"spec":       deploymentSpec,
 		}
 
 		// targetPort routes through the authgate sidecar when the password gate
@@ -662,17 +772,18 @@ func BuildResources(cfg DeployConfig) AppResources {
 	}
 
 	return AppResources{
-		Namespace:       namespace,
-		Secret:          secretObj,
-		ImagePullSecret: imagePullSecret,
-		Deployment:      deployment,
-		Service:         service,
-		HTTPRoute:       httpRoute,
-		CronJob:         cronJob,
-		PVCs:            pvcs,
-		ConfigMaps:      configMaps,
-		AuthgateSecret:  authgateSecretObj,
-		NetworkPolicy:   networkPolicy,
-		AppSlug:         cfg.AppSlug,
+		Namespace:           namespace,
+		Secret:              secretObj,
+		ImagePullSecret:     imagePullSecret,
+		Deployment:          deployment,
+		Service:             service,
+		HTTPRoute:           httpRoute,
+		CronJob:             cronJob,
+		PVCs:                pvcs,
+		ConfigMaps:          configMaps,
+		AuthgateSecret:      authgateSecretObj,
+		NetworkPolicy:       networkPolicy,
+		PodDisruptionBudget: pdb,
+		AppSlug:             cfg.AppSlug,
 	}
 }

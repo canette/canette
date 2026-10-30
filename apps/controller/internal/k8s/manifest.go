@@ -29,7 +29,11 @@ func RenderManifest(res AppResources) (string, error) {
 	if res.CronJob != nil {
 		objs = append(objs, res.CronJob)
 	} else {
-		objs = append(objs, res.Deployment, res.Service)
+		objs = append(objs, res.Deployment)
+		if res.PodDisruptionBudget != nil {
+			objs = append(objs, res.PodDisruptionBudget)
+		}
+		objs = append(objs, res.Service)
 		if res.HTTPRoute != nil {
 			objs = append(objs, res.HTTPRoute)
 		}

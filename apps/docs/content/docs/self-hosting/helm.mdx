@@ -152,6 +152,19 @@ These values are snapshotted into each deployment at trigger time. Changing them
 | `controller.gateway.name` | `can-gateway` | Gateway resource name |
 | `controller.gateway.namespace` | `kube-system` | Gateway resource namespace |
 
+### App workload defaults
+
+Applied to every user app. `-1` leaves a field unset, so the Kubernetes default applies. `0` is a real value, for example `backoffLimit: 0` means a failed run is not retried. See [App workload defaults](/docs/security/platform-security#app-workload-defaults).
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `controller.workloads.terminationGracePeriodSeconds` | `30` | Seconds an app gets after SIGTERM before it is killed |
+| `controller.workloads.revisionHistoryLimit` | `3` | Old ReplicaSets kept per app |
+| `controller.workloads.cronJob.startingDeadlineSeconds` | `300` | Skip a run that couldn't start within this many seconds of its schedule |
+| `controller.workloads.cronJob.backoffLimit` | `2` | Retries of a failed run |
+| `controller.workloads.cronJob.activeDeadlineSeconds` | `21600` | Max runtime of one run (6h) |
+| `controller.workloads.cronJob.ttlSecondsAfterFinished` | `86400` | Delete finished Jobs and their pods after this many seconds (1 day) |
+
 ### BuildKit
 
 | Value | Default | Description |
