@@ -773,3 +773,254 @@ func TestBuildResources_NetworkPolicyPodSelectorEmpty(t *testing.T) {
 		t.Errorf("expected empty podSelector (applies to every pod in the namespace), got %v", podSelector)
 	}
 }
+
+// ── Secure-by-default workload settings (issue #250) ─────────────────────────
+
+func testWorkloadDefaults() WorkloadDefaults {
+	return WorkloadDefaults{
+		TerminationGracePeriodSeconds:  30,
+		RevisionHistoryLimit:           3,
+		CronJobStartingDeadlineSeconds: 300,
+		CronJobBackoffLimit:            2,
+		CronJobActiveDeadlineSeconds:   21600,
+		CronJobTTLSecondsAfterFinished: 86400,
+	}
+}
+
+func deploymentSpec(t *testing.T, res AppResources) map[string]interface{} {
+	t.Helper()
+	spec, ok := res.Deployment["spec"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Deployment spec missing")
+	}
+	return spec
+}
+
+func deploymentPodSpec(t *testing.T, res AppResources) map[string]interface{} {
+	t.Helper()
+	tmpl, _ := deploymentSpec(t, res)["template"].(map[string]interface{})
+	podSpec, ok := tmpl["spec"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Deployment pod spec missing")
+	}
+	return podSpec
+}
+
+func cronJobSpecs(t *testing.T, res AppResources) (cronSpec, jobSpec, podSpec map[string]interface{}) {
+	t.Helper()
+	cronSpec, _ = res.CronJob["spec"].(map[string]interface{})
+	jobTmpl, _ := cronSpec["jobTemplate"].(map[string]interface{})
+	jobSpec, _ = jobTmpl["spec"].(map[string]interface{})
+	tmpl, _ := jobSpec["template"].(map[string]interface{})
+	podSpec, _ = tmpl["spec"].(map[string]interface{})
+	if podSpec == nil {
+		t.Fatal("CronJob pod spec missing")
+	}
+	return cronSpec, jobSpec, podSpec
+}
+
+func assertSecurePodDefaults(t *testing.T, podSpec map[string]interface{}) {
+	t.Helper()
+	if got := podSpec["automountServiceAccountToken"]; got != false {
+		t.Errorf("automountServiceAccountToken = %v, want false", got)
+	}
+	if got := podSpec["enableServiceLinks"]; got != false {
+		t.Errorf("enableServiceLinks = %v, want false", got)
+	}
+	sc, _ := podSpec["securityContext"].(map[string]interface{})
+	seccomp, _ := sc["seccompProfile"].(map[string]interface{})
+	if got := seccomp["type"]; got != "RuntimeDefault" {
+		t.Errorf("seccompProfile.type = %v, want RuntimeDefault", got)
+	}
+	containers, _ := podSpec["containers"].([]interface{})
+	app, _ := containers[0].(map[string]interface{})
+	csc, _ := app["securityContext"].(map[string]interface{})
+	if got := csc["allowPrivilegeEscalation"]; got != false {
+		t.Errorf("app container allowPrivilegeEscalation = %v, want false", got)
+	}
+}
+
+func TestBuildResources_SecurePodDefaultsDeployment(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Workload = testWorkloadDefaults()
+	podSpec := deploymentPodSpec(t, BuildResources(cfg))
+	assertSecurePodDefaults(t, podSpec)
+	if got := podSpec["terminationGracePeriodSeconds"]; got != 30 {
+		t.Errorf("terminationGracePeriodSeconds = %v, want 30", got)
+	}
+}
+
+func TestBuildResources_SecurePodDefaultsCronJob(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.IsCronJob = true
+	cfg.Schedule = "@daily"
+	cfg.Workload = testWorkloadDefaults()
+	_, _, podSpec := cronJobSpecs(t, BuildResources(cfg))
+	assertSecurePodDefaults(t, podSpec)
+}
+
+func TestBuildResources_ZeroWorkloadDefaultsOmitted(t *testing.T) {
+	cfg := baseDeployConfig() // Workload left zero
+	res := BuildResources(cfg)
+	if _, ok := deploymentPodSpec(t, res)["terminationGracePeriodSeconds"]; ok {
+		t.Error("terminationGracePeriodSeconds should be omitted when 0")
+	}
+	if _, ok := deploymentSpec(t, res)["revisionHistoryLimit"]; ok {
+		t.Error("revisionHistoryLimit should be omitted when 0")
+	}
+
+	cfg.IsCronJob = true
+	cfg.Schedule = "@daily"
+	cronSpec, jobSpec, _ := cronJobSpecs(t, BuildResources(cfg))
+	if _, ok := cronSpec["startingDeadlineSeconds"]; ok {
+		t.Error("startingDeadlineSeconds should be omitted when 0")
+	}
+	for _, k := range []string{"backoffLimit", "activeDeadlineSeconds", "ttlSecondsAfterFinished"} {
+		if _, ok := jobSpec[k]; ok {
+			t.Errorf("jobTemplate.spec.%s should be omitted when 0", k)
+		}
+	}
+}
+
+func TestBuildResources_RevisionHistoryLimit(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Workload = testWorkloadDefaults()
+	if got := deploymentSpec(t, BuildResources(cfg))["revisionHistoryLimit"]; got != 3 {
+		t.Errorf("revisionHistoryLimit = %v, want 3", got)
+	}
+}
+
+func TestBuildResources_RollingUpdateWithoutPVC(t *testing.T) {
+	cfg := baseDeployConfig()
+	// emptyDir and configmap volumes don't need Recreate.
+	cfg.Volumes = []VolumeSpec{
+		{Name: "tmp", Type: "emptyDir", MountPath: "/tmp/x"},
+		{Name: "cfg", Type: "configmap", MountPath: "/etc/app/config.yaml", Content: "a: 1"},
+	}
+	strategy, _ := deploymentSpec(t, BuildResources(cfg))["strategy"].(map[string]interface{})
+	if got := strategy["type"]; got != "RollingUpdate" {
+		t.Fatalf("strategy.type = %v, want RollingUpdate", got)
+	}
+	ru, _ := strategy["rollingUpdate"].(map[string]interface{})
+	if ru["maxUnavailable"] != 0 || ru["maxSurge"] != 1 {
+		t.Errorf("rollingUpdate = %v, want maxUnavailable 0 / maxSurge 1", ru)
+	}
+}
+
+func TestBuildResources_RecreateWithPVC(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Volumes = []VolumeSpec{{Name: "data", Type: "pvc", MountPath: "/data", Size: "1Gi"}}
+	strategy, _ := deploymentSpec(t, BuildResources(cfg))["strategy"].(map[string]interface{})
+	if got := strategy["type"]; got != "Recreate" {
+		t.Errorf("strategy.type = %v, want Recreate", got)
+	}
+	if _, ok := strategy["rollingUpdate"]; ok {
+		t.Error("rollingUpdate must not be set with Recreate")
+	}
+}
+
+func TestBuildResources_SingleReplicaNoSpreadNoPDB(t *testing.T) {
+	cfg := baseDeployConfig() // Replicas: 1
+	res := BuildResources(cfg)
+	if res.PodDisruptionBudget != nil {
+		t.Error("expected no PDB for a single replica")
+	}
+	if _, ok := deploymentPodSpec(t, res)["topologySpreadConstraints"]; ok {
+		t.Error("expected no topologySpreadConstraints for a single replica")
+	}
+}
+
+func TestBuildResources_MultiReplicaSpreadAndPDB(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Replicas = 3
+	res := BuildResources(cfg)
+
+	tsc, _ := deploymentPodSpec(t, res)["topologySpreadConstraints"].([]interface{})
+	if len(tsc) != 2 {
+		t.Fatalf("expected 2 topologySpreadConstraints, got %d", len(tsc))
+	}
+	keys := map[string]bool{}
+	for _, c := range tsc {
+		m, _ := c.(map[string]interface{})
+		keys[m["topologyKey"].(string)] = true
+		if m["whenUnsatisfiable"] != "ScheduleAnyway" {
+			t.Errorf("whenUnsatisfiable = %v, want ScheduleAnyway", m["whenUnsatisfiable"])
+		}
+		sel, _ := m["labelSelector"].(map[string]interface{})
+		ml, _ := sel["matchLabels"].(map[string]interface{})
+		if _, ok := ml[libk8s.LabelK8sVersion]; ok {
+			t.Error("spread labelSelector must not contain the per-deploy version label")
+		}
+	}
+	if !keys["topology.kubernetes.io/zone"] || !keys["kubernetes.io/hostname"] {
+		t.Errorf("topology keys = %v, want zone and hostname", keys)
+	}
+
+	pdb := res.PodDisruptionBudget
+	if pdb == nil {
+		t.Fatal("expected a PDB for replicas > 1")
+	}
+	if pdb["apiVersion"] != "policy/v1" || pdb["kind"] != "PodDisruptionBudget" {
+		t.Errorf("unexpected PDB type %v/%v", pdb["apiVersion"], pdb["kind"])
+	}
+	meta, _ := pdb["metadata"].(map[string]interface{})
+	if meta["name"] != "my-app" || meta["namespace"] != AppNamespace(cfg.ProjectID, cfg.ProjectSlug) {
+		t.Errorf("PDB name/namespace = %v/%v", meta["name"], meta["namespace"])
+	}
+	spec, _ := pdb["spec"].(map[string]interface{})
+	if spec["maxUnavailable"] != 1 {
+		t.Errorf("PDB maxUnavailable = %v, want 1", spec["maxUnavailable"])
+	}
+	sel, _ := spec["selector"].(map[string]interface{})
+	ml, _ := sel["matchLabels"].(map[string]interface{})
+	if ml[libk8s.LabelApp] != "my-app" {
+		t.Errorf("PDB selector app label = %v, want my-app", ml[libk8s.LabelApp])
+	}
+	if _, ok := ml[libk8s.LabelDeployment]; ok {
+		t.Error("PDB selector must not contain the per-deploy deployment label")
+	}
+}
+
+func TestBuildResources_CronJobNoPDB(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.IsCronJob = true
+	cfg.Schedule = "@daily"
+	cfg.Replicas = 3
+	if BuildResources(cfg).PodDisruptionBudget != nil {
+		t.Error("CronJobs must never get a PDB")
+	}
+}
+
+func TestBuildResources_CronJobDeadlines(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.IsCronJob = true
+	cfg.Schedule = "@daily"
+	cfg.Workload = testWorkloadDefaults()
+	cronSpec, jobSpec, _ := cronJobSpecs(t, BuildResources(cfg))
+	if got := cronSpec["startingDeadlineSeconds"]; got != 300 {
+		t.Errorf("startingDeadlineSeconds = %v, want 300", got)
+	}
+	want := map[string]int{"backoffLimit": 2, "activeDeadlineSeconds": 21600, "ttlSecondsAfterFinished": 86400}
+	for k, v := range want {
+		if got := jobSpec[k]; got != v {
+			t.Errorf("jobTemplate.spec.%s = %v, want %d", k, got, v)
+		}
+	}
+}
+
+func TestBuildResources_AuthgateSidecarHasResources(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$abc"}
+	containers, _ := deploymentPodSpec(t, BuildResources(cfg))["containers"].([]interface{})
+	if len(containers) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(containers))
+	}
+	gate, _ := containers[1].(map[string]interface{})
+	res, _ := gate["resources"].(map[string]interface{})
+	for _, k := range []string{"requests", "limits"} {
+		m, _ := res[k].(map[string]interface{})
+		if m["cpu"] == nil || m["memory"] == nil {
+			t.Errorf("authgate resources.%s = %v, want cpu and memory set", k, m)
+		}
+	}
+}

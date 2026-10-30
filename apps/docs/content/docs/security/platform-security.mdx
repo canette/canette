@@ -107,6 +107,37 @@ Build jobs cannot reach app namespaces or the control plane namespace. App names
 
 ---
 
+## App workload defaults
+
+Every app canette deploys gets these settings. They need no configuration and don't break normal apps, whether built by railpack or deployed from any Docker image.
+
+**Pod**
+
+| Setting | Why |
+|---------|-----|
+| `automountServiceAccountToken: false` | Apps never need the Kubernetes API. Without a token, a compromised app can't use the API to read Secrets in its namespace, such as the registry pull credentials. |
+| `enableServiceLinks: false` | All apps in a project share a namespace. Kubernetes would otherwise inject variables like `REDIS_PORT=tcp://10.0.0.5:6379` for every sibling Service, which breaks apps that expect a port number in `REDIS_PORT`. Reach other apps by DNS name instead (`<app-slug>.<namespace>.svc.cluster.local`). |
+| `seccompProfile: RuntimeDefault` | Blocks rarely needed, risky syscalls using the container runtime's default profile. |
+| `allowPrivilegeEscalation: false` (app container) | Blocks gaining privileges through setuid binaries such as `sudo`. An image that starts as root and drops to another user with `gosu`/`su-exec` still works. |
+| `terminationGracePeriodSeconds: 30` | Explicit time an app gets after SIGTERM to shut down cleanly. |
+
+**Deployment** (web and private apps)
+
+- **Rollout strategy:** apps without a persistent volume use a rolling update with `maxUnavailable: 0` and `maxSurge: 1`, so the new pod is ready before the old one stops. Apps with a persistent volume use `Recreate`, because a `ReadWriteOnce` volume can only be attached to one node at a time and a rolling update could get stuck. This means a short downtime on each deploy for apps with a persistent volume.
+- **History:** only the last 3 old ReplicaSets are kept (`revisionHistoryLimit`).
+- **More than one replica:** pods are spread across zones and nodes where possible (`topologySpreadConstraints` with `ScheduleAnyway`), and a `PodDisruptionBudget` with `maxUnavailable: 1` stops a node drain from taking every replica down at once. The budget is removed when the app goes back to one replica.
+
+**CronJob**
+
+- Runs that couldn't start within 5 minutes of their schedule (for example after cluster downtime) are skipped instead of all running at once (`startingDeadlineSeconds: 300`).
+- A failed run is retried at most 2 times (`backoffLimit: 2`).
+- A run is stopped after 6 hours (`activeDeadlineSeconds: 21600`). Runs never overlap, so a hung run would otherwise block every later run.
+- Finished Jobs and their pods are deleted after 1 day (`ttlSecondsAfterFinished: 86400`).
+
+All numbers can be changed with the `controller.workloads.*` Helm values. Stricter settings (non-root user, read-only root filesystem, dropped capabilities) can break some images and are not on by default.
+
+---
+
 ## Deployment snapshots
 
 When a deploy is triggered, the API writes a snapshot of all configuration into the `deployments` table — git URL, branch, resource defaults, environment variables, and scan policy at the exact moment of triggering.

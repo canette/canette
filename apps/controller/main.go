@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 
 	"canette.dev/controller/internal/controller"
 	controllerhealth "canette.dev/controller/internal/health"
+	k8sres "canette.dev/controller/internal/k8s"
 	"canette.dev/controller/internal/store"
 	"canette.dev/lib/crypto"
 	"canette.dev/lib/env"
@@ -125,6 +127,11 @@ func run(log *zap.Logger) error {
 		registryHost = registryHost[:idx]
 	}
 
+	workload, err := loadWorkloadDefaults()
+	if err != nil {
+		return err
+	}
+
 	imagePullSecretsEnabled := env.EnvOr("IMAGE_PULL_SECRETS_ENABLED", "true") == "true"
 	networkPolicyEnabled := env.EnvOr("NETWORK_POLICY_ENABLED", "true") == "true"
 	registryAuthConfigFile := env.EnvOr("REGISTRY_AUTH_CONFIG_FILE", "")
@@ -142,6 +149,7 @@ func run(log *zap.Logger) error {
 		RegistryAuthConfigFile:  registryAuthConfigFile,
 		RegistryHost:            registryHost,
 		AuthgateImage:           authgateImage,
+		Workload:                workload,
 	}
 
 	// ── Run ───────────────────────────────────────────────────────────────────
@@ -167,6 +175,38 @@ func run(log *zap.Logger) error {
 	// a still-current-in-its-view superseded deployment.
 	ctrl := controller.New(s, k8sClient, dynClient, cfg, cryptoKey, log, watcher.TriggerRefresh)
 	return ctrl.Run(ctx)
+}
+
+// loadWorkloadDefaults reads the platform-wide workload settings set from
+// Helm values (controller.workloads). The fallbacks match the chart defaults;
+// 0 leaves a field to the Kubernetes default.
+func loadWorkloadDefaults() (k8sres.WorkloadDefaults, error) {
+	var w k8sres.WorkloadDefaults
+	fields := []struct {
+		key string
+		def int
+		dst *int
+	}{
+		{"TERMINATION_GRACE_PERIOD_SECONDS", 30, &w.TerminationGracePeriodSeconds},
+		{"REVISION_HISTORY_LIMIT", 3, &w.RevisionHistoryLimit},
+		{"CRONJOB_STARTING_DEADLINE_SECONDS", 300, &w.CronJobStartingDeadlineSeconds},
+		{"CRONJOB_BACKOFF_LIMIT", 2, &w.CronJobBackoffLimit},
+		{"CRONJOB_ACTIVE_DEADLINE_SECONDS", 21600, &w.CronJobActiveDeadlineSeconds},
+		{"CRONJOB_TTL_SECONDS_AFTER_FINISHED", 86400, &w.CronJobTTLSecondsAfterFinished},
+	}
+	for _, f := range fields {
+		*f.dst = f.def
+		v := os.Getenv(f.key)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return w, fmt.Errorf("invalid %s %q: must be a non-negative integer", f.key, v)
+		}
+		*f.dst = n
+	}
+	return w, nil
 }
 
 func loadKubeConfig() (*rest.Config, error) {

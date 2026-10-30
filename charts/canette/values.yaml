@@ -361,6 +361,25 @@ controller:
   # entirely if an app needs to reach another namespace or a private endpoint.
   networkPolicy:
     enabled: true
+  # Defaults applied to every user app workload. 0 leaves a field unset, so the
+  # Kubernetes default applies.
+  workloads:
+    # Seconds an app gets after SIGTERM before it is killed.
+    terminationGracePeriodSeconds: 30
+    # Old ReplicaSets kept per app. Every deploy creates a new one.
+    revisionHistoryLimit: 3
+    cronJob:
+      # Skip a run that couldn't start within this many seconds of its
+      # schedule (e.g. after controller or cluster downtime) instead of
+      # catching up on every missed run.
+      startingDeadlineSeconds: 300
+      # Retries of a failed run before the Job is marked failed.
+      backoffLimit: 2
+      # Max runtime of one run. A hung run is killed after this; otherwise it
+      # would block every later run (concurrencyPolicy is Forbid).
+      activeDeadlineSeconds: 21600 # 6h
+      # Delete finished Jobs and their pods after this many seconds.
+      ttlSecondsAfterFinished: 86400 # 1 day
   resources:
     requests:
       cpu: 100m
