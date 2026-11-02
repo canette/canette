@@ -108,6 +108,8 @@ Auth is handled by `better-auth` embedded in the API server. Supported providers
 
 `apps/api/tests/auth/auth.test.ts` guards against drift between the two: it provisions its in-memory SQLite database from the real migrations in `apps/api/migrations/` (via `runMigrations`, same as every other test suite), not from better-auth's own `getMigrations()`. Because better-auth validates its schema against the live database on every write, any plugin field missing from the migrations fails a test immediately (`SchemaMismatchError`) instead of surfacing at runtime in production. Never change this test back to building its schema from `getMigrations()` — that generates a schema from the plugin config itself and can never detect drift from what's actually migrated.
 
+**Startup order: migrations before `auth.ts` is loaded.** better-auth runs its schema check the moment `betterAuth()` is constructed and caches a failed result for the life of the process. `apps/api/src/index.ts` therefore statically imports only `db` + `migrations`, and loads `./app` (which reaches `auth.ts`) via dynamic `await import()` after `runMigrations()`. It then calls `verifyAuthSchema()` (`src/auth/verify-schema.ts`), which exits the process on a schema mismatch so drift fails the deploy instead of 500ing on the first sign-up. `tests/startup-order.test.ts` walks the static import graph of `index.ts` and fails if `auth.ts` becomes reachable — don't add static imports of app/auth/route modules to `index.ts`.
+
 ---
 
 ## Component responsibilities
