@@ -9,6 +9,10 @@ canette supports four login methods: **GitHub OAuth**, **Google OAuth**, **gener
 
 ## GitHub OAuth
 
+<Callout type="info">
+  GitHub login uses a GitHub **OAuth App** (`api.githubClientId` / `api.githubClientSecret`). This is separate from the [GitHub App](/docs/configuration/github-app) (`api.githubApp`), which only gives canette access to private repositories — configuring `api.githubApp` alone does not add a GitHub button to the login page.
+</Callout>
+
 ### 1. Create an OAuth App
 
 1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**

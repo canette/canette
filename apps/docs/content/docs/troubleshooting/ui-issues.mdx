@@ -3,6 +3,27 @@ title: UI Issues
 description: Troubleshoot issues with the canette ui
 ---
 
+## Sign-up returns 403 or sign-in sends you back to the login page
+
+### Symptoms
+
+- Email sign-up shows an error, and the browser's network tab shows a `403` from `/api/auth/sign-up/email`
+- Signing in appears to succeed but you land on the login page again
+- The dashboard URL in your browser starts with `http://`
+
+### Cause
+
+canette requires HTTPS. The chart always configures the API with `https://<ui.hostname>` as the dashboard URL. When the dashboard is served over plain HTTP:
+
+- the API rejects auth requests because the browser's `Origin` (`http://...`) doesn't match the trusted `https://` URL
+- session cookies are marked `Secure`, so the browser refuses to store them over HTTP
+
+### Fix
+
+Add an HTTPS listener with a valid certificate to your Gateway and open the dashboard at `https://<ui.hostname>`. See [Requirements](/docs/self-hosting/requirements) for an example on k3s/Traefik, and [In-cluster registry](/docs/self-hosting/registry) for generating a local certificate with mkcert.
+
+If the 403 response body contains `"code": "SIGNUP_DISABLED"` or `"code": "INVALID_INVITE_CODE"` instead, the request reached canette and was blocked by the signup mode — check **Admin → Settings → Signup** or the `api.disableEmailSignup` Helm value.
+
 ## Password manager overlays blocking the UI
 
 Browser password manager extensions can inject invisible overlays that block parts of the canette UI.

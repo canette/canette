@@ -27,7 +27,14 @@ kubectl get gateways -A
 
 Note the Gateway's **name** and **namespace** — you'll need them in your values file. The defaults canette expects are `can-gateway` in `kube-system`; override them if yours are different.
 
-The Gateway must handle TLS termination — without it, the in-cluster registry HTTPRoute serves plain HTTP and kubelets will refuse to pull images from it. How you set up TLS depends on your environment:
+The Gateway must have an HTTPS listener with a certificate covering `ui.hostname` and `*.{domain}`. canette is not designed to run over plain HTTP — the chart always builds the dashboard URL as `https://<ui.hostname>`, so serving it over HTTP breaks more than just the registry:
+
+- **Sign-up and sign-in fail with a 403** — the API only trusts requests whose `Origin` matches the `https://` dashboard URL, so a browser on `http://` is rejected as "Invalid origin"
+- **Sessions don't stick** — session cookies are marked `Secure`, which browsers drop on plain HTTP, so you're sent back to the login page
+- **OAuth login fails** — GitHub, Google and OIDC callbacks are built as `https://<ui.hostname>/api/auth/callback/...`
+- **Image pulls fail** — the in-cluster registry HTTPRoute would serve plain HTTP, and kubelets refuse to pull from it
+
+How you set up TLS depends on your environment:
 
 - **cert-manager + Let's Encrypt** — the standard approach for clusters with a public IP. Install [cert-manager](https://cert-manager.io) and configure an `Issuer` or `ClusterIssuer` pointing at Let's Encrypt; your Gateway implementation picks up certificates automatically.
 - **mkcert (local testing)** — generates locally-trusted certificates without a commercial CA, but requires manually installing the CA in the cluster and on every client machine. See [In-cluster registry](/docs/self-hosting/registry) for a step-by-step walkthrough.

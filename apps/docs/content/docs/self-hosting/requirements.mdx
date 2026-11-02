@@ -14,6 +14,40 @@ import { Callout } from "fumadocs-ui/components/callout"
 - Kubernetes **1.27+**
 - [Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) installed
 - A Gateway API implementation (Traefik, Cilium, Kong, nginx, etc.)
+- A Gateway with an **HTTPS listener** and a TLS certificate covering `ui.hostname` and `*.{domain}` — canette does not work over plain HTTP (sign-in, sessions, OAuth and image pulls all depend on it; see [Installation](/docs/getting-started/installation#1-gateway-api-with-tls-termination))
+
+### Example: HTTPS listener on k3s (Traefik)
+
+k3s ships Traefik, which can act as the Gateway. Store your certificate as a TLS Secret in `kube-system` (the Gateway's namespace) — e.g. from [mkcert](/docs/self-hosting/registry) or cert-manager — then add an HTTPS listener next to the default HTTP one:
+
+```yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    providers:
+      kubernetesGateway:
+        enabled: true
+    gateway:
+      enabled: true
+      listeners:
+        web:
+          namespacePolicy:
+            from: All
+        websecure:
+          port: 8443 # Traefik's internal websecure port, exposed as 443
+          protocol: HTTPS
+          namespacePolicy:
+            from: All
+          certificateRefs:
+            - name: my-domain-tls # TLS Secret for ui.hostname and *.{domain}
+              kind: Secret
+```
+
+This creates a Gateway named `traefik-gateway` in `kube-system`, so set `controller.gateway.name: traefik-gateway` in your canette values. The available listener keys depend on the Traefik chart version bundled with your k3s release. Verify with `kubectl -n kube-system get gateway traefik-gateway -o yaml` — the `websecure` listener should report `Programmed: True`.
 
 ## Node requirements for builds
 
