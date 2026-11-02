@@ -3,6 +3,7 @@ import { join } from "path"
 import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
 import { createApp } from "../../src/services/apps"
+import { createVolume } from "../../src/services/volumes"
 
 const db = createTestDb()
 
@@ -269,6 +270,89 @@ describe("services/mcp runtime diagnostics", () => {
       expect(toCron.isError).toBe(true)
       const outsider = await handleTool("update_app", { app_id: created.id, port: 9000 }, "outsiderId")
       expect(outsider.isError).toBe(true)
+    })
+
+    it("create_app stores canette_config", async () => {
+      const result = await handleTool(
+        "create_app",
+        {
+          project_id: PROJECT_ID, name: "Cache", slug: "cache", source_type: "image", image_url: "redis",
+          canette_config: "replicas: 2\nresources:\n  limits:\n    memory: 256Mi\n",
+        },
+        "userId"
+      )
+      expect(result.isError).toBeUndefined()
+      expect(JSON.parse(text(result)).canetteConfig).toBe("replicas: 2\nresources:\n  limits:\n    memory: 256Mi\n")
+
+      const invalid = await handleTool(
+        "create_app",
+        { project_id: PROJECT_ID, name: "Broken", slug: "broken", source_type: "image", image_url: "redis", canette_config: "replicas: [1" },
+        "userId"
+      )
+      expect(invalid.isError).toBe(true)
+      expect(text(invalid)).toContain("not valid YAML")
+    })
+
+    it("update_app sets, replaces and clears canette_config as a runtime change", async () => {
+      const created = JSON.parse(text(await handleTool(
+        "create_app",
+        { project_id: PROJECT_ID, name: "Worker", slug: "worker", source_type: "image", image_url: "ghcr.io/example/worker" },
+        "userId"
+      )))
+      const update = async (canette_config: unknown) =>
+        handleTool("update_app", { app_id: created.id, canette_config }, "userId")
+
+      const set = JSON.parse(text(await update("replicas: 2\n")))
+      expect(set.canetteConfig).toBe("replicas: 2\n")
+      expect(set.note).toContain("apply it with redeploy_deployment")
+
+      const replaced = JSON.parse(text(await update("healthcheck:\n  path: /healthz\n")))
+      expect(replaced.canetteConfig).toBe("healthcheck:\n  path: /healthz\n")
+
+      expect(JSON.parse(text(await update(null))).canetteConfig).toBeUndefined()
+      await update("replicas: 1\n")
+      expect(JSON.parse(text(await update(""))).canetteConfig).toBeUndefined()
+    })
+
+    it("update_app rejects invalid canette_config with a readable error", async () => {
+      const created = JSON.parse(text(await handleTool(
+        "create_app",
+        { project_id: PROJECT_ID, name: "Validate", slug: "validate", source_type: "image", image_url: "nginx", canette_config: "replicas: 1\n" },
+        "userId"
+      )))
+      const update = (canette_config: unknown) => handleTool("update_app", { app_id: created.id, canette_config }, "userId")
+
+      const badYaml = await update("replicas: 1\nresources:\n  limits: {cpu: 1\n")
+      expect(badYaml.isError).toBe(true)
+      expect(text(badYaml)).toMatch(/not valid YAML: .+ \(line \d+, column \d+\)/)
+
+      const notMapping = await update("- replicas: 1\n")
+      expect(notMapping.isError).toBe(true)
+      expect(text(notMapping)).toContain("YAML mapping")
+
+      const oversize = await update(`# ${"x".repeat(11 * 1024)}\n`)
+      expect(oversize.isError).toBe(true)
+      expect(text(oversize)).toContain("10 KB")
+
+      // An object instead of a YAML string must not be read as "clear it".
+      const object = await update({ replicas: 2 })
+      expect(object.isError).toBe(true)
+
+      const app = JSON.parse(text(await handleTool("get_app", { app_id: created.id }, "userId")))
+      expect(app.canetteConfig).toBe("replicas: 1\n")
+    })
+
+    it("update_app refuses replicas > 1 while the app has a PVC", async () => {
+      const created = JSON.parse(text(await handleTool(
+        "create_app",
+        { project_id: PROJECT_ID, name: "Db", slug: "db", source_type: "image", image_url: "postgres" },
+        "userId"
+      )))
+      await createVolume(db, created.id, "userId", { type: "pvc", mountPath: "/data", config: { size: "1Gi" } })
+
+      const result = await handleTool("update_app", { app_id: created.id, canette_config: "replicas: 2\n" }, "userId")
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain("PVC")
     })
 
     it("redeploy_deployment reuses a built image and rejects one without", async () => {

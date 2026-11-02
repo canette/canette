@@ -33,6 +33,11 @@ const APP_SOURCE_PROPERTIES = {
   image_tag: { type: "string", description: "Docker image tag" },
   port: { type: "number", description: "Port the app listens on (not used for cronjob apps)" },
   schedule: { type: "string", description: "Cron expression (e.g. '0 2 * * *' or '@daily') — required for deployment_type 'cronjob'" },
+  canette_config: {
+    type: ["string", "null"],
+    description:
+      "The app's runtime config as a full canette.yaml document (resources, replicas, healthcheck, runtime, env, ingress). Replaces the stored document, it is not merged: read the current value from get_app's canetteConfig first and send the complete result. For a Git app, a canette.yaml committed in the repository wins field by field after the build, so check the repository first. build.* fields have no effect here; they are only read from the repository. Pass null or an empty string to clear it.",
+  },
 } as const
 
 // App settings and env vars are snapshotted when a deployment is triggered,
@@ -53,8 +58,9 @@ const SOURCE_ARGS = ["source_type", "git_url", "git_branch", "app_path", "image_
 const SERVER_INSTRUCTIONS = [
   "canette builds apps from Git into an image and deploys that image. There are two ways to start a deployment, and picking the right one matters:",
   "- trigger_deployment fetches the latest commit and runs a full build (minutes) before deploying. Use it when the source changed: new commits, or a different repository, branch, app path, credential or image tag. Also use it for an app's first deployment.",
-  "- redeploy_deployment deploys an already-built image again (seconds) with the app's current settings, env vars and secrets. Use it when only configuration changed: env vars, secrets, port, schedule, deployment type, volumes, hostnames or password protection. Env vars are injected at runtime, not at build time, so a rebuild is never needed for them.",
+  "- redeploy_deployment deploys an already-built image again (seconds) with the app's current settings, env vars and secrets. Use it when only configuration changed: env vars, secrets, port, schedule, deployment type, canette.yaml config, volumes, hostnames or password protection. Env vars are injected at runtime, not at build time, so a rebuild is never needed for them.",
   "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's latest live deployment.",
+  "Runtime config such as resources, replicas, healthcheck and ingress lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
 ].join("\n")
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
@@ -117,7 +123,7 @@ export const TOOLS = [
   {
     name: "update_app",
     description:
-      "Change an existing app's settings, such as its branch, port or image tag. Only the fields you pass are changed. Takes effect on the next deployment: after changing the source (repository, branch, app path, credential, image) call trigger_deployment; after changing only runtime settings (port, schedule, deployment type, name) call redeploy_deployment on the latest live deployment instead, which skips the build.",
+      "Change an existing app's settings, such as its branch, port or image tag. Only the fields you pass are changed. Takes effect on the next deployment: after changing the source (repository, branch, app path, credential, image) call trigger_deployment; after changing only runtime settings (port, schedule, deployment type, name, canette_config) call redeploy_deployment on the latest live deployment instead, which skips the build.",
     inputSchema: {
       type: "object",
       properties: {
@@ -325,6 +331,14 @@ function appPatch(args: Record<string, unknown>) {
   }
 }
 
+// Without this check a YAML object passed as canette_config would read as
+// absent and, on update_app, clear the stored config.
+function checkCanetteConfigArg(args: Record<string, unknown>): ToolResult | undefined {
+  const v = args.canette_config
+  if (v === undefined || v === null || typeof v === "string") return undefined
+  return err("canette_config must be the canette.yaml document as a string (or null to clear it)")
+}
+
 function argBool(args: Record<string, unknown>, key: string): boolean | undefined {
   const v = args[key]
   if (typeof v === "boolean") return v
@@ -386,12 +400,15 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!projectId) return err("project_id is required")
         if (!name) return err("name is required")
         if (!slug) return err("slug is required")
+        const configErr = checkCanetteConfigArg(args)
+        if (configErr) return configErr
 
         const app = await createApp(db, projectId, userId, {
           name,
           slug,
           ...appPatch(args),
           gitCredentialId: arg(args, "git_credential_id"),
+          canetteConfig: arg(args, "canette_config") || undefined,
         })
         return ok(app)
       }
@@ -403,6 +420,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const patch: Parameters<typeof updateApp>[3] = { name: arg(args, "name"), ...appPatch(args) }
         // null (or an empty string) removes the credential; absent leaves it alone.
         if ("git_credential_id" in args) patch.gitCredentialId = arg(args, "git_credential_id") || null
+        if ("canette_config" in args) {
+          const configErr = checkCanetteConfigArg(args)
+          if (configErr) return configErr
+          patch.canetteConfig = arg(args, "canette_config") || null
+        }
         if (Object.values(patch).every((v) => v === undefined)) return err("Pass at least one setting to change")
 
         const app = await updateApp(db, appId, userId, patch)

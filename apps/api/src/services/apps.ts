@@ -4,7 +4,7 @@ import type { Selectable, Updateable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
-import { getReplicasFromCanetteConfig } from "./canette-config"
+import { getReplicasFromCanetteConfig, validateCanetteConfigYaml } from "./canette-config"
 import { supportsForUpdate } from "../db/dialect"
 import { AUTHGATE_SIDECAR_PORT } from "./reserved-ports"
 
@@ -175,10 +175,11 @@ function validateSchedule(schedule: string): void {
 }
 
 function validateCanetteConfig(yaml: string): void {
-  // Basic size guard — full YAML parsing happens in the controller at deploy time.
   if (yaml.length > 10 * 1024) {
     throw new ServiceError("canetteConfig must not exceed 10 KB", "VALIDATION_ERROR", 400)
   }
+  // Syntax only — field validation happens in the controller at deploy time.
+  validateCanetteConfigYaml(yaml)
 }
 
 // Accepted git URL forms:
