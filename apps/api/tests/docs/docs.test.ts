@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
+import { mkdtempSync, rmSync } from "fs"
+import { tmpdir } from "os"
+import { join } from "path"
 import { loadDocs, parsePage } from "../../src/docs/load"
 import { createDocsIndex, docs, normalizeDocsPath, renderDocsPage } from "../../src/docs"
 
@@ -25,8 +28,19 @@ describe("docs/load", () => {
     }
   })
 
-  it("returns an empty list when the docs dir is missing", () => {
-    expect(loadDocs("/nonexistent/docs/dir")).toEqual([])
+  it("fails when the docs dir is missing or empty", () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      expect(() => loadDocs("/nonexistent/docs/dir")).toThrow("docs directory not found")
+      const empty = mkdtempSync(join(tmpdir(), "canette-docs-"))
+      try {
+        expect(() => loadDocs(empty)).toThrow("no .mdx pages found")
+      } finally {
+        rmSync(empty, { recursive: true, force: true })
+      }
+    } finally {
+      errors.mockRestore()
+    }
   })
 
   it("converts callouts, frontmatter and links", () => {

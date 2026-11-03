@@ -27,13 +27,27 @@ const CALLOUT_LABELS: Record<string, string> = {
   error: "Important",
 }
 
+/**
+ * Throws when the docs are missing, so a build without them fails instead of
+ * silently shipping a binary whose docs tools only return errors. In Docker,
+ * apps/docs/content must be copied into the build stage.
+ */
 export function loadDocs(dir: string = DEFAULT_DOCS_DIR): DocsPage[] {
-  if (!existsSync(dir)) return []
+  if (!existsSync(dir)) fail(`docs directory not found: ${dir}`)
   const pages: DocsPage[] = []
   for (const rel of orderedPages(dir, "")) {
     pages.push(parsePage(rel, readFileSync(join(dir, `${rel}.mdx`), "utf8")))
   }
+  if (pages.length === 0) fail(`no .mdx pages found in ${dir}`)
   return pages
+}
+
+function fail(reason: string): never {
+  const message = `Cannot bundle the canette docs for the MCP server: ${reason}. Copy apps/docs/content into the build (see apps/api/Dockerfile).`
+  // Bun replaces an error thrown inside a macro with a generic "cannot coerce
+  // Exception" message, so print the real reason first.
+  console.error(message)
+  throw new Error(message)
 }
 
 /** Page paths in sidebar order (meta.json `pages`), then anything meta.json doesn't list. */
