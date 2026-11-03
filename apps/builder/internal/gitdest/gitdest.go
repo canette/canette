@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -22,6 +23,10 @@ import (
 const AllowedOriginsEnv = "GIT_CREDENTIAL_ALLOWED_ORIGINS"
 
 const githubOrigin = "https://github.com"
+
+// scpStyleRe matches scp-style SSH URLs (git@host:path), same shape the
+// git-init container accepts.
+var scpStyleRe = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:\S+$`)
 
 // builtinOrigins are the trusted public hosts, per credential provider.
 var builtinOrigins = map[string]string{
@@ -65,10 +70,10 @@ func Check(provider, credType, gitURL string) error {
 		return nil
 	}
 
-	// Tokens are only attached to HTTP(S) clones. SSH-style URLs never carry them.
+	// Tokens are only attached to HTTP(S) clones, so the two SSH forms never
+	// carry them. Everything else fails closed: it must be a canonical https URL.
 	trimmed := strings.TrimSpace(gitURL)
-	lower := strings.ToLower(trimmed)
-	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
+	if scpStyleRe.MatchString(trimmed) || strings.HasPrefix(strings.ToLower(trimmed), "ssh://") {
 		return nil
 	}
 
@@ -76,8 +81,14 @@ func Check(provider, credType, gitURL string) error {
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("the repository URL is not a valid URL")
 	}
-	if !strings.EqualFold(u.Scheme, "https") {
+	if u.Scheme != "https" {
 		return fmt.Errorf("git credentials can only be used with https:// repository URLs")
+	}
+	// Reject anything other parsers (git/curl, the API's WHATWG parser) might
+	// resolve to a different host: userinfo, backslashes, opaque forms.
+	if u.User != nil || u.Opaque != "" || strings.Contains(trimmed, "\\") ||
+		!strings.HasPrefix(trimmed, "https://"+u.Host) {
+		return fmt.Errorf("the repository URL must be a plain https://host/owner/repo URL to use a git credential")
 	}
 	origin := originOf(u)
 

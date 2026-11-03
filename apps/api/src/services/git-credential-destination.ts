@@ -18,6 +18,9 @@ const BUILTIN_GIT_ORIGINS: Record<string, string> = {
   gitlab: "https://gitlab.com",
 }
 
+// scp-style SSH URL: git@host:path (same shape the builder's git-init accepts).
+const SCP_STYLE_RE = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+$/
+
 interface CredentialLike {
   provider: string
   type: string
@@ -58,9 +61,10 @@ export function credentialDestinationError(credential: CredentialLike, gitUrl: s
   // SSH keys never leave the build pod — only a signature is sent.
   if (credential.type === "ssh_key") return null
 
-  // Tokens are only attached to HTTP(S) clones. SSH-style URLs never carry them.
+  // Tokens are only attached to HTTP(S) clones, so the two SSH forms never carry
+  // them. Everything else fails closed: it must be a canonical https:// URL.
   const trimmed = gitUrl.trim()
-  if (!/^https?:\/\//i.test(trimmed)) return null
+  if (SCP_STYLE_RE.test(trimmed) || /^ssh:\/\//i.test(trimmed)) return null
 
   let url: URL
   try {
@@ -70,6 +74,13 @@ export function credentialDestinationError(credential: CredentialLike, gitUrl: s
   }
   if (url.protocol !== "https:") {
     return "Git credentials can only be used with https:// repository URLs"
+  }
+  // Reject anything the WHATWG parser would normalise into a different host
+  // than other parsers (git/curl, Go) might see: userinfo, backslashes,
+  // missing slashes. The raw authority must equal the parsed host.
+  const rawAuthority = /^https:\/\/([^/?#]*)/i.exec(trimmed)?.[1]?.toLowerCase().replace(/:443$/, "")
+  if (url.username || url.password || trimmed.includes("\\") || rawAuthority !== url.host) {
+    return "The repository URL must be a plain https://host/owner/repo URL to use a git credential"
   }
   const origin = url.origin
 

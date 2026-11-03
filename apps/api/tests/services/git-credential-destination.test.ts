@@ -59,6 +59,22 @@ describe("credentialDestinationError", () => {
     expect(credentialDestinationError(giteaPat, "https://x.example/a/b")).not.toBeNull()
   })
 
+  it("fails closed on non-canonical or unknown-scheme URLs", () => {
+    for (const url of [
+      "https:attacker.example/a/b",
+      "https:/attacker.example/a/b",
+      "https://github.com\\@attacker.example/a/b",
+      "https:\\\\github.com/a/b",
+      "https://user@github.com/a/b",
+      "https://github.com:x@attacker.example/a/b",
+      "ftp://github.com/a/b",
+      "file:///etc/passwd",
+      "attacker.example/a/b",
+    ]) {
+      expect(credentialDestinationError(githubPat, url)).not.toBeNull()
+    }
+  })
+
   it("allows SSH keys and SSH URLs, which never carry a token", () => {
     expect(credentialDestinationError(sshKey, "https://anything.example/a/b")).toBeNull()
     expect(credentialDestinationError(githubPat, "git@attacker.example:a/b.git")).toBeNull()
