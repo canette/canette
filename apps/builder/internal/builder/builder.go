@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 
+	"canette.dev/builder/internal/gitdest"
 	"canette.dev/builder/internal/githubapp"
 	k8sjobs "canette.dev/builder/internal/k8s"
 	"canette.dev/builder/internal/registry"
@@ -179,6 +180,12 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 			return
 		}
 		if cred != nil {
+			// Refuse before minting a token or decrypting a PAT: the git URL is
+			// user-controlled and the token would be sent to whatever host it names.
+			if err := gitdest.Check(cred.Provider, cred.Type, dep.GitURL); err != nil {
+				lastErr = fmt.Errorf("git credential rejected: %w", err)
+				return
+			}
 			credSecretName = k8sjobs.CredSecretName(dep.ID)
 
 			var secretCredType, secretCredValue string

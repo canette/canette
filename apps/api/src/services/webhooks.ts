@@ -5,6 +5,7 @@ import { encrypt, decrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
 import { createDeployment } from "./deployments"
 import { generateInstallationToken } from "./github-app-token"
+import { ALLOWED_ORIGINS_ENV, isAdminAllowedOrigin, normaliseHttpsOrigin } from "./git-credential-destination"
 
 // ── Internal row types ────────────────────────────────────────────────────────
 
@@ -33,6 +34,73 @@ interface ParsedGitUrl {
   repo: string
 }
 
+interface WebhookCredential {
+  provider: string
+  type: string
+  encrypted_value: string
+  installation_id: string | null
+}
+
+const BUILTIN_WEBHOOK_API_ORIGINS = new Set([
+  "https://api.github.com",
+  "https://gitlab.com",
+])
+
+const PROVIDER_REQUEST_TIMEOUT_MS = 10_000
+const PROVIDER_RESPONSE_LIMIT_BYTES = 64 * 1024
+
+function isApprovedWebhookApiOrigin(apiBase: string): boolean {
+  const origin = normaliseHttpsOrigin(apiBase)
+  if (!origin) return false
+  return BUILTIN_WEBHOOK_API_ORIGINS.has(origin) || isAdminAllowedOrigin(origin)
+}
+
+function credentialMatchesDestination(
+  credential: Pick<WebhookCredential, "provider" | "type">,
+  parsed: ParsedGitUrl,
+): boolean {
+  // GitHub App tokens are only valid for, and must only ever be sent to, GitHub.
+  if (credential.type === "github_app" && credential.provider !== "github") return false
+
+  return credential.provider === parsed.provider && isApprovedWebhookApiOrigin(parsed.apiBase)
+}
+
+function providerRequest(url: string, init: RequestInit): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    // Never forward credential-bearing headers to a redirect destination.
+    redirect: "error",
+    signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
+  })
+}
+
+async function readProviderJson<T>(response: Response): Promise<T> {
+  if (!response.body) throw new Error("Provider API returned an empty response")
+
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > PROVIDER_RESPONSE_LIMIT_BYTES) {
+      await reader.cancel()
+      throw new Error("Provider API response exceeded 64 KB")
+    }
+    chunks.push(value)
+  }
+
+  const body = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return JSON.parse(new TextDecoder().decode(body)) as T
+}
+
 function parseGitUrl(gitUrl: string): ParsedGitUrl | null {
   // Normalise SSH → HTTPS-like form: git@github.com:owner/repo.git → github.com/owner/repo
   const normalised = gitUrl
@@ -55,10 +123,10 @@ function parseGitUrl(gitUrl: string): ParsedGitUrl | null {
     return { provider: "github", apiBase: "https://api.github.com", owner, repo }
   }
   if (host === "gitlab.com" || host.includes("gitlab")) {
-    return { provider: "gitlab", apiBase: `${url.protocol}//${host}`, owner, repo }
+    return { provider: "gitlab", apiBase: `${url.protocol}//${url.host}`, owner, repo }
   }
   // Default: treat any other host as Gitea-compatible
-  return { provider: "gitea", apiBase: `${url.protocol}//${host}`, owner, repo }
+  return { provider: "gitea", apiBase: `${url.protocol}//${url.host}`, owner, repo }
 }
 
 // ── Provider auto-registration ────────────────────────────────────────────────
@@ -99,11 +167,20 @@ async function tryAutoRegister(
 
   const cred = await db
     .selectFrom("git_credentials")
-    .select(["type", "encrypted_value", "installation_id"])
+    .select(["provider", "type", "encrypted_value", "installation_id"])
     .where("id", "=", app.git_credential_id)
     .executeTakeFirst()
   if (!cred || (cred.type !== "pat" && cred.type !== "github_app")) {
     return { autoRegistered: false, setupInstructions: manualInstructions(parsed, webhookUrl, parsed.provider) }
+  }
+  // Enforce the credential's provider and the administrator-approved API origin
+  // before decrypting a PAT or minting a GitHub installation token.
+  if (!credentialMatchesDestination(cred, parsed)) {
+    const reason =
+      `Auto-registration is disabled for ${parsed.apiBase}: the app's git credential can only be ` +
+      `sent to its provider's public API or to hosts an administrator has allowed via ` +
+      `${ALLOWED_ORIGINS_ENV}.\n\n`
+    return { autoRegistered: false, setupInstructions: reason + manualInstructions(parsed, webhookUrl, parsed.provider) }
   }
 
   let pat: string
@@ -120,7 +197,7 @@ async function tryAutoRegister(
     let hookId: string | number | undefined
 
     if (parsed.provider === "github") {
-      const res = await fetch(
+      const res = await providerRequest(
         `${parsed.apiBase}/repos/${parsed.owner}/${parsed.repo}/hooks`,
         {
           method: "POST",
@@ -138,15 +215,14 @@ async function tryAutoRegister(
         }
       )
       if (!res.ok) {
-        const body = await res.text()
-        throw new Error(`GitHub API ${res.status}: ${body}`)
+        throw new Error(`GitHub API ${res.status}`)
       }
-      const data = await res.json() as { id: number }
+      const data = await readProviderJson<{ id: number }>(res)
       hookId = data.id
 
     } else if (parsed.provider === "gitlab") {
       const encodedPath = encodeURIComponent(`${parsed.owner}/${parsed.repo}`)
-      const res = await fetch(
+      const res = await providerRequest(
         `${parsed.apiBase}/api/v4/projects/${encodedPath}/hooks`,
         {
           method: "POST",
@@ -155,15 +231,14 @@ async function tryAutoRegister(
         }
       )
       if (!res.ok) {
-        const body = await res.text()
-        throw new Error(`GitLab API ${res.status}: ${body}`)
+        throw new Error(`GitLab API ${res.status}`)
       }
-      const data = await res.json() as { id: number }
+      const data = await readProviderJson<{ id: number }>(res)
       hookId = data.id
 
     } else {
       // Gitea
-      const res = await fetch(
+      const res = await providerRequest(
         `${parsed.apiBase}/api/v1/repos/${parsed.owner}/${parsed.repo}/hooks`,
         {
           method: "POST",
@@ -180,10 +255,9 @@ async function tryAutoRegister(
         }
       )
       if (!res.ok) {
-        const body = await res.text()
-        throw new Error(`Gitea API ${res.status}: ${body}`)
+        throw new Error(`Gitea API ${res.status}`)
       }
-      const data = await res.json() as { id: number }
+      const data = await readProviderJson<{ id: number }>(res)
       hookId = data.id
     }
 
@@ -199,18 +273,18 @@ async function tryAutoRegister(
 async function tryDeregister(parsed: ParsedGitUrl, providerHookId: string, pat: string): Promise<void> {
   try {
     if (parsed.provider === "github") {
-      await fetch(
+      await providerRequest(
         `${parsed.apiBase}/repos/${parsed.owner}/${parsed.repo}/hooks/${providerHookId}`,
         { method: "DELETE", headers: { Authorization: `Bearer ${pat}`, Accept: "application/vnd.github+json" } }
       )
     } else if (parsed.provider === "gitlab") {
       const encodedPath = encodeURIComponent(`${parsed.owner}/${parsed.repo}`)
-      await fetch(
+      await providerRequest(
         `${parsed.apiBase}/api/v4/projects/${encodedPath}/hooks/${providerHookId}`,
         { method: "DELETE", headers: { "PRIVATE-TOKEN": pat } }
       )
     } else {
-      await fetch(
+      await providerRequest(
         `${parsed.apiBase}/api/v1/repos/${parsed.owner}/${parsed.repo}/hooks/${providerHookId}`,
         { method: "DELETE", headers: { Authorization: `token ${pat}` } }
       )
@@ -371,10 +445,13 @@ export async function deleteWebhook(
     if (parsed) {
       const cred = await db
         .selectFrom("git_credentials")
-        .select(["type", "encrypted_value", "installation_id"])
+        .select(["provider", "type", "encrypted_value", "installation_id"])
         .where("id", "=", accessRow.git_credential_id)
         .executeTakeFirst()
-      if (cred?.type === "pat" || cred?.type === "github_app") {
+      if (
+        (cred?.type === "pat" || cred?.type === "github_app") &&
+        credentialMatchesDestination(cred, parsed)
+      ) {
         try {
           const pat = cred.type === "github_app"
             ? await generateInstallationToken(cred.installation_id ?? undefined)

@@ -62,6 +62,8 @@ spec:
               value: {{ include "canette.serviceImage" (list . "canette-builder-git-init" .Values.builder.gitInitImage) | quote }}
             - name: TRIVY_IMAGE
               value: {{ .Values.builder.trivyImage | quote }}
+            - name: GIT_CREDENTIAL_ALLOWED_ORIGINS
+              value: {{ join "," .Values.security.gitCredentialAllowedOrigins | quote }}
             - name: SCAN_PROVIDER
               value: {{ .Values.security.scan.provider | quote }}
             - name: SCAN_ENABLED

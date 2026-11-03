@@ -458,6 +458,15 @@ security:
     # Generate a CycloneDX SBOM alongside vulnerability findings.
     # Requires a second trivy image pass — adds ~30–60 s to scan time. Default: false.
     sbomEnabled: false
+  # Extra HTTPS origins that git credentials (PATs, GitHub App tokens) may be
+  # sent to — when cloning and when auto-registering webhooks. github.com and
+  # gitlab.com are trusted for credentials of their own provider; any other
+  # host (self-hosted Gitea, GitLab, GitHub Enterprise, generic git servers)
+  # must be listed here, or apps using a PAT for it are rejected. GitHub App
+  # credentials are only ever sent to github.com. SSH keys are unaffected.
+  # Entries are bare origins: scheme + host (+ port), no path.
+  # Example: ["https://git.example.com", "https://gitea.example.com:3443"]
+  gitCredentialAllowedOrigins: []
 
 # ---------------------------------------------------------------------------
 # Authentication providers

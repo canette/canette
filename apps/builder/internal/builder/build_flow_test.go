@@ -20,6 +20,7 @@ import (
 type fakeStore struct {
 	deployments []store.PendingDeployment
 	called      bool
+	credential  *store.GitCredential
 
 	appendedLogs []string
 	markedFailed []string
@@ -42,7 +43,7 @@ func (f *fakeStore) MarkFailed(_ context.Context, id, _ string) error {
 	return nil
 }
 func (f *fakeStore) GetGitCredential(_ context.Context, _ string) (*store.GitCredential, error) {
-	return nil, nil
+	return f.credential, nil
 }
 func (f *fakeStore) SetDeploymentCanetteConfig(_ context.Context, _, _ string) error { return nil }
 func (f *fakeStore) UpdateCommitSha(_ context.Context, _, _ string) error            { return nil }
@@ -190,5 +191,38 @@ func TestBuildFlow_ECRRepo_AutoDetectsIRSA(t *testing.T) {
 	}
 	if b.registryConfig.AuthType != "irsa" {
 		t.Fatalf("registryConfig.AuthType = %q, want %q", b.registryConfig.AuthType, "irsa")
+	}
+}
+
+func TestBuildFlow_RejectsCredentialForUnapprovedHost(t *testing.T) {
+	// A user-chosen git URL must never receive a stored token. The build fails
+	// before any token is minted or credential Secret / Job is created.
+	t.Setenv("GIT_CREDENTIAL_ALLOWED_ORIGINS", "")
+	for _, cred := range []store.GitCredential{
+		{ID: "cred-1", Provider: "github", Type: "github_app"},
+		{ID: "cred-1", Provider: "gitea", Type: "pat"},
+	} {
+		t.Run(cred.Type, func(t *testing.T) {
+			dep := pendingDep("d59d1c36-0000-0000-0000-000000000009")
+			dep.GitURL = "https://attacker.example/acme/repo.git"
+			dep.GitCredID = &cred.ID
+			fs := &fakeStore{deployments: []store.PendingDeployment{dep}, credential: &cred}
+			k8s := fake.NewSimpleClientset()
+
+			b := newBuildFlowBuilder(t, fs, k8s, "static")
+			runBuildOnce(t, b)
+
+			if len(fs.markedFailed) != 1 || fs.markedFailed[0] != dep.ID {
+				t.Fatalf("markedFailed = %v, want [%s]", fs.markedFailed, dep.ID)
+			}
+			secrets, _ := k8s.CoreV1().Secrets("canette-system").List(context.Background(), metav1.ListOptions{})
+			if len(secrets.Items) != 0 {
+				t.Errorf("created %d Secret(s), want none", len(secrets.Items))
+			}
+			jobs, _ := k8s.BatchV1().Jobs("canette-system").List(context.Background(), metav1.ListOptions{})
+			if len(jobs.Items) != 0 {
+				t.Errorf("created %d Job(s), want none", len(jobs.Items))
+			}
+		})
 	}
 }

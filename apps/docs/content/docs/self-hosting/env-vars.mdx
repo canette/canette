@@ -27,6 +27,7 @@ Each canette service is a single binary or container. All configuration is provi
 | `GITHUB_CLIENT_SECRET` | no | GitHub OAuth app client secret. |
 | `GOOGLE_CLIENT_ID` | no | Google OAuth client ID. |
 | `GOOGLE_CLIENT_SECRET` | no | Google OAuth client secret. |
+| `GIT_CREDENTIAL_ALLOWED_ORIGINS` | no | Same value as on the API. Builds that would send a PAT to any other host fail before the clone starts. |
 | `GITHUB_APP_ID` | no | GitHub App ID (for GitHub App git credential type). |
 | `GITHUB_APP_INSTALLATION_ID` | no | GitHub App installation ID (for system credential mode). |
 | `GITHUB_APP_PUBLIC_LINK` | no | GitHub App public URL or slug, e.g. `https://github.com/apps/my-app`. |
@@ -36,6 +37,7 @@ Each canette service is a single binary or container. All configuration is provi
 | `DEFAULT_CPU_LIMIT` | no | Default CPU limit for app deployments. Default: `500m`. |
 | `DEFAULT_MEMORY_LIMIT` | no | Default memory limit for app deployments. Default: `512Mi`. |
 | `WEBHOOK_BASE_URL` | no | Public base URL used when registering webhooks with git providers. Defaults to `UI_URL`. |
+| `GIT_CREDENTIAL_ALLOWED_ORIGINS` | no | Comma-separated HTTPS origins (e.g. `https://git.example.com,https://gitea.example.com:3443`) that git credentials may be sent to, beyond `github.com` / `gitlab.com`. Required for PAT credentials on self-hosted git hosts. Must match the builder's value. See [Git credentials](/docs/configuration/git-credentials#allowed-hosts). |
 | `IMAGE_REPO` | no | Registry address (same value as on the builder). Used by the API to resolve the active scan provider for the admin settings display. |
 | `SCAN_PROVIDER` | no | Mirrors the builder value — used to display the active scan configuration in the admin UI. |
 | `SCAN_ENABLED` | no | Mirrors the builder value — displayed in the admin UI. |

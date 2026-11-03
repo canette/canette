@@ -7,6 +7,7 @@ import { ServiceError } from "./errors"
 import { getReplicasFromCanetteConfig, validateCanetteConfigYaml } from "./canette-config"
 import { supportsForUpdate } from "../db/dialect"
 import { AUTHGATE_SIDECAR_PORT } from "./reserved-ports"
+import { credentialDestinationError } from "./git-credential-destination"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
@@ -202,6 +203,33 @@ function validateGitUrl(url: string): void {
   }
 }
 
+// Rejects a git credential the caller's team can't use, or one that must not be
+// sent to the host in `gitUrl` (see git-credential-destination.ts).
+async function assertGitCredentialUsable(
+  db: DB,
+  credentialId: string,
+  teamId: string,
+  gitUrl: string,
+): Promise<void> {
+  const credential = await db
+    .selectFrom("git_credentials")
+    .select(["team_id", "provider", "type"])
+    .where("id", "=", credentialId)
+    .executeTakeFirst()
+
+  if (!credential) {
+    throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
+  }
+  // team_id null means system credential — accessible to everyone
+  if (credential.team_id !== null && credential.team_id !== teamId) {
+    throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
+  }
+  const destinationError = credentialDestinationError(credential, gitUrl)
+  if (destinationError) {
+    throw new ServiceError(destinationError, "VALIDATION_ERROR", 400)
+  }
+}
+
 export async function createApp(
   db: DB,
   projectId: string,
@@ -281,19 +309,12 @@ export async function createApp(
   const position = (maxPosition?.maxPosition ?? -1) + 1
 
   if (input.gitCredentialId) {
-    const credential = await db
-      .selectFrom("git_credentials")
-      .select("team_id")
-      .where("id", "=", input.gitCredentialId)
-      .executeTakeFirst()
-
-    if (!credential) {
-      throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
-    }
-    // team_id null means system credential — accessible to everyone
-    if (credential.team_id !== null && credential.team_id !== membership.team_id) {
-      throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
-    }
+    await assertGitCredentialUsable(
+      db,
+      input.gitCredentialId,
+      membership.team_id,
+      sourceType === "git" ? (input.gitUrl?.trim() ?? "") : "",
+    )
   }
 
   try {
@@ -411,26 +432,28 @@ export async function updateApp(
     }
   }
 
-  if (patch.gitCredentialId !== undefined && patch.gitCredentialId !== null) {
+  // Re-check the credential whenever the credential, repository URL or source
+  // type changes — a new URL must not redirect an existing credential to an
+  // unapproved host.
+  const effectiveCredentialId =
+    patch.gitCredentialId !== undefined ? patch.gitCredentialId : (app.gitCredentialId ?? null)
+  const credentialOrDestinationChanged =
+    patch.gitCredentialId !== undefined || patch.gitUrl !== undefined || patch.sourceType !== undefined
+  if (effectiveCredentialId && credentialOrDestinationChanged) {
     const project = await db
       .selectFrom("projects")
       .select("team_id")
       .where("id", "=", app.projectId)
       .executeTakeFirstOrThrow()
 
-    const credential = await db
-      .selectFrom("git_credentials")
-      .select("team_id")
-      .where("id", "=", patch.gitCredentialId)
-      .executeTakeFirst()
-
-    if (!credential) {
-      throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
-    }
-    // team_id null means system credential — accessible to everyone
-    if (credential.team_id !== null && credential.team_id !== project.team_id) {
-      throw new ServiceError("Git credential not found", "VALIDATION_ERROR", 400)
-    }
+    const effectiveSourceType = patch.sourceType ?? app.sourceType
+    const effectiveGitUrl = patch.gitUrl !== undefined ? patch.gitUrl.trim() : app.gitUrl
+    await assertGitCredentialUsable(
+      db,
+      effectiveCredentialId,
+      project.team_id,
+      effectiveSourceType === "git" ? effectiveGitUrl : "",
+    )
   }
 
   const updates: Updateable<Database["apps"]> = {}

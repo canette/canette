@@ -172,6 +172,30 @@ describe("services/apps", () => {
     ).rejects.toThrow(ServiceError)
   })
 
+  it("createApp: rejects a system credential on a caller-chosen host", async () => {
+    await expect(
+      createApp(db, "projectId", "userId", {
+        name: "Exfil App",
+        slug: "exfil-system",
+        sourceType: "git",
+        gitUrl: "https://attacker.example/canette/canette.git",
+        gitCredentialId: "systemCredentialId",
+      })
+    ).rejects.toThrow("GitHub App credentials can only be used with github.com repositories")
+  })
+
+  it("createApp: rejects a PAT on a host that isn't its provider's", async () => {
+    await expect(
+      createApp(db, "projectId", "userId", {
+        name: "Exfil App",
+        slug: "exfil-pat",
+        sourceType: "git",
+        gitUrl: "https://gitea.attacker.example/canette/canette.git",
+        gitCredentialId: "teamCredentialId",
+      })
+    ).rejects.toThrow("GIT_CREDENTIAL_ALLOWED_ORIGINS")
+  })
+
   describe("deploymentType", () => {
     it("createApp: defaults to 'web' when omitted", async () => {
       const result = await createApp(db, "projectId", "userId", {
@@ -345,6 +369,16 @@ describe("services/apps", () => {
           gitCredentialId: "otherTeamCredentialId",
         })
       ).rejects.toThrow(ServiceError)
+    })
+
+    it("rejects changing the git URL to an unapproved host while a credential is attached", async () => {
+      await updateApp(db, "existingAppId", "userId", { gitCredentialId: "systemCredentialId" })
+      await expect(
+        updateApp(db, "existingAppId", "userId", {
+          gitUrl: "https://attacker.example/canette/canette",
+        })
+      ).rejects.toThrow("GitHub App credentials can only be used with github.com repositories")
+      await updateApp(db, "existingAppId", "userId", { gitCredentialId: null })
     })
 
     it("accepts null to clear the credential", async () => {

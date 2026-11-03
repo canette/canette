@@ -160,6 +160,8 @@ spec:
               value: {{ .Values.api.defaultResources.memoryLimit | quote }}
             - name: WEBHOOK_BASE_URL
               value: {{ .Values.api.webhookBaseUrl | quote }}
+            - name: GIT_CREDENTIAL_ALLOWED_ORIGINS
+              value: {{ join "," .Values.security.gitCredentialAllowedOrigins | quote }}
             - name: DOMAIN
               value: {{ .Values.domain | quote }}
             - name: IMAGE_REPO
