@@ -4,12 +4,15 @@ import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
 import { createApp } from "../../src/services/apps"
 import { createVolume } from "../../src/services/volumes"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 const db = createTestDb()
 
 // handleTool reads the module-level db — point it at the in-memory test db.
 mock.module("../../src/db/db", () => ({ db }))
-const { handleTool } = await import("../../src/services/mcp")
+const { handleTool, buildMcpServer, searchDocsTool, getDocsPageTool } = await import("../../src/services/mcp")
+const { createDocsIndex } = await import("../../src/docs")
 
 const realFetch = globalThis.fetch
 let fetchedUrls: string[] = []
@@ -372,5 +375,63 @@ describe("services/mcp runtime diagnostics", () => {
       const outsider = await handleTool("redeploy_deployment", { deployment_id: deployment.id }, "outsiderId")
       expect(outsider.isError).toBe(true)
     })
+  })
+})
+
+describe("services/mcp docs", () => {
+  it("search_docs returns ranked sections with paths", async () => {
+    const result = await handleTool("search_docs", { query: "persistent volume", limit: 3 }, "userId")
+    expect(result.isError).toBeUndefined()
+    const body = JSON.parse(text(result))
+    expect(body.version).toBeString()
+    expect(body.results.length).toBe(3)
+    expect(body.results[0].path).toBe("configuration/volumes")
+    expect(body.results[0]).toHaveProperty("snippet")
+  })
+
+  it("search_docs requires a query and clamps limit", async () => {
+    expect((await handleTool("search_docs", {}, "userId")).isError).toBe(true)
+    const body = JSON.parse(text(await handleTool("search_docs", { query: "app", limit: 999 }, "userId")))
+    expect(body.results.length).toBeLessThanOrEqual(20)
+  })
+
+  it("get_docs_page returns the page as markdown", async () => {
+    const result = await handleTool("get_docs_page", { path: "configuration/canette-yaml" }, "userId")
+    expect(result.isError).toBeUndefined()
+    expect(text(result)).toStartWith("# canette.yaml\n")
+    expect(text(result)).toContain("healthcheck")
+  })
+
+  it("get_docs_page suggests close matches for an unknown path", async () => {
+    const result = await handleTool("get_docs_page", { path: "configuration/canette" }, "userId")
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain("configuration/canette-yaml")
+  })
+
+  it("reports a clear error when the docs are not bundled", () => {
+    const empty = createDocsIndex([])
+    expect(text(searchDocsTool({ query: "volumes" }, empty))).toContain("not bundled")
+    expect(text(getDocsPageTool({ path: "index" }, empty))).toContain("not bundled")
+  })
+
+  it("lists and reads docs pages as MCP resources", async () => {
+    const server = buildMcpServer("userId")
+    const client = new Client({ name: "test", version: "0" })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+
+    const { resources } = await client.listResources()
+    const yamlPage = resources.find((r) => r.uri === "canette-docs://configuration/canette-yaml")
+    expect(yamlPage).toMatchObject({ title: "canette.yaml", mimeType: "text/markdown" })
+
+    const read = await client.readResource({ uri: "canette-docs://configuration/canette-yaml" })
+    expect((read.contents[0] as { text: string }).text).toStartWith("# canette.yaml\n")
+
+    await expect(client.readResource({ uri: "canette-docs://nope" })).rejects.toThrow("Unknown resource")
+    expect(client.getInstructions()).toContain("get_docs_page")
+
+    const { tools } = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(["search_docs", "get_docs_page"]))
+    await client.close()
   })
 })

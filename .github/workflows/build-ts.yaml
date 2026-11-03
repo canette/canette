@@ -7,6 +7,7 @@ on:
     paths:
       - apps/ui/**
       - apps/api/**
+      - apps/docs/content/**
       - packages/**
       - package.json
   workflow_dispatch:

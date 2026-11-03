@@ -79,6 +79,8 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `list_env_vars` | List an app's environment variables and the names of its secrets (secret values are never returned) |
 | `set_env_var` | Create or update a plaintext environment variable — applied on the next deployment, a redeploy is enough |
 | `delete_env_var` | Delete an environment variable — applied on the next deployment, a redeploy is enough |
+| `search_docs` | Search the canette documentation and return the best-matching sections with their page path |
+| `get_docs_page` | Get one documentation page as markdown, e.g. `configuration/canette-yaml` |
 
 Secrets can't be set or deleted through MCP. Agents can see which secret names exist, but values are added in the canette UI so they never pass through the AI client.
 
@@ -101,6 +103,12 @@ Environment variables are injected when the app starts, not when it is built, so
 - `null` or an empty string clears it.
 - Invalid YAML is rejected with the line and column of the error, so the agent can fix it.
 - It is a runtime change: a redeploy applies it, no rebuild is needed.
+
+### Documentation
+
+The MCP server includes these docs, taken from the same canette release as your instance. Agents read them with `search_docs` and `get_docs_page`, so what they read always matches the features your instance supports, even if canette.dev already documents a newer release. This also works when the agent can't reach the internet.
+
+The server tells agents to read the canette.yaml reference before writing a `canette.yaml`, a `canette-template.yaml` or `canette_config`. Clients that support MCP resources can also browse every page as a `canette-docs://<path>` resource, e.g. `canette-docs://configuration/canette-yaml`.
 
 ### Example prompts
 

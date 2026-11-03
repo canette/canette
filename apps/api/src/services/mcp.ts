@@ -1,6 +1,14 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js"
 import { db } from "../db/db"
+import { docs as defaultDocs, renderDocsPage, DOCS_VERSION, type DocsIndex } from "../docs"
 import { ServiceError } from "./errors"
 import { listProjects, createProject, getProjectByRef } from "./projects"
 import { listApps, createApp, updateApp, getAppById } from "./apps"
@@ -61,7 +69,12 @@ const SERVER_INSTRUCTIONS = [
   "- redeploy_deployment deploys an already-built image again (seconds) with the app's current settings, env vars and secrets. Use it when only configuration changed: env vars, secrets, port, schedule, deployment type, canette.yaml config, volumes, hostnames or password protection. Env vars are injected at runtime, not at build time, so a rebuild is never needed for them.",
   "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's latest live deployment.",
   "Runtime config such as resources, replicas, healthcheck and ingress lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
+  "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
 ].join("\n")
+
+const DOCS_NOT_BUNDLED = "Docs are not bundled in this build of the canette API."
+const DOCS_URI_PREFIX = "canette-docs://"
+const MAX_DOCS_RESULTS = 20
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -291,6 +304,31 @@ export const TOOLS = [
         key: { type: "string", description: "Variable name" },
       },
       required: ["app_id", "key"],
+    },
+  },
+  {
+    name: "search_docs",
+    description:
+      "Search the canette documentation (bundled with this instance, so it matches its version). Returns the best-matching sections with their page path; read a full page with get_docs_page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Keywords, e.g. \"healthcheck\" or \"persistent volume\"" },
+        limit: { type: "number", description: `Max results (default 5, max ${MAX_DOCS_RESULTS})` },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "get_docs_page",
+    description:
+      "Get one page of the canette documentation as markdown (bundled with this instance, so it matches its version). Key pages: configuration/canette-yaml (canette.yaml / canette_config reference), configuration/templates (canette-template.yaml), configuration/volumes, configuration/secrets, ai-agents/mcp. Use search_docs to find others.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Page path, e.g. \"configuration/canette-yaml\"" },
+      },
+      required: ["path"],
     },
   },
 ]
@@ -593,6 +631,12 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         return ok({ deleted: key, note: REDEPLOY_NOTE })
       }
 
+      case "search_docs":
+        return searchDocsTool(args)
+
+      case "get_docs_page":
+        return getDocsPageTool(args)
+
       default:
         return err(`Unknown tool: ${name}`)
     }
@@ -602,13 +646,55 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
   }
 }
 
+// ── Docs (public, read-only — no DB or access checks) ─────────────────────────
+
+export function searchDocsTool(args: Record<string, unknown>, index: DocsIndex = defaultDocs): ToolResult {
+  if (index.isEmpty) return err(DOCS_NOT_BUNDLED)
+  const query = arg(args, "query")
+  if (!query) return err("query is required")
+  const limit = Math.min(Math.max(Math.trunc(argNum(args, "limit") ?? 5), 1), MAX_DOCS_RESULTS)
+  const results = index.search(query, limit)
+  return ok({ version: DOCS_VERSION, results })
+}
+
+export function getDocsPageTool(args: Record<string, unknown>, index: DocsIndex = defaultDocs): ToolResult {
+  if (index.isEmpty) return err(DOCS_NOT_BUNDLED)
+  const path = arg(args, "path")
+  if (!path) return err("path is required")
+  const page = index.getPage(path)
+  if (!page) {
+    return err(`No docs page "${path}". Closest matches: ${index.suggest(path).join(", ")}. Use search_docs to find a page.`)
+  }
+  return { content: [{ type: "text", text: renderDocsPage(page) }] }
+}
+
+export function registerDocsResources(server: Server, index: DocsIndex = defaultDocs): void {
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: index.list().map((p) => ({
+      uri: `${DOCS_URI_PREFIX}${p.path}`,
+      name: p.path,
+      title: p.title,
+      description: p.description || undefined,
+      mimeType: "text/markdown",
+    })),
+  }))
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params
+    const page = uri.startsWith(DOCS_URI_PREFIX) ? index.getPage(uri) : undefined
+    if (!page) throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`)
+    return { contents: [{ uri, mimeType: "text/markdown", text: renderDocsPage(page) }] }
+  })
+}
+
 export function buildMcpServer(userId: string): Server {
   const server = new Server(
     { name: "canette", version: process.env.APP_VERSION ?? "development" },
-    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
+    { capabilities: { tools: {}, resources: {} }, instructions: SERVER_INSTRUCTIONS },
   )
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
+  registerDocsResources(server)
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: rawArgs } = request.params

@@ -22,6 +22,9 @@ COPY apps/api/scripts ./apps/api/scripts
 COPY apps/api/src ./apps/api/src
 COPY apps/api/tests ./apps/api/tests
 COPY apps/api/.env.test ./apps/api/.env.test
+# Raw docs pages: the MCP docs tools bake them into the binary at build time
+# (src/docs/load.ts is a Bun macro), so they aren't needed in the runner image.
+COPY apps/docs/content ./apps/docs/content
 
 RUN bun run test:api
 RUN bun run build:api
