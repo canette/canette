@@ -22,6 +22,13 @@ describe("canette-template.yaml schema", () => {
     for (const field of APP_ROW_FIELDS) expect(props).toContain(field)
   })
 
+  it("describes no app field the template parser has stopped reading", () => {
+    // Every other field must be a canette.yaml field, which the parser passes through as canetteConfig.
+    const known = new Set([...APP_ROW_FIELDS, ...Object.keys(canette.properties!)])
+    const stale = Object.keys(templateApp.properties!).filter((p) => !known.has(p))
+    expect(stale).toEqual([])
+  })
+
   it("accepts every canette.yaml field on a template app", () => {
     const props = Object.keys(templateApp.properties!)
     for (const field of Object.keys(canette.properties!)) expect(props).toContain(field)

@@ -5,7 +5,7 @@ import "github.com/invopop/jsonschema"
 // The canette-template.yaml format. Templates are parsed by the API
 // (apps/api/src/services/templates.ts), not by a Go service, so these types
 // exist only to generate the schema. apps/api/tests/schema/schema.test.ts
-// checks that every field the API reads is listed here.
+// checks that these fields match the ones the API reads, in both directions.
 
 // TemplateFile is a canette-template.yaml file.
 type TemplateFile struct {
