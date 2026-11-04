@@ -6,4 +6,5 @@ use (
 	./apps/controller
 	./apps/logstreamer
 	./packages/golib
+	./tools/canette-schema
 )

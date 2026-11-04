@@ -27,7 +27,10 @@ canette/
 ├── charts/
 │   └── canette/     # Helm chart (all services in one chart)
 ├── packages/
+│   ├── golib/       # Shared Go code (K8s naming, crypto, canette.yaml types)
 │   └── types/       # Shared TypeScript types (api ↔ ui)
+├── tools/
+│   └── canette-schema/ # Generates the canette.yaml JSON Schemas (Go)
 ├── labs/            # Manual test YAMLs (not shipped)
 └── CLAUDE.md
 ```
@@ -224,11 +227,17 @@ healthcheck:
 
 ingress:
   enabled: true
-  host: my-app.apps.company.com
-  path: /
 ```
 
 When parsing `canette.yaml`, unknown fields must be silently ignored (forward compatibility). Validation errors must return a clear human-readable message — never a raw Go/JS error.
+
+### canette.yaml types and JSON Schema
+
+The file format is defined once, in `packages/golib/canetteyaml`: `BuildConfig` (decoded by the builder), `RuntimeConfig` (decoded by the controller, aliased as `config.CanetteRuntimeConfig`) and `Config` (both, plus the informational `secrets` list). Each service decodes only its own part, so a type error in a runtime field can't fail a build and vice versa. `BuildSpec.Validate()` lives there too.
+
+The published JSON Schemas (`apps/docs/public/schema/canette.json` and `canette-template.json`, served at `https://canette.dev/schema/…`) are generated from those types by `tools/canette-schema` (its own Go module, so `invopop/jsonschema` stays out of the service modules). Doc comments on the types become the field descriptions, so write them for an agent that hasn't read the docs, and keep `jsonschema:` tags in sync with what the parsers enforce. **Never hand-edit the schema files**: change the Go types, then run `bun run generate:schema` and commit the result. The `schema` job in `build-go.yml` regenerates them and fails on any diff. New fields (e.g. the `security` block from #251) go into these types.
+
+The template wrapper (`name`/`description`/`apps[]` and the per-app fields) is defined in `tools/canette-schema/template.go`, because templates are parsed in TypeScript (`apps/api/src/services/templates.ts`). `apps/api/tests/schema/schema.test.ts` fails when `APP_ROW_FIELDS` names a field the template schema lacks. The API bakes both schema files into its binary through a Bun macro (`src/docs/load-schemas.ts`, same pattern as the MCP docs bundle) and serves them through the `get_canette_yaml_schema` MCP tool and `canette-schema://` resources.
 
 ### canette.yaml field ownership
 
@@ -236,11 +245,11 @@ Fields are split between the database (set via UI) and `canette.yaml` (committed
 
 | Field | Owned by | Notes |
 |-------|----------|-------|
-| `build.context`, `build.dockerfile`, `build.args` | `canette.yaml` only | Parsed at build time from the cloned workspace by the `canette-config` binary |
+| `build.context`, `build.dockerfile`, `build.args` | `canette.yaml`, with the app's stored `canette_config` as base | Parsed at build time by `canette-build`: the stored config (passed as `CANETTE_CONFIG`) is the base layer, the repo's `canette.yaml` wins field by field. Git apps only |
 | `runtime.port`, `runtime.command`, `replicas`, `resources`, `healthcheck` | DB (UI) as base, `canette.yaml` overrides at deploy time | File wins when present; DB value is the fallback |
 | `env` | `canette.yaml` only | Plaintext vars safe to commit; merged on top of any DB-stored env vars at deploy time |
 | `secrets` | DB only (values); `canette.yaml` can list names | Secret values are never in the file; names in the file are informational. This feature is only useful if we introduce project wide secrets |
-| `ingress.enabled`, `ingress.host`, `ingress.path` | DB (UI) as base, `canette.yaml` overrides at deploy time | `ingress.enabled = false` still creates a service, but no httproute. Useful for eg. databases |
+| `ingress.enabled` | DB (UI) as base, `canette.yaml` overrides at deploy time | `ingress.enabled = false` still creates a service, but no httproute. Useful for eg. databases |
 
 **Merge happens at deploy time, not on UI interaction.** The UI always reads and writes DB values. The controller reads `canette.yaml` from the build workspace (via the `canette-config` binary output stored in the deployment record) and applies overrides when constructing K8s resources. The UI may show a note that certain fields could be overridden by `canette.yaml`.
 

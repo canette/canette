@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://canette.dev/schema/canette.json",
+  "properties": {
+    "build": {
+      "properties": {
+        "context": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^[a-zA-Z0-9./_-]*$",
+          "description": "Build context directory, relative to the app root (the app path in the repository). Defaults to \".\".",
+          "examples": [
+            ".",
+            "./src"
+          ]
+        },
+        "dockerfile": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^[a-zA-Z0-9./_-]*$",
+          "description": "Path to a Dockerfile, relative to the app root. When set, the image is built from this Dockerfile instead of railpack auto-detection.",
+          "examples": [
+            "Dockerfile"
+          ]
+        },
+        "args": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "type": "object",
+          "description": "Build-time ARG values passed to the Dockerfile build (at most 32). Keys must be valid Dockerfile ARG names. Not available to the running app: use env for runtime variables."
+        }
+      },
+      "additionalProperties": true,
+      "type": "object",
+      "description": "How the container image is built from a Git repository. A canette.yaml committed to the repository wins field by field over the app's stored canette config. No effect for apps deployed from a container image."
+    },
+    "runtime": {
+      "properties": {
+        "port": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1,
+          "description": "Port the app listens on inside the container. canette also sets the PORT environment variable to this value. Overrides the port set in the UI.",
+          "examples": [
+            3000
+          ]
+        },
+        "command": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "node",
+              "server.js"
+            ]
+          },
+          "type": "array",
+          "description": "Command that starts the app, as a list of arguments. Replaces the image's default entrypoint and command."
+        }
+      },
+      "additionalProperties": true,
+      "type": "object",
+      "description": "How the app's container runs."
+    },
+    "env": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      },
+      "type": "object",
+      "description": "Plaintext environment variables, safe to commit. Merged on top of the env vars set in the canette UI (canette.yaml wins on conflicts). Use secrets in the UI for sensitive values. PORT is reserved: canette sets it from runtime.port."
+    },
+    "resources": {
+      "properties": {
+        "requests": {
+          "properties": {
+            "cpu": {
+              "type": "string",
+              "description": "CPU as a Kubernetes quantity, e.g. \"100m\" (0.1 core) or \"1\".",
+              "examples": [
+                "100m",
+                "500m"
+              ]
+            },
+            "memory": {
+              "type": "string",
+              "description": "Memory as a Kubernetes quantity, e.g. \"128Mi\" or \"1Gi\".",
+              "examples": [
+                "128Mi",
+                "512Mi"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "type": "object",
+          "description": "Resources reserved for the container; used by Kubernetes for scheduling."
+        },
+        "limits": {
+          "properties": {
+            "cpu": {
+              "type": "string",
+              "description": "CPU as a Kubernetes quantity, e.g. \"100m\" (0.1 core) or \"1\".",
+              "examples": [
+                "100m",
+                "500m"
+              ]
+            },
+            "memory": {
+              "type": "string",
+              "description": "Memory as a Kubernetes quantity, e.g. \"128Mi\" or \"1Gi\".",
+              "examples": [
+                "128Mi",
+                "512Mi"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "type": "object",
+          "description": "Maximum resources the container may use. Exceeding the memory limit restarts the container; CPU is throttled."
+        }
+      },
+      "additionalProperties": true,
+      "type": "object",
+      "description": "CPU and memory requests and limits for the app's container, as Kubernetes quantities. Fields left out fall back to the platform defaults set by the canette admin (100m/128Mi requests and 500m/512Mi limits out of the box)."
+    },
+    "replicas": {
+      "type": "integer",
+      "maximum": 20,
+      "minimum": 1,
+      "description": "Number of pods to run, from 1 to 20 (higher values are capped at 20). Defaults to 1.",
+      "default": 1
+    },
+    "healthcheck": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "HTTP path that returns a 2xx or 3xx status when the app is healthy. Defaults to \"/\".",
+          "examples": [
+            "/healthz"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1,
+          "description": "Port to probe. Defaults to the app's port."
+        },
+        "initial_delay": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Seconds to wait after the container starts before the first probe. Defaults to 5.",
+          "default": 5
+        },
+        "period": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds between probes. Defaults to 10.",
+          "default": 10
+        }
+      },
+      "additionalProperties": true,
+      "type": "object",
+      "description": "HTTP readiness probe for the app's container. While it fails, the pod gets no traffic, but it is never restarted. Without this block no probe is configured. An empty block (healthcheck: {}) enables the probe with the defaults below."
+    },
+    "ingress": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the app gets a public URL. false keeps the app reachable inside the cluster through its Service but creates no HTTPRoute, the same as the \"private\" deployment type. Defaults to true for web apps."
+        }
+      },
+      "additionalProperties": true,
+      "type": "object",
+      "description": "Public HTTP routing for a web app."
+    },
+    "secrets": {
+      "items": {
+        "type": "string",
+        "examples": [
+          "DATABASE_URL"
+        ]
+      },
+      "type": "array",
+      "description": "Names of the secrets the app expects, for documentation only. Secret values are never stored in canette.yaml: set them in the canette UI or API, where they are encrypted at rest and injected as environment variables at deploy time."
+    }
+  },
+  "additionalProperties": true,
+  "type": "object",
+  "title": "canette.yaml",
+  "description": "Build and runtime configuration for a canette app, committed to the app's repository or set as the app's canette config. All fields are optional: absence means \"use platform defaults\". Unknown fields are ignored."
+}

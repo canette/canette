@@ -8,6 +8,7 @@ on:
       - apps/ui/**
       - apps/api/**
       - apps/docs/content/**
+      - apps/docs/public/schema/**
       - packages/**
       - package.json
   workflow_dispatch:

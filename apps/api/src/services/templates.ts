@@ -6,7 +6,9 @@ const MAX_TEMPLATE_SIZE = 50 * 1024
 
 // Fields consumed directly into the App row or as separate API calls.
 // Everything else is serialised back to YAML and stored as canetteConfig.
-const APP_ROW_FIELDS = new Set([
+// The template JSON Schema (tools/canette-schema/template.go) must describe
+// each of these; tests/schema/schema.test.ts checks it.
+export const APP_ROW_FIELDS = new Set([
   "name", "slug", "source_type", "deployment_type", "git_url", "git_branch",
   "git_credential_id", "app_path", "image_url", "image_tag",
   "port", "schedule", "env", "secrets",

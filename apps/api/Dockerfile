@@ -25,6 +25,8 @@ COPY apps/api/.env.test ./apps/api/.env.test
 # Raw docs pages: the MCP docs tools bake them into the binary at build time
 # (src/docs/load.ts is a Bun macro), so they aren't needed in the runner image.
 COPY apps/docs/content ./apps/docs/content
+# Generated canette.yaml JSON Schemas, baked in the same way (src/docs/load-schemas.ts).
+COPY apps/docs/public/schema ./apps/docs/public/schema
 
 RUN bun run test:api
 RUN bun run build:api

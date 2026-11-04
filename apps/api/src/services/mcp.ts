@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import { db } from "../db/db"
 import { docs as defaultDocs, renderDocsPage, DOCS_VERSION, type DocsIndex } from "../docs"
+import { getSchema, schemaFileFor, SCHEMA_TARGETS, type SchemaFile } from "../docs/schemas"
 import { ServiceError } from "./errors"
 import { listProjects, createProject, getProjectByRef } from "./projects"
 import { listApps, createApp, updateApp, getAppById } from "./apps"
@@ -44,7 +45,7 @@ const APP_SOURCE_PROPERTIES = {
   canette_config: {
     type: ["string", "null"],
     description:
-      "The app's runtime config as a full canette.yaml document (resources, replicas, healthcheck, runtime, env, ingress). Replaces the stored document, it is not merged: read the current value from get_app's canetteConfig first and send the complete result. For a Git app, a canette.yaml committed in the repository wins field by field after the build, so check the repository first. build.* fields have no effect here; they are only read from the repository. Pass null or an empty string to clear it.",
+      "The app's runtime config as a full canette.yaml document (resources, replicas, healthcheck, runtime, env, ingress). Replaces the stored document, it is not merged: read the current value from get_app's canetteConfig first and send the complete result. For a Git app, a canette.yaml committed in the repository wins field by field after the build, so check the repository first. build.* fields only apply to Git apps, at the next build. get_canette_yaml_schema lists every field. Pass null or an empty string to clear it.",
   },
 } as const
 
@@ -69,11 +70,12 @@ const SERVER_INSTRUCTIONS = [
   "- redeploy_deployment deploys an already-built image again (seconds) with the app's current settings, env vars and secrets. Use it when only configuration changed: env vars, secrets, port, schedule, deployment type, canette.yaml config, volumes, hostnames or password protection. Env vars are injected at runtime, not at build time, so a rebuild is never needed for them.",
   "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's latest live deployment.",
   "Runtime config such as resources, replicas, healthcheck and ingress lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
-  "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
+  "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page, and check field names and values against get_canette_yaml_schema. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
 ].join("\n")
 
 const DOCS_NOT_BUNDLED = "Docs are not bundled in this build of the canette API."
 const DOCS_URI_PREFIX = "canette-docs://"
+const SCHEMA_URI_PREFIX = "canette-schema://"
 const MAX_DOCS_RESULTS = 20
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
@@ -329,6 +331,21 @@ export const TOOLS = [
         path: { type: "string", description: "Page path, e.g. \"configuration/canette-yaml\"" },
       },
       required: ["path"],
+    },
+  },
+  {
+    name: "get_canette_yaml_schema",
+    description:
+      "Get the JSON Schema for canette.yaml (also the format of canette_config) or canette-template.yaml, bundled with this instance so it matches its version. Lists every field with its type, allowed values, defaults and a description. Unknown fields are allowed by canette but ignored.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file: {
+          type: "string",
+          enum: ["canette.yaml", "canette-template.yaml"],
+          description: "Which file format to describe (default canette.yaml)",
+        },
+      },
     },
   },
 ]
@@ -637,6 +654,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
       case "get_docs_page":
         return getDocsPageTool(args)
 
+      case "get_canette_yaml_schema":
+        return getSchemaTool(args)
+
       default:
         return err(`Unknown tool: ${name}`)
     }
@@ -668,19 +688,40 @@ export function getDocsPageTool(args: Record<string, unknown>, index: DocsIndex 
   return { content: [{ type: "text", text: renderDocsPage(page) }] }
 }
 
+export function getSchemaTool(args: Record<string, unknown>): ToolResult {
+  const target = arg(args, "file") ?? "canette.yaml"
+  const file = schemaFileFor(target)
+  if (!file) return err(`Unknown file "${target}". Use "canette.yaml" or "canette-template.yaml".`)
+  return { content: [{ type: "text", text: getSchema(file) }] }
+}
+
 export function registerDocsResources(server: Server, index: DocsIndex = defaultDocs): void {
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: index.list().map((p) => ({
-      uri: `${DOCS_URI_PREFIX}${p.path}`,
-      name: p.path,
-      title: p.title,
-      description: p.description || undefined,
-      mimeType: "text/markdown",
-    })),
+    resources: [
+      ...(Object.entries(SCHEMA_TARGETS) as [SchemaFile, string][]).map(([file, yaml]) => ({
+        uri: `${SCHEMA_URI_PREFIX}${file}`,
+        name: file,
+        title: `${yaml} JSON Schema`,
+        description: `Every ${yaml} field with its type, allowed values and description`,
+        mimeType: "application/schema+json",
+      })),
+      ...index.list().map((p) => ({
+        uri: `${DOCS_URI_PREFIX}${p.path}`,
+        name: p.path,
+        title: p.title,
+        description: p.description || undefined,
+        mimeType: "text/markdown",
+      })),
+    ],
   }))
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params
+    if (uri.startsWith(SCHEMA_URI_PREFIX)) {
+      const file = schemaFileFor(uri.slice(SCHEMA_URI_PREFIX.length))
+      if (!file) throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`)
+      return { contents: [{ uri, mimeType: "application/schema+json", text: getSchema(file) }] }
+    }
     const page = uri.startsWith(DOCS_URI_PREFIX) ? index.getPage(uri) : undefined
     if (!page) throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`)
     return { contents: [{ uri, mimeType: "text/markdown", text: renderDocsPage(page) }] }

@@ -7,8 +7,10 @@ Commit a `canette.yaml` file to your repository to customise build and runtime b
 
 ## Full reference
 
+The complete format is also published as a [JSON Schema](#json-schema), with a description of every field.
+
 ```yaml
-name: my-app            # string, unique within project
+# yaml-language-server: $schema=https://canette.dev/schema/canette.json
 
 build:
   context: .            # path relative to app root
@@ -43,10 +45,7 @@ healthcheck:
   period: 15
 
 ingress:
-  enabled: true             # set to false to suppress the HTTPRoute (private-equivalent override)
-  host: my-app.apps.company.com
-  tls: true
-  path: /
+  enabled: true         # set to false to suppress the HTTPRoute (private-equivalent override)
 ```
 
 ## Field ownership
@@ -55,12 +54,11 @@ Fields are split between the UI (stored in the database) and `canette.yaml` (com
 
 | Field | Owned by | Behaviour |
 |-------|----------|-----------|
-| `build.context`, `build.dockerfile`, `build.args` | `canette.yaml` only | Parsed from the cloned workspace at build time |
+| `build.context`, `build.dockerfile`, `build.args` | `canette.yaml`, or the app's stored config as a fallback | Read at build time, Git apps only |
 | `runtime.port`, `runtime.command`, `replicas`, `resources`, `healthcheck` | UI as default, `canette.yaml` overrides | File wins when present; UI value is the fallback |
 | `env` | `canette.yaml` only | Plaintext vars committed to the repo; merged at deploy time |
 | `secrets` | UI only (values); `canette.yaml` can list names | Secret values are never stored in the file |
 | `ingress.enabled` | UI as default, `canette.yaml` overrides | `false` suppresses the HTTPRoute for this deployment only — equivalent to setting the app's visibility to Private in the UI |
-| `ingress.host`, `ingress.path` | UI as default, `canette.yaml` overrides | File wins when present |
 
 ## Build detection
 
@@ -77,4 +75,18 @@ When a deployment is triggered, canette determines the build method in this orde
 - `secrets` lists names only; values must be set via the UI or API
 - With `replicas` greater than 1, pods are spread across nodes and zones where possible, and a disruption budget keeps node drains from stopping more than one at a time. See [App workload defaults](/docs/security/platform-security#app-workload-defaults). Apps with a [Persistent Volume](/docs/configuration/volumes#how-apps-with-a-persistent-volume-are-deployed) are limited to 1 replica
 - `build.context` and `build.dockerfile` are paths relative to the app root (the directory set as **App path** in the UI), not the repo root
-- The same document can also be stored on the app itself, from the app settings in the UI or by an AI agent through [MCP](/docs/ai-agents/mcp#runtime-config-canetteyaml). This is the only option for apps run from a Docker image. A stored document is checked for valid YAML when it is saved, is limited to 10 KB, and its `build` fields have no effect. For a Git app, a `canette.yaml` committed to the repository wins field by field over the stored one
+- The same document can also be stored on the app itself, from the app settings in the UI or by an AI agent through [MCP](/docs/ai-agents/mcp#runtime-config-canetteyaml). This is the only option for apps run from a Docker image. A stored document is checked for valid YAML when it is saved and is limited to 10 KB. Its `build` fields apply only to Git apps, at the next build. For a Git app, a `canette.yaml` committed to the repository wins field by field over the stored one
+
+## JSON Schema
+
+canette publishes a JSON Schema for `canette.yaml` at [`https://canette.dev/schema/canette.json`](https://canette.dev/schema/canette.json). It is generated from the same Go types that canette uses to read the file, so it lists every field the platform supports, with its type, allowed values and a description.
+
+To get autocomplete and validation in your editor, add this line at the top of your `canette.yaml`:
+
+```yaml
+# yaml-language-server: $schema=https://canette.dev/schema/canette.json
+```
+
+This works in any editor that uses [yaml-language-server](https://github.com/redhat-developer/yaml-language-server), such as VS Code with the Red Hat YAML extension, Neovim and Zed.
+
+The schema allows fields it doesn't know, the same as canette does, so a typo in a field name isn't reported as an error. AI agents connected through [MCP](/docs/ai-agents/mcp#documentation) can read the schema with the `get_canette_yaml_schema` tool, which returns the version that matches your instance.

@@ -17,7 +17,10 @@ A **template** is a YAML file that describes one or more apps to create in a pro
 
 A template file is a superset of [`canette.yaml`](/docs/configuration/canette-yaml). It adds a top-level `name`, an optional `description`, and an `apps` array. Each entry in `apps` is a single-app configuration.
 
+The format is also published as a JSON Schema at [`https://canette.dev/schema/canette-template.json`](https://canette.dev/schema/canette-template.json). Add the `yaml-language-server` comment below to get autocomplete and validation in your editor (see [JSON Schema](/docs/configuration/canette-yaml#json-schema)).
+
 ```yaml
+# yaml-language-server: $schema=https://canette.dev/schema/canette-template.json
 name: "Template display name"    # required
 description: "Optional subtitle"
 

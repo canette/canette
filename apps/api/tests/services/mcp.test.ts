@@ -11,7 +11,7 @@ const db = createTestDb()
 
 // handleTool reads the module-level db — point it at the in-memory test db.
 mock.module("../../src/db/db", () => ({ db }))
-const { handleTool, buildMcpServer, searchDocsTool, getDocsPageTool } = await import("../../src/services/mcp")
+const { handleTool, buildMcpServer, searchDocsTool, getDocsPageTool, getSchemaTool } = await import("../../src/services/mcp")
 const { createDocsIndex } = await import("../../src/docs")
 
 const realFetch = globalThis.fetch
@@ -431,7 +431,46 @@ describe("services/mcp docs", () => {
     expect(client.getInstructions()).toContain("get_docs_page")
 
     const { tools } = await client.listTools()
-    expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(["search_docs", "get_docs_page"]))
+    expect(tools.map((t) => t.name)).toEqual(
+      expect.arrayContaining(["search_docs", "get_docs_page", "get_canette_yaml_schema"]),
+    )
+    await client.close()
+  })
+})
+
+describe("services/mcp canette.yaml schema", () => {
+  it("get_canette_yaml_schema returns the canette.yaml schema by default", async () => {
+    const result = await handleTool("get_canette_yaml_schema", {}, "userId")
+    expect(result.isError).toBeUndefined()
+    const schema = JSON.parse(text(result))
+    expect(schema.$id).toBe("https://canette.dev/schema/canette.json")
+    expect(schema.properties).toHaveProperty("healthcheck")
+    expect(schema.properties.build.properties).toHaveProperty("dockerfile")
+  })
+
+  it("returns the template schema and rejects unknown files", () => {
+    const schema = JSON.parse(text(getSchemaTool({ file: "canette-template.yaml" })))
+    expect(schema.$id).toBe("https://canette.dev/schema/canette-template.json")
+    const result = getSchemaTool({ file: "values.yaml" })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain("canette-template.yaml")
+  })
+
+  it("lists and reads the schemas as MCP resources", async () => {
+    const server = buildMcpServer("userId")
+    const client = new Client({ name: "test", version: "0" })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+
+    const { resources } = await client.listResources()
+    expect(resources.map((r) => r.uri)).toEqual(
+      expect.arrayContaining(["canette-schema://canette.json", "canette-schema://canette-template.json"]),
+    )
+    const read = await client.readResource({ uri: "canette-schema://canette.json" })
+    const schema = JSON.parse((read.contents[0] as { text: string }).text)
+    expect(schema.$id).toBe("https://canette.dev/schema/canette.json")
+    await expect(client.readResource({ uri: "canette-schema://nope.json" })).rejects.toThrow("Unknown resource")
+    expect(client.getInstructions()).toContain("get_canette_yaml_schema")
     await client.close()
   })
 })

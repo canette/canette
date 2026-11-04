@@ -10,6 +10,8 @@ on:
       - apps/controller/**
       - apps/logstreamer/**
       - packages/golib/**
+      - tools/**
+      - apps/docs/public/schema/**
   workflow_dispatch:
 
 permissions:
@@ -20,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        app: [ 'apps/authgate', 'apps/builder', 'apps/controller', 'apps/logstreamer' ]
+        app: [ 'apps/authgate', 'apps/builder', 'apps/controller', 'apps/logstreamer', 'tools/canette-schema' ]
     env:
       # The repo-root go.work unifies all Go modules' dependency graphs, which can mask
       # a module whose own go.mod/go.sum is incomplete. Production builds (Dockerfiles)
@@ -48,3 +50,33 @@ jobs:
     - name: Test ${{ matrix.app }}
       run: go test -v ./...
       working-directory: ${{ matrix.app }}
+
+  # The canette.yaml JSON Schemas are generated from packages/golib/canetteyaml.
+  # Fail when a struct or doc comment changed without regenerating them.
+  schema:
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: 'off'
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.26'
+
+    - name: Regenerate JSON Schemas
+      run: go run .
+      working-directory: tools/canette-schema
+
+    - name: Check schemas are up to date
+      run: |
+        if ! git diff --exit-code -- apps/docs/public/schema; then
+          echo "::error::apps/docs/public/schema is out of date. Run 'bun run generate:schema' and commit the result."
+          exit 1
+        fi
+        if [ -n "$(git status --porcelain -- apps/docs/public/schema)" ]; then
+          echo "::error::Untracked files in apps/docs/public/schema. Run 'bun run generate:schema' and commit the result."
+          exit 1
+        fi

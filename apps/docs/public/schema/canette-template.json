@@ -1,0 +1,336 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://canette.dev/schema/canette-template.json",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Template display name, shown in the template wizard."
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional subtitle shown under the name in the wizard."
+    },
+    "apps": {
+      "items": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "App display name."
+          },
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+            "description": "Suggested app slug, unique within the template: lowercase letters, digits and hyphens, 1-63 characters, starting and ending with a letter or digit. Other apps can reference it as {{apps.\u003cslug\u003e.slug}} in env values."
+          },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "git",
+              "image"
+            ],
+            "description": "Where the app's image comes from: \"git\" builds the image from a Git repository, \"image\" deploys an existing container image.",
+            "default": "git"
+          },
+          "deployment_type": {
+            "type": "string",
+            "enum": [
+              "web",
+              "private",
+              "cronjob"
+            ],
+            "description": "\"web\" gets a public URL, \"private\" is reachable only inside the cluster, \"cronjob\" runs on a schedule and needs schedule.",
+            "default": "web"
+          },
+          "git_url": {
+            "type": "string",
+            "description": "Git repository URL, for source_type git.",
+            "examples": [
+              "https://github.com/org/repo"
+            ]
+          },
+          "git_branch": {
+            "type": "string",
+            "description": "Branch to build, for source_type git. Defaults to \"main\".",
+            "default": "main"
+          },
+          "git_credential_id": {
+            "type": "string",
+            "description": "ID of a canette Git credential for a private repository."
+          },
+          "app_path": {
+            "type": "string",
+            "description": "Subdirectory of the repository that contains the app. Defaults to the repository root."
+          },
+          "image_url": {
+            "type": "string",
+            "description": "Container image to deploy, for source_type image, e.g. \"nginx\" or \"ghcr.io/org/app\".",
+            "examples": [
+              "nginx"
+            ]
+          },
+          "image_tag": {
+            "type": "string",
+            "description": "Image tag, for source_type image. Defaults to \"latest\".",
+            "examples": [
+              "latest"
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "maximum": 65535,
+            "minimum": 1,
+            "description": "Port the app listens on; canette sets PORT to this value. Not used for deployment_type cronjob.",
+            "examples": [
+              3000
+            ]
+          },
+          "schedule": {
+            "type": "string",
+            "description": "When a cronjob app runs, required for deployment_type cronjob: a standard 5-field cron expression or @hourly, @daily, @weekly, @monthly, @yearly or @midnight.",
+            "examples": [
+              "0 2 * * *"
+            ]
+          },
+          "env": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "type": "object",
+            "description": "Plaintext environment variables, shown and editable in the wizard. Values may reference other apps as {{apps.\u003cslug\u003e.slug}}. PORT is reserved."
+          },
+          "secrets": {
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "Secret name, e.g. DATABASE_URL."
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "Secret name, e.g. DATABASE_URL."
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Shown in the wizard next to the value field."
+                    }
+                  },
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ]
+                }
+              ],
+              "description": "A secret name, or an object with a name and a description that guides whoever fills in the value."
+            },
+            "type": "array",
+            "description": "Secrets the app needs. The wizard asks for their values, which are never stored in the template."
+          },
+          "build": {
+            "properties": {
+              "context": {
+                "type": "string",
+                "maxLength": 1024,
+                "pattern": "^[a-zA-Z0-9./_-]*$",
+                "description": "Build context directory, relative to the app root (the app path in the repository). Defaults to \".\".",
+                "examples": [
+                  ".",
+                  "./src"
+                ]
+              },
+              "dockerfile": {
+                "type": "string",
+                "maxLength": 1024,
+                "pattern": "^[a-zA-Z0-9./_-]*$",
+                "description": "Path to a Dockerfile, relative to the app root. When set, the image is built from this Dockerfile instead of railpack auto-detection.",
+                "examples": [
+                  "Dockerfile"
+                ]
+              },
+              "args": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "type": "object",
+                "description": "Build-time ARG values passed to the Dockerfile build (at most 32). Keys must be valid Dockerfile ARG names. Not available to the running app: use env for runtime variables."
+              }
+            },
+            "additionalProperties": true,
+            "type": "object",
+            "description": "How the container image is built from a Git repository. A canette.yaml committed to the repository wins field by field over the app's stored canette config. No effect for apps deployed from a container image."
+          },
+          "runtime": {
+            "properties": {
+              "port": {
+                "type": "integer",
+                "maximum": 65535,
+                "minimum": 1,
+                "description": "Port the app listens on inside the container. canette also sets the PORT environment variable to this value. Overrides the port set in the UI.",
+                "examples": [
+                  3000
+                ]
+              },
+              "command": {
+                "items": {
+                  "type": "string",
+                  "examples": [
+                    "node",
+                    "server.js"
+                  ]
+                },
+                "type": "array",
+                "description": "Command that starts the app, as a list of arguments. Replaces the image's default entrypoint and command."
+              }
+            },
+            "additionalProperties": true,
+            "type": "object",
+            "description": "How the app's container runs."
+          },
+          "resources": {
+            "properties": {
+              "requests": {
+                "properties": {
+                  "cpu": {
+                    "type": "string",
+                    "description": "CPU as a Kubernetes quantity, e.g. \"100m\" (0.1 core) or \"1\".",
+                    "examples": [
+                      "100m",
+                      "500m"
+                    ]
+                  },
+                  "memory": {
+                    "type": "string",
+                    "description": "Memory as a Kubernetes quantity, e.g. \"128Mi\" or \"1Gi\".",
+                    "examples": [
+                      "128Mi",
+                      "512Mi"
+                    ]
+                  }
+                },
+                "additionalProperties": true,
+                "type": "object",
+                "description": "Resources reserved for the container; used by Kubernetes for scheduling."
+              },
+              "limits": {
+                "properties": {
+                  "cpu": {
+                    "type": "string",
+                    "description": "CPU as a Kubernetes quantity, e.g. \"100m\" (0.1 core) or \"1\".",
+                    "examples": [
+                      "100m",
+                      "500m"
+                    ]
+                  },
+                  "memory": {
+                    "type": "string",
+                    "description": "Memory as a Kubernetes quantity, e.g. \"128Mi\" or \"1Gi\".",
+                    "examples": [
+                      "128Mi",
+                      "512Mi"
+                    ]
+                  }
+                },
+                "additionalProperties": true,
+                "type": "object",
+                "description": "Maximum resources the container may use. Exceeding the memory limit restarts the container; CPU is throttled."
+              }
+            },
+            "additionalProperties": true,
+            "type": "object",
+            "description": "CPU and memory requests and limits for the app's container, as Kubernetes quantities. Fields left out fall back to the platform defaults set by the canette admin (100m/128Mi requests and 500m/512Mi limits out of the box)."
+          },
+          "replicas": {
+            "type": "integer",
+            "maximum": 20,
+            "minimum": 1,
+            "description": "Number of pods to run, from 1 to 20 (higher values are capped at 20). Defaults to 1.",
+            "default": 1
+          },
+          "healthcheck": {
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "HTTP path that returns a 2xx or 3xx status when the app is healthy. Defaults to \"/\".",
+                "examples": [
+                  "/healthz"
+                ]
+              },
+              "port": {
+                "type": "integer",
+                "maximum": 65535,
+                "minimum": 1,
+                "description": "Port to probe. Defaults to the app's port."
+              },
+              "initial_delay": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Seconds to wait after the container starts before the first probe. Defaults to 5.",
+                "default": 5
+              },
+              "period": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Seconds between probes. Defaults to 10.",
+                "default": 10
+              }
+            },
+            "additionalProperties": true,
+            "type": "object",
+            "description": "HTTP readiness probe for the app's container. While it fails, the pod gets no traffic, but it is never restarted. Without this block no probe is configured. An empty block (healthcheck: {}) enables the probe with the defaults below."
+          },
+          "ingress": {
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Whether the app gets a public URL. false keeps the app reachable inside the cluster through its Service but creates no HTTPRoute, the same as the \"private\" deployment type. Defaults to true for web apps."
+              }
+            },
+            "additionalProperties": true,
+            "type": "object",
+            "description": "Public HTTP routing for a web app."
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name",
+          "slug"
+        ],
+        "description": "TemplateApp is one app in a template."
+      },
+      "type": "array",
+      "minItems": 1,
+      "description": "The apps to create, at least one. Each app is reviewed in the wizard before anything is created."
+    }
+  },
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "name",
+    "apps"
+  ],
+  "title": "canette-template.yaml",
+  "description": "A canette template: one or more apps created together in a project from a single file."
+}
