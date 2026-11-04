@@ -16,11 +16,18 @@ build:
   dockerfile: Dockerfile
 runtime:
   port: 8080
+  command: [sleep, 3600]
 replicas: 2
 secrets: [DATABASE_URL]
 env:
   WORKERS: 4
   DEBUG: true
+resources:
+  requests:
+    cpu: 0.5
+  limits:
+    cpu: 1
+    memory: 1073741824
 unknown_field: ignored
 `
 	var full Config
@@ -34,6 +41,15 @@ unknown_field: ignored
 	// The schema allows numbers and booleans in env; they must decode as strings.
 	if full.Env["WORKERS"] != "4" || full.Env["DEBUG"] != "true" {
 		t.Errorf("env = %v, want WORKERS=4 DEBUG=true", full.Env)
+	}
+
+	// The schema allows bare numbers for quantities and command items; they
+	// must decode as strings.
+	if full.Resources.Requests.CPU != "0.5" || full.Resources.Limits.CPU != "1" || full.Resources.Limits.Memory != "1073741824" {
+		t.Errorf("resources = %+v, want cpu 0.5/1 and memory 1073741824", full.Resources)
+	}
+	if strings.Join(full.Runtime.Command, " ") != "sleep 3600" {
+		t.Errorf("command = %v, want [sleep 3600]", full.Runtime.Command)
 	}
 
 	var rt RuntimeConfig

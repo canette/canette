@@ -38,14 +38,14 @@ type BuildConfig struct {
 type BuildSpec struct {
 	// Build context directory, relative to the app root (the app path in the
 	// repository). Defaults to ".".
-	Context string `yaml:"context,omitempty" jsonschema:"maxLength=1024,pattern=^[a-zA-Z0-9./_-]*$,example=.,example=./src"`
+	Context string `yaml:"context,omitempty" jsonschema:"example=.,example=./src"`
 	// Path to a Dockerfile, relative to the app root. When set, the image is
 	// built from this Dockerfile instead of railpack auto-detection.
-	Dockerfile string `yaml:"dockerfile,omitempty" jsonschema:"maxLength=1024,pattern=^[a-zA-Z0-9./_-]*$,example=Dockerfile"`
+	Dockerfile string `yaml:"dockerfile,omitempty" jsonschema:"example=Dockerfile"`
 	// Build-time ARG values passed to the Dockerfile build (at most 32). Keys
 	// must be valid Dockerfile ARG names. Not available to the running app:
 	// use env for runtime variables.
-	Args map[string]string `yaml:"args,omitempty" jsonschema:"maxProperties=32"`
+	Args map[string]string `yaml:"args,omitempty"`
 }
 
 // RuntimeConfig is the runtime part of canette.yaml, read by the controller
@@ -95,13 +95,20 @@ type ResourceConfig struct {
 	Limits ResourceValues `yaml:"limits,omitempty"`
 }
 
-// ResourceValues holds CPU and memory as Kubernetes quantity strings.
+// ResourceValues holds CPU and memory as Kubernetes quantities.
 type ResourceValues struct {
-	// CPU as a Kubernetes quantity, e.g. "100m" (0.1 core) or "1".
-	CPU string `yaml:"cpu,omitempty" jsonschema:"example=100m,example=500m"`
-	// Memory as a Kubernetes quantity, e.g. "128Mi" or "1Gi".
-	Memory string `yaml:"memory,omitempty" jsonschema:"example=128Mi,example=512Mi"`
+	// CPU as a Kubernetes quantity, e.g. "100m" (0.1 core) or 1.
+	CPU Quantity `yaml:"cpu,omitempty" jsonschema:"example=100m,example=500m"`
+	// Memory as a Kubernetes quantity, e.g. "128Mi" or "1Gi" (binary units),
+	// or a plain number of bytes. "MB"/"GB" are not valid: use "M"/"G" or
+	// "Mi"/"Gi".
+	Memory Quantity `yaml:"memory,omitempty" jsonschema:"example=128Mi,example=512Mi"`
 }
+
+// Quantity is a Kubernetes resource quantity. In YAML it may be a string
+// ("100m", "1Gi") or a bare number (1, 0.5, 1073741824); both decode to the
+// same string, which Kubernetes validates when the app is deployed.
+type Quantity string
 
 // HealthcheckSpec configures the HTTP probe.
 type HealthcheckSpec struct {

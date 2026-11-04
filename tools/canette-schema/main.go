@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -22,6 +23,10 @@ import (
 const (
 	schemaBaseURL = "https://canette.dev/schema/"
 	draft07       = "http://json-schema.org/draft-07/schema#"
+
+	// QuantityPattern is the Kubernetes resource quantity format, as published
+	// in the Kubernetes OpenAPI spec (k8s.io/apimachinery resource.Quantity).
+	QuantityPattern = `^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$`
 )
 
 func main() {
@@ -75,6 +80,7 @@ func newReflector(libDir string) (*jsonschema.Reflector, error) {
 		// is easier for an agent to read than a $ref.
 		DoNotReference: true,
 		Anonymous:      true,
+		Mapper:         mapType,
 	}
 
 	// The template types live in this package ("main"); comment keys are the
@@ -98,8 +104,52 @@ func newReflector(libDir string) (*jsonschema.Reflector, error) {
 	return r, nil
 }
 
-func canetteSchema(r *jsonschema.Reflector) *jsonschema.Schema {
+// mapType gives types whose schema struct tags can't express their own schema.
+func mapType(t reflect.Type) *jsonschema.Schema {
+	if t == reflect.TypeFor[canetteyaml.Quantity]() {
+		// YAML reads `cpu: 1` as a number; it decodes to the string "1".
+		return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{
+			{Type: "string", Pattern: QuantityPattern},
+			{Type: "number", Minimum: json.Number("0")},
+		}}
+	}
+	return nil
+}
+
+// reflectConfig reflects canetteyaml.Config and adds the constraints that
+// BuildSpec.Validate enforces, taken from the same constants so the schema
+// and the validator can't disagree. Struct tags can't express rules on map
+// keys, which is why these are not tags.
+func reflectConfig(r *jsonschema.Reflector) *jsonschema.Schema {
 	s := r.Reflect(&canetteyaml.Config{})
+
+	build := s.Properties.Value("build")
+	for _, name := range []string{"context", "dockerfile"} {
+		p := build.Properties.Value(name)
+		p.Pattern = canetteyaml.SafePathPattern
+		p.MaxLength = ptr(uint64(canetteyaml.MaxBuildValueLen))
+	}
+	args := build.Properties.Value("args")
+	args.MaxProperties = ptr(uint64(canetteyaml.MaxArgCount))
+	args.PropertyNames = &jsonschema.Schema{
+		Pattern:   canetteyaml.ArgKeyPattern,
+		MaxLength: ptr(uint64(canetteyaml.MaxArgKeyLen)),
+	}
+	args.AdditionalProperties = scalar()
+	args.AdditionalProperties.AnyOf[0].MaxLength = ptr(uint64(canetteyaml.MaxBuildValueLen))
+
+	// `command: [sleep, 3600]` decodes 3600 as the string "3600".
+	cmd := s.Properties.Value("runtime").Properties.Value("command")
+	examples := cmd.Items.Examples
+	cmd.Items = scalar()
+	cmd.Items.Examples = examples
+	return s
+}
+
+func ptr[T any](v T) *T { return &v }
+
+func canetteSchema(r *jsonschema.Reflector) *jsonschema.Schema {
+	s := reflectConfig(r)
 	s.Title = "canette.yaml"
 	s.Description = "Build and runtime configuration for a canette app, committed to the app's repository " +
 		"or set as the app's canette config. All fields are optional: absence means \"use platform defaults\". " +
@@ -116,7 +166,7 @@ func templateSchema(r *jsonschema.Reflector) *jsonschema.Schema {
 	// isn't an app setting becomes that app's canette config). Fields the
 	// template app defines itself (env, secrets) keep the template meaning.
 	app := s.Properties.Value("apps").Items
-	cfg := r.Reflect(&canetteyaml.Config{})
+	cfg := reflectConfig(r)
 	for p := cfg.Properties.Oldest(); p != nil; p = p.Next() {
 		if _, ok := app.Properties.Get(p.Key); !ok {
 			app.Properties.Set(p.Key, p.Value)

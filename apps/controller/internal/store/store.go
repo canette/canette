@@ -330,10 +330,10 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 		memLim = "512Mi"
 	}
 	res := Resources{
-		CPURequest:    pick(cfg.Resources.Requests.CPU, cpuReq),
-		MemoryRequest: pick(cfg.Resources.Requests.Memory, memReq),
-		CPULimit:      pick(cfg.Resources.Limits.CPU, cpuLim),
-		MemoryLimit:   pick(cfg.Resources.Limits.Memory, memLim),
+		CPURequest:    pick(string(cfg.Resources.Requests.CPU), cpuReq),
+		MemoryRequest: pick(string(cfg.Resources.Requests.Memory), memReq),
+		CPULimit:      pick(string(cfg.Resources.Limits.CPU), cpuLim),
+		MemoryLimit:   pick(string(cfg.Resources.Limits.Memory), memLim),
 	}
 
 	// Port: snapshot value as base, canette_config runtime.port overrides if set.

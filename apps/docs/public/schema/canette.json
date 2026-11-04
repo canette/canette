@@ -27,7 +27,8 @@
           "additionalProperties": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 1024
               },
               {
                 "type": "number"
@@ -37,7 +38,12 @@
               }
             ]
           },
+          "propertyNames": {
+            "maxLength": 256,
+            "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+          },
           "type": "object",
+          "maxProperties": 32,
           "description": "Build-time ARG values passed to the Dockerfile build (at most 32). Keys must be valid Dockerfile ARG names. Not available to the running app: use env for runtime variables."
         }
       },
@@ -58,7 +64,17 @@
         },
         "command": {
           "items": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
             "examples": [
               "node",
               "server.js"
@@ -94,20 +110,30 @@
         "requests": {
           "properties": {
             "cpu": {
-              "type": "string",
-              "description": "CPU as a Kubernetes quantity, e.g. \"100m\" (0.1 core) or \"1\".",
-              "examples": [
-                "100m",
-                "500m"
-              ]
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"
+                },
+                {
+                  "type": "number",
+                  "minimum": 0
+                }
+              ],
+              "description": "CPU as a Kubernetes quantity, e.g. \"100m\" (0.1 core) or 1."
             },
             "memory": {
-              "type": "string",
-              "description": "Memory as a Kubernetes quantity, e.g. \"128Mi\" or \"1Gi\".",
-              "examples": [
-                "128Mi",
-                "512Mi"
-              ]
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"
+                },
+                {
+                  "type": "number",
+                  "minimum": 0
+                }
+              ],
+              "description": "Memory as a Kubernetes quantity, e.g. \"128Mi\" or \"1Gi\" (binary units), or a plain number of bytes. \"MB\"/\"GB\" are not valid: use \"M\"/\"G\" or \"Mi\"/\"Gi\"."
             }
           },
           "additionalProperties": true,
@@ -117,20 +143,30 @@
         "limits": {
           "properties": {
             "cpu": {
-              "type": "string",
-              "description": "CPU as a Kubernetes quantity, e.g. \"100m\" (0.1 core) or \"1\".",
-              "examples": [
-                "100m",
-                "500m"
-              ]
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"
+                },
+                {
+                  "type": "number",
+                  "minimum": 0
+                }
+              ],
+              "description": "CPU as a Kubernetes quantity, e.g. \"100m\" (0.1 core) or 1."
             },
             "memory": {
-              "type": "string",
-              "description": "Memory as a Kubernetes quantity, e.g. \"128Mi\" or \"1Gi\".",
-              "examples": [
-                "128Mi",
-                "512Mi"
-              ]
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"
+                },
+                {
+                  "type": "number",
+                  "minimum": 0
+                }
+              ],
+              "description": "Memory as a Kubernetes quantity, e.g. \"128Mi\" or \"1Gi\" (binary units), or a plain number of bytes. \"MB\"/\"GB\" are not valid: use \"M\"/\"G\" or \"Mi\"/\"Gi\"."
             }
           },
           "additionalProperties": true,

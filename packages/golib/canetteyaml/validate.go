@@ -5,21 +5,26 @@ import (
 	"regexp"
 )
 
-// Limits enforced by BuildSpec.Validate. The same limits appear as jsonschema
-// tags on BuildSpec, so keep the two in sync.
+// Limits enforced by BuildSpec.Validate. tools/canette-schema reads these
+// constants and patterns to generate the matching schema constraints.
 const (
 	MaxBuildValueLen = 1024
 	MaxArgKeyLen     = 256
 	MaxArgCount      = 32
 )
 
-// safePathRe allows only characters that are safe in filesystem paths.
+// SafePathPattern allows only characters that are safe in filesystem paths.
 // Excludes shell metacharacters: ; | & ` $ < > ( ) { } \n \r etc.
-var safePathRe = regexp.MustCompile(`^[a-zA-Z0-9./_-]*$`)
+const SafePathPattern = `^[a-zA-Z0-9./_-]*$`
 
-// argKeyRe matches valid Docker ARG names: letter or underscore, followed by
-// letters, digits, or underscores. Matches the Dockerfile ARG name spec.
-var argKeyRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+// ArgKeyPattern matches valid Docker ARG names: letter or underscore, followed
+// by letters, digits, or underscores. Matches the Dockerfile ARG name spec.
+const ArgKeyPattern = `^[a-zA-Z_][a-zA-Z0-9_]*$`
+
+var (
+	safePathRe = regexp.MustCompile(SafePathPattern)
+	argKeyRe   = regexp.MustCompile(ArgKeyPattern)
+)
 
 // Validate checks that all BuildSpec field values are safe to pass to BuildKit.
 // Empty path values are allowed (they mean "use the default"). Returns an
