@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -289,7 +290,15 @@ func handleCronJobLogs(w http.ResponseWriter, r *http.Request, log *zap.Logger, 
 		flusher.Flush()
 	}
 
-	req := client.CoreV1().Pods(ns).GetLogs(pod.Name, &corev1.PodLogOptions{Follow: false})
+	// Ask Kubernetes for one byte beyond the response budget so a compliant
+	// server lets us distinguish an exact-size log from a truncated one. The
+	// local bounded reader below remains authoritative if the server ignores or
+	// only approximately enforces LimitBytes.
+	limit := int64(maxOneShotLogBytes + 1)
+	req := client.CoreV1().Pods(ns).GetLogs(pod.Name, &corev1.PodLogOptions{
+		Follow:     false,
+		LimitBytes: &limit,
+	})
 	stream, err := req.Stream(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -300,16 +309,91 @@ func handleCronJobLogs(w http.ResponseWriter, r *http.Request, log *zap.Logger, 
 	}
 	defer stream.Close()
 
-	buf, err := io.ReadAll(stream)
-	if err != nil && ctx.Err() != nil {
-		return
+	truncated, err := writeBoundedLogEvent(w, stream, int64(maxOneShotLogBytes))
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		log.Warn("read cronjob pod log stream failed", zap.Error(err), zap.String("pod", pod.Name))
 	}
-	if len(buf) > 0 {
-		_, _ = fmt.Fprint(w, formatLogEvent(buf))
-		if canFlush {
-			flusher.Flush()
+	if truncated {
+		fmt.Fprintf(w, "event: truncated\ndata: {\"limitBytes\":%d}\n\n", maxOneShotLogBytes)
+	}
+	if canFlush {
+		flusher.Flush()
+	}
+}
+
+// writeBoundedLogEvent copies at most maxBytes from src into one SSE log event.
+// It formats through fixed-size buffers, preserving the existing event payload
+// for ordinary logs without retaining the complete tenant-controlled log. One
+// additional byte is read only to report whether the response was truncated.
+func writeBoundedLogEvent(dst io.Writer, src io.Reader, maxBytes int64) (truncated bool, err error) {
+	limited := &io.LimitedReader{R: src, N: maxBytes + 1}
+	readBuf := make([]byte, 32*1024)
+	formatted := bufio.NewWriterSize(dst, 32*1024)
+	started := false
+	pendingNewlines := 0
+	var written int64
+	var readErr error
+
+	for limited.N > 0 {
+		n, currentErr := limited.Read(readBuf)
+		if n > 0 {
+			accepted := n
+			if remaining := maxBytes - written; int64(accepted) > remaining {
+				accepted = int(remaining)
+				truncated = true
+			}
+
+			if accepted > 0 {
+				if !started {
+					if _, err := formatted.WriteString("event: log\ndata: "); err != nil {
+						return truncated, err
+					}
+					started = true
+				}
+				for _, b := range readBuf[:accepted] {
+					switch b {
+					case '\r':
+						// Keep formatLogEvent's carriage-return removal.
+					case '\n':
+						// Delay newlines so trailing newlines can be trimmed without
+						// buffering the preceding, potentially oversized line.
+						pendingNewlines++
+					default:
+						for pendingNewlines > 0 {
+							if _, err := formatted.WriteString("\ndata: "); err != nil {
+								return truncated, err
+							}
+							pendingNewlines--
+						}
+						if err := formatted.WriteByte(b); err != nil {
+							return truncated, err
+						}
+					}
+				}
+				written += int64(accepted)
+			}
+		}
+
+		if currentErr != nil {
+			if !errors.Is(currentErr, io.EOF) {
+				readErr = currentErr
+			}
+			break
 		}
 	}
+
+	if started {
+		if _, err := formatted.WriteString("\n\n"); err != nil {
+			return truncated, err
+		}
+	}
+	if err := formatted.Flush(); err != nil {
+		return truncated, err
+	}
+	return truncated, readErr
 }
 
 // latestCompletedPod returns the most recently finished pod (Succeeded or Failed)

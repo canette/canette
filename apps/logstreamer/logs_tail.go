@@ -18,9 +18,9 @@ import (
 const (
 	defaultTailLines = 100
 	maxTailLines     = 1000
-	// Caps the bytes read from the kubelet so one pod with very long lines
-	// can't blow up the response (and, downstream, an MCP client's context).
-	maxTailBytes = 256 * 1024
+	// Caps one-shot log responses so one pod with very long lines cannot make
+	// logstreamer allocate or return an unbounded amount of tenant-controlled data.
+	maxOneShotLogBytes = 256 * 1024
 )
 
 // tailResponse is the GET /logs/tail response. Found is false (with HTTP 200)
@@ -93,7 +93,7 @@ func logsTailHandler(log *zap.Logger, client kubernetes.Interface) http.Handler 
 			resp = describePod(pod)
 			container := appContainerName(pod, app)
 			readLogs := func(previous bool) (string, error) {
-				limit := int64(maxTailBytes)
+				limit := int64(maxOneShotLogBytes)
 				stream, err := client.CoreV1().Pods(ns).GetLogs(pod.Name, &corev1.PodLogOptions{
 					Container:  container,
 					TailLines:  &lines,
