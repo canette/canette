@@ -79,14 +79,19 @@ env:
   HOME: /tmp
 ```
 
-## Ports below 1024 don't work
+## Use a port of 1024 or higher
 
-A non-root process can't listen on a port below 1024, and in hardened mode that can't be granted back. canette apps listen on `PORT` (3000 by default), so this only affects images with a fixed low port, typically port 80. Change the app or image to listen on a higher port and set that port in the app's settings or `runtime.port`.
+Whether a non-root process may listen on a port below 1024 depends on the cluster, not on canette. Linux decides it per pod with the `net.ipv4.ip_unprivileged_port_start` setting ([kernel docs](https://kernel.org/doc/html/latest/networking/ip-sysctl.html#ip-variables)), and canette doesn't set it, so the container runtime's default applies:
+
+- **containerd 2.0 and later** (the CRI plugin) allow every port by default, so low ports work in hardened mode.
+- **containerd 1.x**, and runtimes or clusters configured differently, keep ports below 1024 for root. The app then fails with `Permission denied` when it starts listening. Adding the `NET_BIND_SERVICE` capability back doesn't help a non-root process.
+
+canette apps listen on `PORT` (3000 by default), so this only affects images with a fixed low port, typically port 80. For an app that works on any cluster, listen on a port of 1024 or higher and set that port in the app's settings or `runtime.port`. Ask your canette admin if you're not sure what your cluster allows.
 
 ## Images that don't work
 
 - **Images that must start as root**, for example to install packages or to `chown` files at startup and then switch user. They fail with `Operation not permitted` or `permission denied` in the app logs.
-- **Images that listen on port 80**, such as the default `nginx` image (`bind() to 0.0.0.0:80 failed (13: Permission denied)`). Use an unprivileged variant instead.
+- **Images that listen on port 80**, such as the default `nginx` image, on clusters that keep low ports for root (`bind() to 0.0.0.0:80 failed (13: Permission denied)`, see [Use a port of 1024 or higher](#use-a-port-of-1024-or-higher)). Use an unprivileged variant that listens on a higher port, which works on every cluster.
 
 Many official images that start as root also support running as any user when their directories are writable, as PostgreSQL and Redis do in the examples below.
 
@@ -119,7 +124,7 @@ Pages using ISR (`revalidate`) keep working and are regenerated in memory, but N
 
 ### Static site with nginx
 
-Use the unprivileged nginx image, which listens on port 8080. Set the app's port to `8080`.
+Use the unprivileged nginx image, which listens on port 8080 and works on any cluster. Set the app's port to `8080`.
 
 ```dockerfile
 FROM nginxinc/nginx-unprivileged:alpine
@@ -132,6 +137,8 @@ runtime:
 security:
   hardened: true
 ```
+
+The default `nginx` image also runs hardened on clusters that allow low ports (port 80), with `writable_paths: ["/tmp", "/var/cache/nginx", "/var/run"]`. The unprivileged image is the portable choice.
 
 ### PostgreSQL
 
@@ -195,7 +202,7 @@ The app writes to a directory that isn't writable. Add that directory to `writab
 The app writes to a file or directory in the image that belongs to another user. Move the write to `/tmp`, a writable directory or a volume, or see [Your own Dockerfile](#your-own-dockerfile).
 
 **`bind() ... failed (13: Permission denied)` or `listen EACCES`**
-The app listens on a port below 1024. See [Ports below 1024 don't work](#ports-below-1024-dont-work).
+The app listens on a port below 1024 and the cluster keeps those ports for root. See [Use a port of 1024 or higher](#use-a-port-of-1024-or-higher).
 
 **`Operation not permitted` at startup**
 The image needs root at startup, for example to change file owners. Use an image that supports running as a non-root user, or leave hardened mode off for this app.

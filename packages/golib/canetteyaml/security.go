@@ -11,6 +11,7 @@ import (
 // instead of a raw yaml.v3 error. Unknown keys are ignored, and a null value
 // counts as absent.
 func (s *SecuritySpec) UnmarshalYAML(n *yaml.Node) error {
+	n = resolve(n)
 	if isNull(n) {
 		return nil
 	}
@@ -37,12 +38,13 @@ func (s *SecuritySpec) UnmarshalYAML(n *yaml.Node) error {
 	if err := decodeField(&raw.User, &out.User, "!!int", "security.user must be a whole number (a UID such as 10001)"); err != nil {
 		return err
 	}
-	if !isNull(&raw.WritablePaths) {
-		if raw.WritablePaths.Kind != yaml.SequenceNode {
+	if wp := resolve(&raw.WritablePaths); !isNull(wp) {
+		if wp.Kind != yaml.SequenceNode {
 			return errors.New("security.writable_paths must be a list of paths, for example [\"/tmp\"]")
 		}
-		paths := make([]string, 0, len(raw.WritablePaths.Content))
-		for _, item := range raw.WritablePaths.Content {
+		paths := make([]string, 0, len(wp.Content))
+		for _, item := range wp.Content {
+			item = resolve(item)
 			if item.Kind != yaml.ScalarNode || isNull(item) {
 				return errors.New("security.writable_paths must be a list of paths, for example [\"/tmp\"]")
 			}
@@ -56,6 +58,15 @@ func (s *SecuritySpec) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+// resolve follows YAML aliases (*name) to the node they refer to, so values
+// reused through anchors are checked like values written in place.
+func resolve(n *yaml.Node) *yaml.Node {
+	for n.Kind == yaml.AliasNode && n.Alias != nil {
+		n = n.Alias
+	}
+	return n
+}
+
 // isNull reports whether a node is absent (zero node) or an explicit null.
 func isNull(n *yaml.Node) bool {
 	return n.Kind == 0 || (n.Kind == yaml.ScalarNode && n.Tag == "!!null")
@@ -64,6 +75,7 @@ func isNull(n *yaml.Node) bool {
 // decodeField decodes a scalar into *dst. wantTag, when set, is the YAML tag
 // the value must resolve to: yaml.v3 would otherwise truncate 1.5 into an int.
 func decodeField[T any](n *yaml.Node, dst **T, wantTag, msg string) error {
+	n = resolve(n)
 	if isNull(n) {
 		return nil
 	}

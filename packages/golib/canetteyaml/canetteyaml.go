@@ -87,10 +87,11 @@ type SecuritySpec struct {
 	// (only writable_paths are writable) and all Linux capabilities dropped.
 	// Volumes are made writable for that user through the pod's fsGroup.
 	// Works for most app images, including railpack builds, whose files only
-	// need to be world-readable. The app must listen on a port of 1024 or
-	// higher. Breaks images that need root at startup or listen on port 80,
-	// such as the default nginx image (use nginxinc/nginx-unprivileged on
-	// port 8080 instead). Directories the app writes to must be listed in
+	// need to be world-readable. Breaks images that need root at startup.
+	// Whether a port below 1024 (such as the default nginx image's port 80)
+	// works depends on the cluster's container runtime, so use a port of 1024
+	// or higher, for example nginxinc/nginx-unprivileged on port 8080.
+	// Directories the app writes to must be listed in
 	// writable_paths or be a canette volume. Defaults to false.
 	Hardened *bool `yaml:"hardened,omitempty" jsonschema:"default=false"`
 	// Absolute directories that stay writable on top of the read-only root

@@ -172,6 +172,34 @@ security:
 		}
 	})
 
+	// Anchors and aliases are ordinary YAML and must decode like values
+	// written in place.
+	for _, tc := range []struct{ name, input string }{
+		{"scalar alias", "on: &on true\nuid: &uid 1000\nsecurity:\n  hardened: *on\n  user: *uid\n  writable_paths: [/tmp]\n"},
+		{"list alias", "on: &on true\npaths: &p [/tmp]\nsecurity:\n  hardened: *on\n  user: 1000\n  writable_paths: *p\n"},
+		{"item alias", "tmp: &t /tmp\nsecurity:\n  hardened: true\n  user: 1000\n  writable_paths: [*t]\n"},
+		{"block alias", "base: &b {hardened: true, user: 1000, writable_paths: [/tmp]}\nsecurity: *b\n"},
+		{"merge key", "base: &b {hardened: true, writable_paths: [/tmp]}\nsecurity:\n  <<: *b\n  user: 1000\n"},
+	} {
+		t.Run("alias: "+tc.name, func(t *testing.T) {
+			rt, err := decode(t, tc.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := rt.Security
+			if s == nil || s.Hardened == nil || !*s.Hardened || s.User == nil || *s.User != 1000 ||
+				strings.Join(s.WritablePaths, ",") != "/tmp" {
+				t.Fatalf("unexpected security: %+v", s)
+			}
+		})
+	}
+
+	// An alias to a wrong type still gets the field-named message.
+	if _, err := decode(t, "m: &m {a: 1}\nsecurity:\n  hardened: *m\n"); err == nil ||
+		!strings.Contains(err.Error(), "security.hardened must be true or false") {
+		t.Errorf("alias to a mapping: err = %v", err)
+	}
+
 	for _, tc := range []struct{ name, input, wantErr string }{
 		{"user not a number", "security:\n  user: abc\n", "security.user must be a whole number"},
 		{"user fraction", "security:\n  user: 1.5\n", "security.user must be a whole number"},
