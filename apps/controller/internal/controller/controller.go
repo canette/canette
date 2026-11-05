@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	"canette.dev/controller/internal/config"
 	k8sres "canette.dev/controller/internal/k8s"
 	"canette.dev/controller/internal/store"
 	libk8s "canette.dev/lib/k8s"
@@ -261,9 +262,23 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		},
 		AuthgateImage:    c.cfg.AuthgateImage,
 		Healthcheck:      healthcheckSpec(cfg.Healthcheck),
+		Security:         securitySpec(cfg.Security),
 		Workload:         c.cfg.Workload,
 		NamespacePolicy:  c.cfg.NamespacePolicy,
 		StorageClassName: c.cfg.StorageClassName,
+	}
+}
+
+// securitySpec converts the resolved canette.yaml hardened mode (see
+// config.ResolveSecurity) into the k8s package's own spec type.
+func securitySpec(h *config.Hardening) *k8sres.SecuritySpec {
+	if h == nil {
+		return nil
+	}
+	return &k8sres.SecuritySpec{
+		User:           h.User,
+		ReadOnlyRootFS: h.ReadOnlyRootFS,
+		WritablePaths:  h.WritablePaths,
 	}
 }
 

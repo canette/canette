@@ -1,0 +1,209 @@
+---
+title: Hardened mode
+description: Run an app as a non-root user with a read-only root filesystem and no Linux capabilities, with one canette.yaml setting.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+Hardened mode locks down an app's container further than the [defaults every app gets](/docs/security/platform-security#app-workload-defaults). It's off by default, because a few images need changes to run with it. Turn it on in the app's `canette.yaml`:
+
+```yaml
+security:
+  hardened: true
+```
+
+Most apps need nothing else, including apps built by railpack. If the app writes files at runtime, also list the directories it writes to (see [Writable directories](#writable-directories)).
+
+## What it does
+
+With `hardened: true`, canette sets these on the app's container. Together with the defaults, they meet the Kubernetes [`restricted` Pod Security level](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted), the strictest one.
+
+| Setting | Effect |
+|---------|--------|
+| Runs as UID and GID `10001` (`runAsUser`, `runAsGroup`, `runAsNonRoot`) | The app never runs as root, whatever `USER` the image sets. If an attacker gets code execution in the app, they are an unprivileged user inside the container. |
+| Read-only root filesystem (`readOnlyRootFilesystem`) | Nothing in the image can be changed at runtime, so an attacker can't replace the app's code or drop tools into it. Only `/tmp` and the [writable directories](#writable-directories) you list can be written. |
+| All Linux capabilities dropped (`capabilities.drop: [ALL]`) | Removes the remaining root-like permissions, such as changing file owners or opening raw network sockets. |
+| Volumes owned by group `10001` (pod `fsGroup`) | Your [volumes](/docs/configuration/volumes) are writable by the app's user without any changes to the image. |
+
+The password-gate sidecar (when the app is password protected) is not affected; it always runs hardened.
+
+### Why a fixed user works for most images
+
+When the root filesystem is read-only, it barely matters who owns the files in the image: nothing there can be written anyway. The app's files only need to be readable by any user, which they normally are (railpack and almost every `Dockerfile` create them that way). Everything the app writes goes to `/tmp`, a writable directory or a volume, and canette makes those writable for UID `10001`.
+
+## Settings
+
+All settings are optional and only take effect with `hardened: true`. If you set them without it, the deploy log shows a warning and they are ignored.
+
+```yaml
+security:
+  hardened: true
+  writable_paths: ["/tmp", "/app/.next/cache"]   # default: ["/tmp"]
+  read_only_root_filesystem: false                # default: true
+  user: 1000                                      # default: 10001
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `hardened` | `false` | Turns hardened mode on. |
+| `writable_paths` | `["/tmp"]` | Absolute directories that stay writable. Listing your own replaces the default, so include `/tmp` if the app needs it. `[]` means nothing is writable. |
+| `read_only_root_filesystem` | `true` | Set to `false` to keep the whole root filesystem writable, for apps that write in too many places to list. The other settings still apply. `writable_paths` is then ignored. |
+| `user` | `10001` | UID and GID the app runs as, also used for volume ownership. Set it only when the image's files aren't readable by other users, to the UID that owns them. `0` (root) is not allowed. |
+
+An invalid `security` block (for example `user: 0`, a relative path, or `hardened: yes please`) **fails the deployment** with a message naming the field. canette never deploys the app without the hardening you asked for. The previous deployment keeps running.
+
+### Writable directories
+
+Each entry in `writable_paths` becomes an empty directory, private to the pod (a Kubernetes `emptyDir`):
+
+- It starts empty on every pod start, and its contents are lost when the pod restarts or is replaced. Use a [persistent volume](/docs/configuration/volumes) for data you need to keep.
+- It hides whatever the image has at that path, so only list directories the image doesn't ship content in. `/app/.next/cache` is fine, but `/app/.next` would hide the app's build output.
+- If one of the app's volumes uses the same path, the volume wins.
+
+Common directories:
+
+| Stack | Directories | Notes |
+|-------|-------------|-------|
+| Any | `/tmp` (the default) | Temporary files, uploads in progress, many libraries' scratch space. |
+| Next.js | `/tmp`, `/app/.next/cache` | Cache for `next/image` optimization. See the [Next.js notes](#nextjs). |
+| nginx (unprivileged image) | `/tmp` | `nginxinc/nginx-unprivileged` keeps its pid and temp files in `/tmp`. |
+| PostgreSQL | `/tmp`, `/var/run/postgresql` | Plus a persistent volume for the data, see the [PostgreSQL example](#postgresql). |
+| Python | `/tmp` | Python can't write `__pycache__` files and silently skips them. Set `PYTHONDONTWRITEBYTECODE=1` in `env` to make that explicit. |
+
+### Set `HOME` to a writable directory
+
+UID `10001` has no home directory in most images, so Kubernetes sets `HOME=/`, which is read-only. Tools that write to `$HOME` then log errors (railpack's `mise`, Caddy, npm and pip caches) even though the app works. Point it at `/tmp`:
+
+```yaml
+env:
+  HOME: /tmp
+```
+
+## Ports below 1024 don't work
+
+A non-root process can't listen on a port below 1024, and in hardened mode that can't be granted back. canette apps listen on `PORT` (3000 by default), so this only affects images with a fixed low port, typically port 80. Change the app or image to listen on a higher port and set that port in the app's settings or `runtime.port`.
+
+## Images that don't work
+
+- **Images that must start as root**, for example to install packages or to `chown` files at startup and then switch user. They fail with `Operation not permitted` or `permission denied` in the app logs.
+- **Images that listen on port 80**, such as the default `nginx` image (`bind() to 0.0.0.0:80 failed (13: Permission denied)`). Use an unprivileged variant instead.
+
+Many official images that start as root also support running as any user when their directories are writable, as PostgreSQL and Redis do in the examples below.
+
+## Examples
+
+### railpack-built apps (Node.js, Python, Go, static sites)
+
+railpack images have no `USER` and their files in `/app` are owned by root and readable by everyone, so they run in hardened mode unchanged. Tested with railpack 0.23 for Node.js, Next.js, Python (gunicorn), Go and static sites (Caddy).
+
+```yaml
+security:
+  hardened: true
+env:
+  HOME: /tmp
+```
+
+### Next.js
+
+```yaml
+security:
+  hardened: true
+  writable_paths: ["/tmp", "/app/.next/cache"]
+env:
+  HOME: /tmp
+```
+
+`/app/.next/cache` lets `next/image` cache optimized images. Without it, images still work but are optimized again on every request.
+
+Pages using ISR (`revalidate`) keep working and are regenerated in memory, but Next.js can't save the regenerated pages to `.next/server` and logs `EROFS: read-only file system` or `EACCES: permission denied` for each one. Saving them would need `.next/server` to be writable by the app's user, which `writable_paths` can't do, because it would hide the build output. If you rely on ISR pages surviving a restart, build your own image that `chown`s `.next` to the app's user (see [Your own Dockerfile](#your-own-dockerfile)) and set `read_only_root_filesystem: false`.
+
+### Static site with nginx
+
+Use the unprivileged nginx image, which listens on port 8080. Set the app's port to `8080`.
+
+```dockerfile
+FROM nginxinc/nginx-unprivileged:alpine
+COPY dist/ /usr/share/nginx/html/
+```
+
+```yaml
+runtime:
+  port: 8080
+security:
+  hardened: true
+```
+
+### PostgreSQL
+
+The official `postgres` image runs as any user when its data and socket directories are writable. Add a persistent volume at `/var/lib/postgresql/data` in the app's settings, then:
+
+```yaml
+security:
+  hardened: true
+  writable_paths: ["/tmp", "/var/run/postgresql"]
+env:
+  PGDATA: /var/lib/postgresql/data/pgdata
+```
+
+`PGDATA` must be a subdirectory of the volume. PostgreSQL insists on owning its data directory, and the volume's top directory is owned by root.
+
+### Redis
+
+The official `redis` image runs as any user. Add a persistent volume at `/data` in the app's settings, then:
+
+```yaml
+security:
+  hardened: true
+```
+
+### Your own Dockerfile
+
+Most Dockerfiles need no change. When the app must write inside its own directory and you can't move that to `/tmp` or a volume, give the files to the app's user and keep the root filesystem writable:
+
+```dockerfile
+FROM node:22-alpine
+WORKDIR /app
+COPY --chown=10001:10001 . .
+RUN npm ci && npm run build
+USER 10001:10001
+CMD ["npm", "start"]
+```
+
+```yaml
+security:
+  hardened: true
+  read_only_root_filesystem: false
+```
+
+If your image already runs as its own non-root user (for example `USER node`, UID 1000) and its files are only readable by that user, set `user` to that UID instead of changing the image:
+
+```yaml
+security:
+  hardened: true
+  user: 1000
+```
+
+## Troubleshooting
+
+**The deployment failed with `invalid canette.yaml: security....`**
+The `security` block has an invalid value. The message names the field and what's wrong. Fix `canette.yaml` and deploy again.
+
+**`EROFS: read-only file system` or `Read-only file system` in the app logs**
+The app writes to a directory that isn't writable. Add that directory to `writable_paths` (keep `/tmp` in the list). If it's a directory with content from the image, or the app writes in many places, set `read_only_root_filesystem: false`. For writes to `/.config`, `/.local` or `/.cache`, [set `HOME`](#set-home-to-a-writable-directory).
+
+**`permission denied` or `EACCES` in the app logs**
+The app writes to a file or directory in the image that belongs to another user. Move the write to `/tmp`, a writable directory or a volume, or see [Your own Dockerfile](#your-own-dockerfile).
+
+**`bind() ... failed (13: Permission denied)` or `listen EACCES`**
+The app listens on a port below 1024. See [Ports below 1024 don't work](#ports-below-1024-dont-work).
+
+**`Operation not permitted` at startup**
+The image needs root at startup, for example to change file owners. Use an image that supports running as a non-root user, or leave hardened mode off for this app.
+
+<Callout type="info">
+  Not sure what an app is missing? With the default Pod Security settings, a deploy without hardened mode logs a `Kubernetes warning: would violate PodSecurity "restricted"` line listing which `restricted` rules the app breaks.
+</Callout>
+
+## Settings for agents
+
+Hardened mode is set in `canette.yaml` or the app's stored canette config (`canette_config` over [MCP](/docs/ai-agents/mcp#runtime-config-canetteyaml)), so AI agents can turn it on. An agent should check the image first: does it need root at startup, which port does it listen on, and where does it write. It should add `writable_paths` for those directories and deploy, then read the runtime logs for `EROFS` or `permission denied` errors. If the agent also changed a `Dockerfile`, a new build is needed (`trigger_deployment`), not a redeploy.

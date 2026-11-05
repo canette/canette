@@ -1,4 +1,4 @@
 {
   "title": "Security",
-  "pages": ["platform-security", "build-security"]
+  "pages": ["platform-security", "hardened-mode", "build-security"]
 }

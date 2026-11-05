@@ -88,6 +88,7 @@ The wizard shows a live preview of the resolved value as you type. At creation t
 - **Env vars** are shown in the wizard as editable key-value pairs. Values containing `{{apps.X.slug}}` show a resolved preview.
 - **Secrets** listed under `secrets` appear as required password fields in the wizard. Values are encrypted at rest and are never returned by the API. Each entry can be a plain string or an object with `name` and an optional `description` shown as hint text in the wizard.
 - Any field not recognised as an app-row field (`source_type`, `deployment_type`, `git_url`, etc.) is passed through as `canette.yaml` content and stored as the app's advanced configuration. Unknown fields are silently ignored for forward compatibility.
+- **`security`** works per app like any other `canette.yaml` field, e.g. `security: {hardened: true}` to run that app in [hardened mode](/docs/security/hardened-mode).
 - **Volumes are not supported in templates.** [Volumes](/docs/configuration/volumes) (PVC / emptyDir / configmap mounts) are always configured after the app exists, on its settings page — there's no `volumes` field in either a template or `canette.yaml`. Add volumes to each app individually after running the wizard.
 
 ---

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -34,6 +35,16 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 
 	// 1. Fetch app config.
 	appCfg, cfgErr := c.store.GetAppConfig(ctx, dep)
+	// An invalid security block fails the deployment instead of deploying
+	// without the hardening the user asked for.
+	var secErr *config.SecurityError
+	if errors.As(cfgErr, &secErr) {
+		lastErr = fmt.Errorf("invalid canette.yaml: %s", secErr.Msg)
+		return
+	}
+	for _, w := range appCfg.ConfigWarnings {
+		c.appendLog(ctx, log, dep.ID, "controller", "Warning: canette.yaml "+w)
+	}
 	if cfgErr != nil {
 		// canette.yaml is invalid — deployment continues with snapshot defaults.
 		msg := fmt.Sprintf("Warning: canette.yaml could not be parsed (%s); using defaults", cfgErr)
@@ -122,11 +133,22 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		c.appendLog(ctx, log, dep.ID, "controller", msg)
 	}
 	c.appendLog(ctx, log, dep.ID, "controller", "Applying Kubernetes resources...")
-	if err := k8sres.ApplyAll(ctx, c.dynClient, res); err != nil {
+	applyCtx, warnings := k8sres.WithWarningCollector(ctx)
+	if err := k8sres.ApplyAll(applyCtx, c.dynClient, res); err != nil {
 		lastErr = fmt.Errorf("apply resources: %w", err)
 		return
 	}
 	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
+	if psa := warnings.PodSecurityWarnings(); len(psa) > 0 {
+		for _, w := range psa {
+			c.appendLog(ctx, log, dep.ID, "controller", "Kubernetes warning: "+w)
+		}
+		if appCfg.Security == nil {
+			c.appendLog(ctx, log, dep.ID, "controller",
+				"Tip: set security.hardened: true in canette.yaml to meet the stricter Pod Security level, "+
+					"see https://canette.dev/docs/security/hardened-mode")
+		}
+	}
 
 	// 7. Watch rollout — skipped for CronJobs (no Deployment to roll out).
 	var livePodName string

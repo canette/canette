@@ -99,6 +99,14 @@ type HealthcheckSpec struct {
 	PeriodSeconds       int
 }
 
+// SecuritySpec is the resolved canette.yaml hardened mode for the app
+// container. nil leaves the container at the platform defaults.
+type SecuritySpec struct {
+	User           int64 // runAsUser, runAsGroup and the pod's fsGroup
+	ReadOnlyRootFS bool
+	WritablePaths  []string // emptyDir mounts, only used when ReadOnlyRootFS
+}
+
 // DeployConfig carries everything needed to build resources.
 type DeployConfig struct {
 	ProjectID            string
@@ -128,6 +136,7 @@ type DeployConfig struct {
 	PasswordGate         PasswordGateConfig
 	AuthgateImage        string           // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
 	Healthcheck          *HealthcheckSpec // nil when canette.yaml has no healthcheck block
+	Security             *SecuritySpec    // nil when canette.yaml hardened mode is off
 	Workload             WorkloadDefaults
 	NamespacePolicy      NamespacePolicy
 	StorageClassName     string // PVC storage class; empty uses the cluster default
@@ -209,6 +218,68 @@ const networkPolicyName = "canette-default"
 const resourceQuotaName = "canette-quota"
 
 const limitRangeName = "canette-limits"
+
+// appContainerSecurityContext returns the app container's securityContext.
+// Only the app container: the authgate sidecar keeps its own fixed one.
+func appContainerSecurityContext(sec *SecuritySpec) map[string]interface{} {
+	sc := map[string]interface{}{"allowPrivilegeEscalation": false}
+	if sec == nil {
+		return sc
+	}
+	// Hardened mode: together with the pod-level seccomp profile this meets
+	// the Pod Security "restricted" level.
+	sc["runAsNonRoot"] = true
+	sc["runAsUser"] = sec.User
+	sc["runAsGroup"] = sec.User
+	sc["readOnlyRootFilesystem"] = sec.ReadOnlyRootFS
+	sc["capabilities"] = map[string]interface{}{"drop": []interface{}{"ALL"}}
+	return sc
+}
+
+// podSecurityContext returns the pod-level securityContext. In hardened mode
+// fsGroup makes volumes writable for the app's UID; OnRootMismatch skips the
+// recursive chown on every start once ownership is right.
+func podSecurityContext(sec *SecuritySpec) map[string]interface{} {
+	sc := map[string]interface{}{
+		"seccompProfile": map[string]interface{}{"type": "RuntimeDefault"},
+	}
+	if sec != nil {
+		sc["fsGroup"] = sec.User
+		sc["fsGroupChangePolicy"] = "OnRootMismatch"
+	}
+	return sc
+}
+
+// writablePathVolumes returns an emptyDir volume and mount for each hardened
+// mode writable path. A user volume on the same mount path wins, and volume
+// names skip any name a user volume already has.
+func writablePathVolumes(paths []string, userVolumes []VolumeSpec) (volumes, mounts []interface{}) {
+	usedNames := make(map[string]bool, len(userVolumes))
+	usedPaths := make(map[string]bool, len(userVolumes))
+	for _, v := range userVolumes {
+		usedNames[v.Name] = true
+		usedPaths[v.MountPath] = true
+	}
+	n := 0
+	for _, p := range paths {
+		if usedPaths[p] {
+			continue
+		}
+		name := fmt.Sprintf("canette-writable-%d", n)
+		for usedNames[name] {
+			n++
+			name = fmt.Sprintf("canette-writable-%d", n)
+		}
+		n++
+		volumes = append(volumes, map[string]interface{}{
+			"name": name, "emptyDir": map[string]interface{}{},
+		})
+		mounts = append(mounts, map[string]interface{}{
+			"name": name, "mountPath": p,
+		})
+	}
+	return volumes, mounts
+}
 
 // BuildResources constructs all K8s resource manifests for an app deployment.
 func BuildResources(cfg DeployConfig) AppResources {
@@ -460,10 +531,8 @@ func BuildResources(cfg DeployConfig) AppResources {
 		"env":       envList,
 		"resources": resourceSpec,
 		// Blocks setuid escalation (e.g. sudo). Root dropping privileges via
-		// gosu/su-exec still works. Stricter settings live in hardened mode (#251).
-		"securityContext": map[string]interface{}{
-			"allowPrivilegeEscalation": false,
-		},
+		// gosu/su-exec still works. Stricter settings are opt-in, see below.
+		"securityContext": appContainerSecurityContext(cfg.Security),
 	}
 	if len(cfg.Command) > 0 {
 		containerSpec["command"] = cfg.Command
@@ -573,6 +642,12 @@ func BuildResources(cfg DeployConfig) AppResources {
 		}
 	}
 
+	if cfg.Security != nil && cfg.Security.ReadOnlyRootFS {
+		wv, wm := writablePathVolumes(cfg.Security.WritablePaths, cfg.Volumes)
+		podVolumes = append(podVolumes, wv...)
+		volumeMounts = append(volumeMounts, wm...)
+	}
+
 	if len(volumeMounts) > 0 {
 		containerSpec["volumeMounts"] = volumeMounts
 	}
@@ -586,9 +661,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 		// e.g. REDIS_PORT=tcp://... from a sibling app named "redis" and break
 		// apps that expect a port number there.
 		"enableServiceLinks": false,
-		"securityContext": map[string]interface{}{
-			"seccompProfile": map[string]interface{}{"type": "RuntimeDefault"},
-		},
+		"securityContext":    podSecurityContext(cfg.Security),
 	}
 	setIfSet(podSpec, "terminationGracePeriodSeconds", cfg.Workload.TerminationGracePeriodSeconds)
 

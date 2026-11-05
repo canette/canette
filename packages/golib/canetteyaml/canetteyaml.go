@@ -74,6 +74,43 @@ type RuntimeConfig struct {
 	Healthcheck *HealthcheckSpec `yaml:"healthcheck,omitempty"`
 	// Public HTTP routing for a web app.
 	Ingress IngressSpec `yaml:"ingress,omitempty"`
+	// Opt-in container hardening. Off unless security.hardened is true.
+	Security *SecuritySpec `yaml:"security,omitempty"`
+}
+
+// SecuritySpec configures hardened mode, an opinionated set of container
+// security settings that is off by default because it needs a compatible
+// image.
+type SecuritySpec struct {
+	// Turns on hardened mode. The app container then runs as a non-root user
+	// (UID and GID 10001 unless user is set), with a read-only root filesystem
+	// (only writable_paths are writable) and all Linux capabilities dropped.
+	// Volumes are made writable for that user through the pod's fsGroup.
+	// Works for most app images, including railpack builds, whose files only
+	// need to be world-readable. The app must listen on a port of 1024 or
+	// higher. Breaks images that need root at startup or listen on port 80,
+	// such as the default nginx image (use nginxinc/nginx-unprivileged on
+	// port 8080 instead). Directories the app writes to must be listed in
+	// writable_paths or be a canette volume. Defaults to false.
+	Hardened *bool `yaml:"hardened,omitempty" jsonschema:"default=false"`
+	// Absolute directories that stay writable on top of the read-only root
+	// filesystem. Each one is an empty, pod-local directory (Kubernetes
+	// emptyDir) whose contents are lost when the pod restarts, and hides what
+	// the image has at that path. Defaults to ["/tmp"]; an empty list means no
+	// writable directories. A volume configured in canette on the same path
+	// takes precedence. Only used when hardened is true and
+	// read_only_root_filesystem is not false.
+	WritablePaths []string `yaml:"writable_paths,omitempty" jsonschema:"example=/tmp,example=/app/.next/cache"`
+	// Set to false to keep the root filesystem writable in hardened mode, for
+	// apps that write in many places. The other hardened settings still
+	// apply. Defaults to true. Only used when hardened is true.
+	ReadOnlyRootFilesystem *bool `yaml:"read_only_root_filesystem,omitempty" jsonschema:"default=true"`
+	// UID and GID the container runs as in hardened mode, also used as the
+	// pod's fsGroup. Overrides the image's USER. Set it to the image's own
+	// non-root UID when the app's files are not readable by other users.
+	// Must not be 0 (root). Defaults to 10001. Only used when hardened is
+	// true.
+	User *int64 `yaml:"user,omitempty" jsonschema:"default=10001,example=1000"`
 }
 
 // RuntimeSpec configures how the app's container runs.

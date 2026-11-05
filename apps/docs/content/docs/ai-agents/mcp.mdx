@@ -96,7 +96,7 @@ Environment variables are injected when the app starts, not when it is built, so
 
 ### Runtime config (canette.yaml)
 
-`create_app` and `update_app` take a `canette_config` argument: the app's [canette.yaml](/docs/configuration/canette-yaml) stored on the app, the same document as the canette.yaml field in the app settings. Agents use it to change resources, replicas, health checks, the start command or ingress without a commit. It is the only way to do this for an app run from a Docker image, which has no repository.
+`create_app` and `update_app` take a `canette_config` argument: the app's [canette.yaml](/docs/configuration/canette-yaml) stored on the app, the same document as the canette.yaml field in the app settings. Agents use it to change resources, replicas, health checks, the start command, ingress or [hardened mode](/docs/security/hardened-mode) (`security`) without a commit. It is the only way to do this for an app run from a Docker image, which has no repository.
 
 - The value is the complete document and **replaces** the stored one; it is not merged. The agent reads the current value with `get_app` first.
 - For a Git app, a `canette.yaml` committed to the repository wins field by field after the build, so the agent should check the repository first.
@@ -104,6 +104,7 @@ Environment variables are injected when the app starts, not when it is built, so
 - `null` or an empty string clears it.
 - Invalid YAML is rejected with the line and column of the error, so the agent can fix it.
 - Runtime fields are applied by a redeploy, no rebuild is needed.
+- An invalid `security` block fails the next deployment with a message naming the field. When an agent hardens an app and also changes its `Dockerfile`, a new build (`trigger_deployment`) is needed, not a redeploy.
 
 ### Documentation
 

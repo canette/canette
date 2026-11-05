@@ -227,6 +227,12 @@ healthcheck:
 
 ingress:
   enabled: true
+
+security:               # opt-in hardened mode, see below
+  hardened: true
+  writable_paths: ["/tmp"]
+  read_only_root_filesystem: true
+  user: 10001
 ```
 
 When parsing `canette.yaml`, unknown fields must be silently ignored (forward compatibility). Validation errors must return a clear human-readable message — never a raw Go/JS error.
@@ -235,7 +241,7 @@ When parsing `canette.yaml`, unknown fields must be silently ignored (forward co
 
 The file format is defined once, in `packages/golib/canetteyaml`: `BuildConfig` (decoded by the builder), `RuntimeConfig` (decoded by the controller, aliased as `config.CanetteRuntimeConfig`) and `Config` (both, plus the informational `secrets` list). Each service decodes only its own part, so a type error in a runtime field can't fail a build and vice versa. `BuildSpec.Validate()` lives there too.
 
-The published JSON Schemas (`apps/docs/public/schema/canette.json` and `canette-template.json`, served at `https://canette.dev/schema/…`) are generated from those types by `tools/canette-schema` (its own Go module, so `invopop/jsonschema` stays out of the service modules). Doc comments on the types become the field descriptions, so write them for an agent that hasn't read the docs. Constraints that `BuildSpec.Validate()` enforces are applied by the generator from the exported constants and patterns in `canetteyaml/validate.go` (not from struct tags, which can't express map-key rules and which the library silently drops on maps), and `tools/canette-schema/main_test.go` checks the schema and the validator accept and reject the same values. `Quantity` (cpu/memory) accepts a string in the Kubernetes quantity format or a bare number. **Never hand-edit the schema files**: change the Go types, then run `bun run generate:schema` and commit the result. The `schema` job in `build-go.yml` regenerates them and fails on any diff. New fields (e.g. the `security` block from #251) go into these types.
+The published JSON Schemas (`apps/docs/public/schema/canette.json` and `canette-template.json`, served at `https://canette.dev/schema/…`) are generated from those types by `tools/canette-schema` (its own Go module, so `invopop/jsonschema` stays out of the service modules). Doc comments on the types become the field descriptions, so write them for an agent that hasn't read the docs. Constraints that `BuildSpec.Validate()` enforces are applied by the generator from the exported constants and patterns in `canetteyaml/validate.go` (not from struct tags, which can't express map-key rules and which the library silently drops on maps), and `tools/canette-schema/main_test.go` checks the schema and the validator accept and reject the same values. `Quantity` (cpu/memory) accepts a string in the Kubernetes quantity format or a bare number. **Never hand-edit the schema files**: change the Go types, then run `bun run generate:schema` and commit the result. The `schema` job in `build-go.yml` regenerates them and fails on any diff. New fields go into these types.
 
 The template wrapper (`name`/`description`/`apps[]` and the per-app fields) is defined in `tools/canette-schema/template.go`, because templates are parsed in TypeScript (`apps/api/src/services/templates.ts`). `apps/api/tests/schema/schema.test.ts` fails when `APP_ROW_FIELDS` names a field the template schema lacks, or when the template schema describes a field that is neither in `APP_ROW_FIELDS` nor a canette.yaml field. The API bakes both schema files into its binary through a Bun macro (`src/docs/load-schemas.ts`, same pattern as the MCP docs bundle) and serves them through the `get_canette_yaml_schema` MCP tool and `canette-schema://` resources.
 
@@ -250,8 +256,18 @@ Fields are split between the database (set via UI) and `canette.yaml` (committed
 | `env` | `canette.yaml` only | Plaintext vars safe to commit; merged on top of any DB-stored env vars at deploy time |
 | `secrets` | DB only (values); `canette.yaml` can list names | Secret values are never in the file; names in the file are informational. This feature is only useful if we introduce project wide secrets |
 | `ingress.enabled` | DB (UI) as base, `canette.yaml` overrides at deploy time | `ingress.enabled = false` still creates a service, but no httproute. Useful for eg. databases |
+| `security` | `canette.yaml` only | Opt-in hardened mode, see below. No DB column |
 
 **Merge happens at deploy time, not on UI interaction.** The UI always reads and writes DB values. The controller reads `canette.yaml` from the build workspace (via the `canette-config` binary output stored in the deployment record) and applies overrides when constructing K8s resources. The UI may show a note that certain fields could be overridden by `canette.yaml`.
+
+### Hardened mode (`security`)
+
+An opinionated preset, not a set of raw securityContext fields (#251). `security.hardened: true` sets on the **app container only** (never the authgate sidecar): `runAsNonRoot`, `runAsUser`/`runAsGroup` = `user` (default `DefaultHardenedUser` 10001), `readOnlyRootFilesystem`, `capabilities.drop: [ALL]`; and on the pod `fsGroup` = `user` with `fsGroupChangePolicy: OnRootMismatch`. Together with the #250 defaults this meets PSA `restricted`. Escape hatches: `writable_paths` (emptyDir mounts, default `["/tmp"]`, `[]` = none, a user volume on the same path wins), `read_only_root_filesystem: false`, `user`. All three are ignored (with a deploy-log warning) unless `hardened: true`.
+
+- Types and `SecuritySpec.Validate()` live in `packages/golib/canetteyaml`; the custom `UnmarshalYAML` in `security.go` turns type errors into field-named messages.
+- The controller resolves it with `config.ResolveSecurity()`, which decodes only the `security` block. An invalid block is a `*config.SecurityError` and **fails the deployment** (`reconcile.go`), unlike every other canette.yaml error, which only logs a warning and falls back to defaults — silently deploying without requested hardening would be worse than failing.
+- Pod Security Admission warnings from the apply are collected per deployment (`k8s.WithWarningCollector` + the context-aware `warningLogger` in `main.go`) and written to the deploy log, with a hint to hardened mode when it's off.
+- User docs: `apps/docs/content/docs/security/hardened-mode.mdx` (stack recipes, tested against railpack 0.23 images). railpack images run as root with world-readable `/app`, so they work hardened unchanged.
 
 ### canette-template.yaml
 

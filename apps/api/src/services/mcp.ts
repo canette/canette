@@ -45,7 +45,7 @@ const APP_SOURCE_PROPERTIES = {
   canette_config: {
     type: ["string", "null"],
     description:
-      "The app's runtime config as a full canette.yaml document (resources, replicas, healthcheck, runtime, env, ingress). Replaces the stored document, it is not merged: read the current value from get_app's canetteConfig first and send the complete result. For a Git app, a canette.yaml committed in the repository wins field by field after the build, so check the repository first. build.* fields only apply to Git apps, at the next build. get_canette_yaml_schema lists every field. Pass null or an empty string to clear it.",
+      "The app's runtime config as a full canette.yaml document (resources, replicas, healthcheck, runtime, env, ingress, security). Replaces the stored document, it is not merged: read the current value from get_app's canetteConfig first and send the complete result. For a Git app, a canette.yaml committed in the repository wins field by field after the build, so check the repository first. build.* fields only apply to Git apps, at the next build. get_canette_yaml_schema lists every field. Pass null or an empty string to clear it.",
   },
 } as const
 
@@ -69,7 +69,8 @@ const SERVER_INSTRUCTIONS = [
   "- trigger_deployment fetches the latest commit and runs a full build (minutes) before deploying. Use it when the source changed: new commits, or a different repository, branch, app path, credential or image tag. Also use it for an app's first deployment.",
   "- redeploy_deployment deploys an already-built image again (seconds) with the app's current settings, env vars and secrets. Use it when only configuration changed: env vars, secrets, port, schedule, deployment type, canette.yaml config, volumes, hostnames or password protection. Env vars are injected at runtime, not at build time, so a rebuild is never needed for them.",
   "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's latest live deployment.",
-  "Runtime config such as resources, replicas, healthcheck and ingress lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
+  "Runtime config such as resources, replicas, healthcheck, ingress and security lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
+  "To harden an app (non-root user, read-only root filesystem, no capabilities), set security.hardened: true in its canette.yaml after reading security/hardened-mode with get_docs_page: check that the image doesn't need root at startup or a port below 1024, and list the directories it writes to in security.writable_paths. If you also change the Dockerfile, use trigger_deployment instead of redeploy_deployment.",
   "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page, and check field names and values against get_canette_yaml_schema. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
 ].join("\n")
 

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest"
+import { load } from "js-yaml"
 import { parseTemplate } from "../../src/services/templates"
 
 const VALID_TEMPLATE = `
@@ -81,6 +82,28 @@ apps:
 `
     const result = await parseTemplate({ yaml })
     expect(result.apps[0].canetteConfig).toContain("some_future_field")
+  })
+
+  it("passes a per-app security block through to canetteConfig", async () => {
+    const yaml = `
+name: test
+apps:
+  - name: App
+    slug: app
+    source_type: git
+    git_url: https://github.com/org/repo
+    security:
+      hardened: true
+      user: 1000
+      writable_paths: [/tmp, /app/.next/cache]
+`
+    const result = await parseTemplate({ yaml })
+    const config = load(result.apps[0].canetteConfig ?? "") as Record<string, unknown>
+    expect(config.security).toEqual({
+      hardened: true,
+      user: 1000,
+      writable_paths: ["/tmp", "/app/.next/cache"],
+    })
   })
 
   it("parses a cronjob app with a schedule", async () => {

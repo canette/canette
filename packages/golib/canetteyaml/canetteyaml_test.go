@@ -117,3 +117,117 @@ func TestBuildSpecValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestSecuritySpecDecode(t *testing.T) {
+	decode := func(t *testing.T, input string) (RuntimeConfig, error) {
+		t.Helper()
+		var rt RuntimeConfig
+		err := yaml.Unmarshal([]byte(input), &rt)
+		return rt, err
+	}
+
+	t.Run("absent", func(t *testing.T) {
+		rt, err := decode(t, "replicas: 1\n")
+		if err != nil || rt.Security != nil {
+			t.Fatalf("got %+v, %v; want nil security", rt.Security, err)
+		}
+	})
+
+	t.Run("all fields", func(t *testing.T) {
+		rt, err := decode(t, `
+security:
+  hardened: true
+  writable_paths: [/tmp, /app/.next/cache]
+  read_only_root_filesystem: false
+  user: 1000
+  future_field: ignored
+`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := rt.Security
+		if s == nil || !*s.Hardened || *s.ReadOnlyRootFilesystem || *s.User != 1000 ||
+			strings.Join(s.WritablePaths, ",") != "/tmp,/app/.next/cache" {
+			t.Fatalf("unexpected security: %+v", s)
+		}
+	})
+
+	t.Run("empty writable_paths is non-nil", func(t *testing.T) {
+		rt, err := decode(t, "security:\n  hardened: true\n  writable_paths: []\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rt.Security.WritablePaths == nil || len(rt.Security.WritablePaths) != 0 {
+			t.Fatalf("writable_paths = %#v, want empty non-nil", rt.Security.WritablePaths)
+		}
+	})
+
+	t.Run("nulls count as absent", func(t *testing.T) {
+		rt, err := decode(t, "security:\n  hardened: true\n  user: ~\n  writable_paths: null\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rt.Security.User != nil || rt.Security.WritablePaths != nil {
+			t.Fatalf("unexpected security: %+v", rt.Security)
+		}
+	})
+
+	for _, tc := range []struct{ name, input, wantErr string }{
+		{"user not a number", "security:\n  user: abc\n", "security.user must be a whole number"},
+		{"user fraction", "security:\n  user: 1.5\n", "security.user must be a whole number"},
+		{"hardened not a bool", "security:\n  hardened: maybe\n", "security.hardened must be true or false"},
+		{"read-only not a bool", "security:\n  read_only_root_filesystem: [x]\n", "security.read_only_root_filesystem must be true or false"},
+		{"writable_paths scalar", "security:\n  writable_paths: /tmp\n", "security.writable_paths must be a list"},
+		{"writable_paths nested", "security:\n  writable_paths: [[/tmp]]\n", "security.writable_paths must be a list"},
+		{"security scalar", "security: true\n", "security must be a mapping"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := decode(t, tc.input)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestSecuritySpecValidate(t *testing.T) {
+	i64 := func(v int64) *int64 { return &v }
+	tooMany := make([]string, MaxWritablePaths+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("/p%d", i)
+	}
+	tests := []struct {
+		name    string
+		spec    SecuritySpec
+		wantErr string
+	}{
+		{"zero value", SecuritySpec{}, ""},
+		{"user 1", SecuritySpec{User: i64(1)}, ""},
+		{"user max", SecuritySpec{User: i64(MaxID)}, ""},
+		{"user 0", SecuritySpec{User: i64(0)}, "must not be 0"},
+		{"user negative", SecuritySpec{User: i64(-1)}, "between 1 and"},
+		{"user too large", SecuritySpec{User: i64(MaxID + 1)}, "between 1 and"},
+		{"paths ok", SecuritySpec{WritablePaths: []string{"/tmp", "/app/.next/cache", "/var/run"}}, ""},
+		{"path relative", SecuritySpec{WritablePaths: []string{"tmp"}}, "absolute path"},
+		{"path with space", SecuritySpec{WritablePaths: []string{"/my dir"}}, "absolute path"},
+		{"path root", SecuritySpec{WritablePaths: []string{"/"}}, "root directory"},
+		{"path trailing slash", SecuritySpec{WritablePaths: []string{"/tmp/"}}, "not a clean path"},
+		{"path dot-dot", SecuritySpec{WritablePaths: []string{"/app/../etc"}}, "not a clean path"},
+		{"path duplicate", SecuritySpec{WritablePaths: []string{"/tmp", "/tmp"}}, "more than once"},
+		{"too many paths", SecuritySpec{WritablePaths: tooMany}, "maximum is"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.spec.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}

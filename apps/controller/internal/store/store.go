@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -136,6 +137,11 @@ type AppConfig struct {
 	ExtraHostnames []string
 	PasswordGate   PasswordGateSpec
 	Healthcheck    *Healthcheck // nil when canette.yaml has no healthcheck block
+	// Security is the resolved canette.yaml hardened mode, nil when off.
+	Security *config.Hardening
+	// ConfigWarnings are canette.yaml settings that have no effect, for the
+	// deployment log.
+	ConfigWarnings []string
 }
 
 // Secret is an encrypted secret row.
@@ -305,6 +311,10 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 	if parseErr != nil {
 		cfg = config.CanetteRuntimeConfig{} // fall through to snapshot defaults
 	}
+	// Resolved separately so an invalid security block is reported as a
+	// *config.SecurityError (which fails the deployment) even when the rest
+	// of the file falls back to defaults.
+	security, configWarnings, securityErr := config.ResolveSecurity(dep.CanetteConfig)
 
 	// Resource defaults: snapshot values as base, canette_config YAML overrides if set.
 	pick := func(cfgVal, def string) string {
@@ -437,8 +447,10 @@ func (s *Store) GetAppConfig(ctx context.Context, dep DeployingDeployment) (*App
 			Enabled:      snap.App.PasswordGate.Enabled && dep.DeploymentType == "web",
 			PasswordHash: snap.App.PasswordGate.PasswordHash,
 		},
-		Healthcheck: healthcheck,
-	}, parseErr
+		Healthcheck:    healthcheck,
+		Security:       security,
+		ConfigWarnings: configWarnings,
+	}, errors.Join(securityErr, parseErr)
 }
 
 // GetSecrets returns all secrets (encrypted) for an app.

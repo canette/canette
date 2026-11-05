@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -89,10 +90,10 @@ func TestLoadNamespacePolicy_Invalid(t *testing.T) {
 func TestWarningLogger_Dedupes(t *testing.T) {
 	core, logs := observer.New(zap.InfoLevel)
 	w := newWarningLogger(zap.New(core))
-	w.HandleWarningHeader(299, "", "would violate PodSecurity \"restricted:latest\"")
-	w.HandleWarningHeader(299, "", "would violate PodSecurity \"restricted:latest\"")
-	w.HandleWarningHeader(299, "", "another warning")
-	w.HandleWarningHeader(299, "", "")
+	w.HandleWarningHeaderWithContext(context.Background(), 299, "", "would violate PodSecurity \"restricted:latest\"")
+	w.HandleWarningHeaderWithContext(context.Background(), 299, "", "would violate PodSecurity \"restricted:latest\"")
+	w.HandleWarningHeaderWithContext(context.Background(), 299, "", "another warning")
+	w.HandleWarningHeaderWithContext(context.Background(), 299, "", "")
 	if n := logs.Len(); n != 2 {
 		t.Errorf("logged %d warnings, want 2", n)
 	}

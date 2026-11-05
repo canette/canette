@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"reflect"
 	"testing"
 
 	libk8s "canette.dev/lib/k8s"
@@ -1174,5 +1175,185 @@ func TestBuildResources_PVCStorageClassName(t *testing.T) {
 	spec, _ := BuildResources(cfg).PVCs[0]["spec"].(map[string]interface{})
 	if spec["storageClassName"] != "fast-ssd" {
 		t.Errorf("storageClassName = %v, want fast-ssd", spec["storageClassName"])
+	}
+}
+
+func hardenedConfig() DeployConfig {
+	cfg := baseDeployConfig()
+	cfg.Security = &SecuritySpec{User: 10001, ReadOnlyRootFS: true, WritablePaths: []string{"/tmp"}}
+	return cfg
+}
+
+func appContainerOf(t *testing.T, podSpec map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	containers, _ := podSpec["containers"].([]interface{})
+	if len(containers) == 0 {
+		t.Fatal("no containers")
+	}
+	c, _ := containers[0].(map[string]interface{})
+	return c
+}
+
+// mountsByPath maps mountPath -> volume name for the app container.
+func mountsByPath(c map[string]interface{}) map[string]string {
+	out := map[string]string{}
+	mounts, _ := c["volumeMounts"].([]interface{})
+	for _, m := range mounts {
+		mm, _ := m.(map[string]interface{})
+		out[mm["mountPath"].(string)] = mm["name"].(string)
+	}
+	return out
+}
+
+func podVolumeNames(podSpec map[string]interface{}) map[string]map[string]interface{} {
+	out := map[string]map[string]interface{}{}
+	vols, _ := podSpec["volumes"].([]interface{})
+	for _, v := range vols {
+		vm, _ := v.(map[string]interface{})
+		out[vm["name"].(string)] = vm
+	}
+	return out
+}
+
+func assertHardened(t *testing.T, podSpec map[string]interface{}, uid int64, readOnly bool) {
+	t.Helper()
+	assertSecurePodDefaults(t, podSpec)
+	csc, _ := appContainerOf(t, podSpec)["securityContext"].(map[string]interface{})
+	for k, want := range map[string]interface{}{
+		"runAsNonRoot":           true,
+		"runAsUser":              uid,
+		"runAsGroup":             uid,
+		"readOnlyRootFilesystem": readOnly,
+	} {
+		if got := csc[k]; got != want {
+			t.Errorf("container %s = %v, want %v", k, got, want)
+		}
+	}
+	caps, _ := csc["capabilities"].(map[string]interface{})
+	if drop, _ := caps["drop"].([]interface{}); len(drop) != 1 || drop[0] != "ALL" {
+		t.Errorf("capabilities.drop = %v, want [ALL]", caps["drop"])
+	}
+	psc, _ := podSpec["securityContext"].(map[string]interface{})
+	if got := psc["fsGroup"]; got != uid {
+		t.Errorf("pod fsGroup = %v, want %d", got, uid)
+	}
+	if got := psc["fsGroupChangePolicy"]; got != "OnRootMismatch" {
+		t.Errorf("pod fsGroupChangePolicy = %v, want OnRootMismatch", got)
+	}
+}
+
+func TestBuildResources_NotHardenedByDefault(t *testing.T) {
+	podSpec := deploymentPodSpec(t, BuildResources(baseDeployConfig()))
+	csc, _ := appContainerOf(t, podSpec)["securityContext"].(map[string]interface{})
+	if len(csc) != 1 {
+		t.Errorf("app securityContext = %v, want only allowPrivilegeEscalation", csc)
+	}
+	psc, _ := podSpec["securityContext"].(map[string]interface{})
+	if len(psc) != 1 {
+		t.Errorf("pod securityContext = %v, want only seccompProfile", psc)
+	}
+	if _, ok := podSpec["volumes"]; ok {
+		t.Error("no volumes expected without hardened mode")
+	}
+}
+
+func TestBuildResources_HardenedDeployment(t *testing.T) {
+	podSpec := deploymentPodSpec(t, BuildResources(hardenedConfig()))
+	assertHardened(t, podSpec, 10001, true)
+	name := mountsByPath(appContainerOf(t, podSpec))["/tmp"]
+	if name == "" {
+		t.Fatal("expected /tmp mount")
+	}
+	if _, ok := podVolumeNames(podSpec)[name]["emptyDir"]; !ok {
+		t.Errorf("volume %q is not an emptyDir", name)
+	}
+}
+
+func TestBuildResources_HardenedCronJob(t *testing.T) {
+	cfg := hardenedConfig()
+	cfg.IsCronJob = true
+	cfg.Schedule = "@daily"
+	_, _, podSpec := cronJobSpecs(t, BuildResources(cfg))
+	assertHardened(t, podSpec, 10001, true)
+	if mountsByPath(appContainerOf(t, podSpec))["/tmp"] == "" {
+		t.Error("expected /tmp mount on CronJob")
+	}
+}
+
+func TestBuildResources_HardenedCustomUser(t *testing.T) {
+	cfg := hardenedConfig()
+	cfg.Security.User = 1000
+	assertHardened(t, deploymentPodSpec(t, BuildResources(cfg)), 1000, true)
+}
+
+func TestBuildResources_HardenedWritableRootFS(t *testing.T) {
+	cfg := hardenedConfig()
+	cfg.Security.ReadOnlyRootFS = false
+	podSpec := deploymentPodSpec(t, BuildResources(cfg))
+	assertHardened(t, podSpec, 10001, false)
+	if _, ok := podSpec["volumes"]; ok {
+		t.Error("writable paths must not be mounted when the rootfs is writable")
+	}
+}
+
+func TestBuildResources_HardenedNoWritablePaths(t *testing.T) {
+	cfg := hardenedConfig()
+	cfg.Security.WritablePaths = []string{}
+	podSpec := deploymentPodSpec(t, BuildResources(cfg))
+	if _, ok := podSpec["volumes"]; ok {
+		t.Error("expected no volumes for an empty writable_paths list")
+	}
+}
+
+func TestBuildResources_HardenedUserVolumeWins(t *testing.T) {
+	cfg := hardenedConfig()
+	cfg.Security.WritablePaths = []string{"/tmp", "/data", "/cache"}
+	cfg.Volumes = []VolumeSpec{
+		// Same mount path as a writable path: the user volume wins.
+		{Name: "data", Type: "pvc", MountPath: "/data", Size: "1Gi"},
+		// Same name as the first generated volume: generated names skip it.
+		{Name: "canette-writable-0", Type: "emptyDir", MountPath: "/scratch"},
+	}
+	podSpec := deploymentPodSpec(t, BuildResources(cfg))
+	mounts := mountsByPath(appContainerOf(t, podSpec))
+	if mounts["/data"] != "data" {
+		t.Errorf("/data mounted from %q, want user volume data", mounts["/data"])
+	}
+	if mounts["/scratch"] != "canette-writable-0" {
+		t.Errorf("/scratch mounted from %q, want the user volume", mounts["/scratch"])
+	}
+	if mounts["/tmp"] == "" || mounts["/cache"] == "" || mounts["/tmp"] == mounts["/cache"] {
+		t.Errorf("unexpected writable mounts: %v", mounts)
+	}
+	vols := podVolumeNames(podSpec)
+	if len(vols) != 4 {
+		t.Errorf("got %d volumes (%v), want 4 with unique names", len(vols), vols)
+	}
+	if len(mounts) != 4 {
+		t.Errorf("got %d mounts (%v), want 4", len(mounts), mounts)
+	}
+}
+
+func TestBuildResources_HardenedLeavesAuthgateAlone(t *testing.T) {
+	plain := baseDeployConfig()
+	plain.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$hash"}
+	hardened := hardenedConfig()
+	hardened.Security.User = 1000
+	hardened.PasswordGate = plain.PasswordGate
+
+	sidecar := func(cfg DeployConfig) map[string]interface{} {
+		containers, _ := deploymentPodSpec(t, BuildResources(cfg))["containers"].([]interface{})
+		if len(containers) != 2 {
+			t.Fatalf("got %d containers, want app + authgate", len(containers))
+		}
+		c, _ := containers[1].(map[string]interface{})
+		return c
+	}
+	a, b := sidecar(plain), sidecar(hardened)
+	if !reflect.DeepEqual(a["securityContext"], b["securityContext"]) {
+		t.Errorf("authgate securityContext changed: %v vs %v", a["securityContext"], b["securityContext"])
+	}
+	if _, ok := b["volumeMounts"]; ok {
+		t.Error("authgate must not get the writable path mounts")
 	}
 }

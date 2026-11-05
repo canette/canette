@@ -166,3 +166,62 @@ func TestCommandAcceptsScalars(t *testing.T) {
 		}
 	}
 }
+
+// The schema must agree with SecuritySpec.Validate on the values it can
+// express. Validator-only rules (no "/", clean paths) are not checked here:
+// the schema accepts those values and the deploy fails with a clear message.
+func TestSecurityConstraintsMatchValidator(t *testing.T) {
+	users := []struct {
+		uid  int64
+		want bool
+	}{
+		{1, true},
+		{10001, true},
+		{canetteyaml.MaxID, true},
+		{0, false},
+		{-1, false},
+		{canetteyaml.MaxID + 1, false},
+	}
+	paths := []struct {
+		path string
+		want bool
+	}{
+		{"/tmp", true},
+		{"/app/.next/cache", true},
+		{"tmp", false},
+		{"./tmp", false},
+		{"/my dir", false},
+		{"/tmp;rm", false},
+		{"/" + strings.Repeat("a", canetteyaml.MaxBuildValueLen), false},
+	}
+
+	for name, s := range schemas(t) {
+		sec := s.Properties.Value("security")
+		if sec == nil {
+			t.Fatalf("%s: no security property", name)
+		}
+		user := sec.Properties.Value("user")
+		for _, tc := range users {
+			lo, _ := user.Minimum.Int64()
+			hi, _ := user.Maximum.Int64()
+			schemaOK := tc.uid >= lo && tc.uid <= hi
+			uid := tc.uid
+			validatorOK := canetteyaml.SecuritySpec{User: &uid}.Validate() == nil
+			if schemaOK != tc.want || validatorOK != tc.want {
+				t.Errorf("%s: user %d: schema=%v validator=%v, want %v", name, tc.uid, schemaOK, validatorOK, tc.want)
+			}
+		}
+
+		wp := sec.Properties.Value("writable_paths")
+		for _, tc := range paths {
+			schemaOK := matches(wp.Items, tc.path)
+			validatorOK := canetteyaml.SecuritySpec{WritablePaths: []string{tc.path}}.Validate() == nil
+			if schemaOK != tc.want || validatorOK != tc.want {
+				t.Errorf("%s: writable path %q: schema=%v validator=%v, want %v", name, tc.path, schemaOK, validatorOK, tc.want)
+			}
+		}
+		if !wp.UniqueItems || *wp.MaxItems != uint64(canetteyaml.MaxWritablePaths) {
+			t.Errorf("%s: writable_paths uniqueItems=%v maxItems=%v", name, wp.UniqueItems, *wp.MaxItems)
+		}
+	}
+}

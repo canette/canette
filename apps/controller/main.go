@@ -85,8 +85,9 @@ func run(log *zap.Logger) error {
 		return fmt.Errorf("load kubeconfig: %w", err)
 	}
 	// Route API server warnings (e.g. Pod Security "would violate restricted"
-	// on every app apply) to the structured log instead of stderr.
-	restCfg.WarningHandler = newWarningLogger(log)
+	// on every app apply) to the structured log instead of stderr, and to the
+	// deployment being applied (see k8s.WithWarningCollector).
+	restCfg.WarningHandlerWithContext = newWarningLogger(log)
 
 	k8sClient, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
@@ -282,10 +283,11 @@ func newWarningLogger(log *zap.Logger) *warningLogger {
 	return &warningLogger{log: log, seen: map[string]struct{}{}}
 }
 
-func (w *warningLogger) HandleWarningHeader(_ int, _ string, text string) {
+func (w *warningLogger) HandleWarningHeaderWithContext(ctx context.Context, _ int, _ string, text string) {
 	if text == "" {
 		return
 	}
+	k8sres.CollectWarning(ctx, text)
 	w.mu.Lock()
 	_, dup := w.seen[text]
 	if !dup {

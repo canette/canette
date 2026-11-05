@@ -46,6 +46,10 @@ healthcheck:
 
 ingress:
   enabled: true         # set to false to suppress the HTTPRoute (private-equivalent override)
+
+security:
+  hardened: true        # opt-in: non-root, read-only root filesystem, no capabilities
+  writable_paths: ["/tmp"]
 ```
 
 ## Field ownership
@@ -58,6 +62,7 @@ Fields are split between the UI (stored in the database) and `canette.yaml` (com
 | `runtime.port`, `runtime.command`, `replicas`, `resources`, `healthcheck` | UI as default, `canette.yaml` overrides | File wins when present; UI value is the fallback |
 | `env` | `canette.yaml` only | Plaintext vars committed to the repo; merged at deploy time |
 | `secrets` | UI only (values); `canette.yaml` can list names | Secret values are never stored in the file |
+| `security` | `canette.yaml` only | Opt-in [hardened mode](/docs/security/hardened-mode). An invalid `security` block fails the deployment instead of being ignored |
 | `ingress.enabled` | UI as default, `canette.yaml` overrides | `false` suppresses the HTTPRoute for this deployment only — equivalent to setting the app's visibility to Private in the UI |
 
 ## Build detection
@@ -70,7 +75,8 @@ When a deployment is triggered, canette determines the build method in this orde
 
 ## Notes
 
-- Unknown fields are silently ignored (forward compatibility)
+- Unknown fields are silently ignored (forward compatibility). If the file can't be read (invalid YAML or a value of the wrong type), the deploy log shows a warning and the rest of the file is ignored. The `security` block is read separately: it still applies, and if it is invalid itself, the deployment fails
+- `security.hardened: true` usually needs no other change, but some images need extra writable directories or a different port. See [Hardened mode](/docs/security/hardened-mode)
 - `env` values are stored in plaintext in your repo — do not put secrets here
 - `secrets` lists names only; values must be set via the UI or API
 - With `replicas` greater than 1, pods are spread across nodes and zones where possible, and a disruption budget keeps node drains from stopping more than one at a time. See [App workload defaults](/docs/security/platform-security#app-workload-defaults). Apps with a [Persistent Volume](/docs/configuration/volumes#how-apps-with-a-persistent-volume-are-deployed) are limited to 1 replica

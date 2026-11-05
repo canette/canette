@@ -143,6 +143,16 @@ func reflectConfig(r *jsonschema.Reflector) *jsonschema.Schema {
 	examples := cmd.Items.Examples
 	cmd.Items = scalar()
 	cmd.Items.Examples = examples
+
+	sec := s.Properties.Value("security")
+	user := sec.Properties.Value("user")
+	user.Minimum = json.Number("1")
+	user.Maximum = json.Number(fmt.Sprint(canetteyaml.MaxID))
+	wp := sec.Properties.Value("writable_paths")
+	wp.MaxItems = ptr(uint64(canetteyaml.MaxWritablePaths))
+	wp.UniqueItems = true
+	wp.Items.Pattern = canetteyaml.WritablePathPattern
+	wp.Items.MaxLength = ptr(uint64(canetteyaml.MaxBuildValueLen))
 	return s
 }
 

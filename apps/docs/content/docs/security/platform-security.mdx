@@ -112,8 +112,8 @@ Every project namespace carries [Pod Security Admission](https://kubernetes.io/d
 | Label | Default | Effect |
 |-------|---------|--------|
 | `pod-security.kubernetes.io/enforce` | `baseline` | Kubernetes rejects pods that break the [baseline](https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline) level, such as privileged containers, host networking or `hostPath` volumes. |
-| `pod-security.kubernetes.io/warn` | `restricted` | Kubernetes returns a warning when an app doesn't meet the stricter `restricted` level. The controller logs each warning once, but the message doesn't name the app. |
-| `pod-security.kubernetes.io/audit` | `restricted` | Same check, recorded in the API server audit log together with the namespace and workload. Use this to find which apps could run in hardened mode. |
+| `pod-security.kubernetes.io/warn` | `restricted` | Kubernetes returns a warning when an app doesn't meet the stricter `restricted` level. The controller logs each warning once, and also shows it in the deploy log of the app that caused it. |
+| `pod-security.kubernetes.io/audit` | `restricted` | Same check, recorded in the API server audit log together with the namespace and workload. Use this to find which apps could run in [hardened mode](/docs/security/hardened-mode). |
 
 Ordinary apps meet `baseline` without changes. Set the levels with the `controller.podSecurity.*` Helm values, or set one to `""` to drop that label. A namespace gets the new labels on its next deploy. Pods that are already running are never evicted.
 
@@ -154,7 +154,7 @@ Every app canette deploys gets these settings. They need no configuration and do
 - A run is stopped after 6 hours (`activeDeadlineSeconds: 21600`). Runs never overlap, so a hung run would otherwise block every later run.
 - Finished Jobs and their pods are deleted after 1 day (`ttlSecondsAfterFinished: 86400`).
 
-All numbers can be changed with the `controller.workloads.*` Helm values. Stricter settings (non-root user, read-only root filesystem, dropped capabilities) can break some images and are not on by default.
+All numbers can be changed with the `controller.workloads.*` Helm values. Stricter settings (non-root user, read-only root filesystem, dropped capabilities) can break some images, so they are opt-in per app: see [Hardened mode](/docs/security/hardened-mode).
 
 ---
 

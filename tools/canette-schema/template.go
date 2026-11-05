@@ -20,7 +20,7 @@ type TemplateFile struct {
 
 // TemplateApp is one app in a template. Besides the fields below, it accepts
 // every canette.yaml field (runtime, resources, replicas, healthcheck,
-// ingress, build); those are stored as the app's canette config.
+// ingress, security, build); those are stored as the app's canette config.
 type TemplateApp struct {
 	// App display name.
 	Name string `yaml:"name" jsonschema:"required"`
