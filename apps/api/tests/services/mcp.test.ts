@@ -181,8 +181,68 @@ describe("services/mcp runtime diagnostics", () => {
         ["list_env_vars", {}],
         ["set_env_var", { key: "A", value: "b" }],
         ["delete_env_var", { key: "A" }],
+        ["request_secret", { keys: ["A"] }],
       ] as const) {
         const result = await handleTool(tool, { app_id: appId, ...args }, "outsiderId")
+        expect(result.isError).toBe(true)
+      }
+    })
+  })
+
+  describe("request_secret", () => {
+    async function counts() {
+      const [s, e] = await Promise.all([
+        db.selectFrom("secrets").select(db.fn.countAll().as("n")).executeTakeFirstOrThrow(),
+        db.selectFrom("env_vars").select(db.fn.countAll().as("n")).executeTakeFirstOrThrow(),
+      ])
+      return [Number(s.n), Number(e.n)]
+    }
+
+    it("returns a UI link for the keys, with each key's current state, and writes nothing", async () => {
+      // DATABASE_URL is already a secret (set in the env vars tests above).
+      await handleTool("set_env_var", { app_id: appId, key: "API_TOKEN", value: "plain" }, "userId")
+      const before = await counts()
+
+      const result = await handleTool("request_secret", {
+        app_id: appId,
+        keys: ["STRIPE_KEY", "DATABASE_URL", "API_TOKEN", "STRIPE_KEY"],
+        reason: "  The app\nfails at startup <b>without</b> these  ",
+      }, "userId")
+      expect(result.isError).toBeUndefined()
+      const body = JSON.parse(text(result))
+
+      const url = new URL(body.url)
+      expect(url.pathname).toBe("/dashboard/projects/test-project/apps/web/request-secrets")
+      expect(url.searchParams.get("keys")).toBe("STRIPE_KEY,DATABASE_URL,API_TOKEN")
+      expect(url.searchParams.get("reason")).toBe("The app fails at startup <b>without</b> these")
+      expect(body.keys).toEqual([
+        { key: "STRIPE_KEY", status: "new" },
+        { key: "DATABASE_URL", status: "replaces_secret" },
+        { key: "API_TOKEN", status: "replaces_env_var" },
+      ])
+      expect(body.note).toContain("redeploy_deployment")
+      expect(await counts()).toEqual(before)
+
+      await handleTool("delete_env_var", { app_id: appId, key: "API_TOKEN" }, "userId")
+    })
+
+    it("leaves the reason out of the link when none is given", async () => {
+      const result = await handleTool("request_secret", { app_id: appId, keys: ["STRIPE_KEY"] }, "userId")
+      expect(new URL(JSON.parse(text(result)).url).searchParams.has("reason")).toBe(false)
+    })
+
+    it("rejects invalid, reserved, missing and too many keys, and an over-long reason", async () => {
+      for (const args of [
+        { app_id: appId },
+        { app_id: appId, keys: [] },
+        { app_id: appId, keys: [42] },
+        { app_id: appId, keys: ["lower-case"] },
+        { app_id: appId, keys: ["PORT"] },
+        { app_id: appId, keys: Array.from({ length: 11 }, (_, i) => `KEY_${i}`) },
+        { app_id: appId, keys: ["OK"], reason: "x".repeat(301) },
+        { keys: ["OK"] },
+      ]) {
+        const result = await handleTool("request_secret", args, "userId")
         expect(result.isError).toBe(true)
       }
     })

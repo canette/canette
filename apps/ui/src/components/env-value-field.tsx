@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils"
 const PEM_HEADER = "-----BEGIN"
 
 type EnvValueFieldProps = {
+  /** Lets a <Label htmlFor> point at the field. */
+  id?: string
   value: string
   onChange: (value: string) => void
   isSecret: boolean
@@ -28,6 +30,7 @@ type EnvValueFieldProps = {
  * looks like a PEM block.
  */
 export function EnvValueField({
+  id,
   value,
   onChange,
   isSecret,
@@ -54,6 +57,7 @@ export function EnvValueField({
     <div className={cn("flex flex-1 items-center gap-2", multiline && "flex-col items-stretch")}>
       {multiline ? (
         <Textarea
+          id={id}
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           placeholder={placeholder}
@@ -63,6 +67,7 @@ export function EnvValueField({
       ) : (
         <Input
           type={isSecret && !showSecret ? "password" : "text"}
+          id={id}
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           placeholder={placeholder}

@@ -15,6 +15,7 @@ const TOOL_DESCRIPTIONS = [
   "Read deployment status, build logs, runtime logs and metrics",
   "Read, change and delete environment variables",
   "See the names of secrets and Git credentials, never their values",
+  "Ask you to enter secret values yourself on a canette page",
 ]
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])

@@ -263,10 +263,12 @@ export const env = {
     }),
   deleteVar: (appId: string, key: string) =>
     request<void>(`/apps/${appId}/env/${encodeURIComponent(key)}`, { method: "DELETE" }),
-  putSecret: (appId: string, key: string, value: string) =>
+  // replaceEnvVar converts a plain env var of the same name into this secret;
+  // without it the API refuses (409) rather than letting the secret shadow it.
+  putSecret: (appId: string, key: string, value: string, opts: { replaceEnvVar?: boolean } = {}) =>
     request<AppSecret>(`/apps/${appId}/secrets/${encodeURIComponent(key)}`, {
       method: "PUT",
-      body: JSON.stringify({ value }),
+      body: JSON.stringify({ value, replaceEnvVar: opts.replaceEnvVar }),
     }),
   deleteSecret: (appId: string, key: string) =>
     request<void>(`/apps/${appId}/secrets/${encodeURIComponent(key)}`, { method: "DELETE" }),

@@ -61,13 +61,15 @@ envRouter.put("/apps/:id/secrets/:key", async (c) => {
   const session = c.get("session")
   const app = await getAppById(db, c.req.param("id"), session.user.id)
   if (!app) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404)
-  const body = await c.req.json<{ value: string }>()
+  const body = await c.req.json<{ value: string; replaceEnvVar?: boolean }>()
   const value = body.value ?? ""
   if (Buffer.byteLength(value, "utf8") > MAX_ENV_VALUE_BYTES) {
     return c.json({ error: "Value exceeds 10 KB limit", code: "VALUE_TOO_LARGE" }, 400)
   }
   try {
-    const secret = await upsertSecret(db, app.id, c.req.param("key"), value)
+    const secret = await upsertSecret(db, app.id, c.req.param("key"), value, {
+      replaceEnvVar: body.replaceEnvVar === true,
+    })
     return c.json(secret)
   } catch (e) {
     if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.status)

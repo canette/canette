@@ -79,11 +79,25 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `list_env_vars` | List an app's environment variables and the names of its secrets (secret values are never returned) |
 | `set_env_var` | Create or update a plaintext environment variable — applied on the next deployment, a redeploy is enough |
 | `delete_env_var` | Delete an environment variable — applied on the next deployment, a redeploy is enough |
+| `request_secret` | Ask you to enter one or more secrets on a canette page, so the values never pass through the agent ([details](#secrets)) |
 | `search_docs` | Search the canette documentation and return the best-matching sections with their page path |
 | `get_docs_page` | Get one documentation page as markdown, e.g. `configuration/canette-yaml` |
 | `get_canette_yaml_schema` | Get the JSON Schema for `canette.yaml` or `canette-template.yaml`: every field with its type, allowed values and description |
 
-Secrets can't be set or deleted through MCP. Agents can see which secret names exist, but values are added in the canette UI so they never pass through the AI client.
+### Secrets
+
+No MCP tool accepts or returns a secret value, because anything a tool receives ends up in the AI client's conversation and logs. Agents can see which secret names exist (`list_env_vars`), and when an app needs one they call `request_secret` with the names and an optional reason. It returns a link like:
+
+```
+https://canette.example.com/dashboard/projects/my-project/apps/my-app/request-secrets?keys=DATABASE_URL,STRIPE_KEY
+```
+
+You open the link, enter the values and save. They go straight to canette, encrypted, through your normal browser session. Then tell the agent you're done: it checks with `list_env_vars` that the secrets exist and redeploys the app.
+
+- The link grants nothing. It only works for a logged-in member of the app's team, so it is safe in the agent's context and logs. If you are logged out, canette sends you back to the page after you log in.
+- The reason is written by the agent. canette shows it as plain text, labelled as coming from the agent. Check that the request makes sense before you enter a value.
+- If a name already exists as a secret, saving replaces its value. If it exists as a plain environment variable, the page offers to convert it to a secret and deletes the plaintext value.
+- Secrets can't be deleted through MCP. Delete them under **Settings → Environment**.
 
 ### Rebuild or redeploy
 
@@ -134,7 +148,7 @@ The agent will check the app's state, read the runtime logs and pod status (incl
 **Fixing missing configuration:**
 > "`my-app` crashes on startup — fix it"
 
-The agent will read the runtime logs, spot a missing variable such as `LOG_LEVEL`, set it and redeploy the existing image without rebuilding. If the missing value is a secret (for example `DATABASE_URL`), it will ask you to add it in the canette UI.
+The agent will read the runtime logs, spot a missing variable such as `LOG_LEVEL`, set it and redeploy the existing image without rebuilding. If the missing value is a secret (for example `DATABASE_URL`), it will give you a link to [enter it in canette](#secrets) and redeploy once you say you're done.
 
 **Changing configuration:**
 > "Set `LOG_LEVEL` to `debug` on `my-app`"

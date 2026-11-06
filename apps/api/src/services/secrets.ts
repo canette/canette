@@ -23,8 +23,22 @@ function mapSecret(row: SecretRow): AppSecret {
 
 // ── Key validation ────────────────────────────────────────────────────────────
 
-function isValidKey(key: string): boolean {
-  return /^[A-Z_][A-Z0-9_]*$/.test(key)
+// Throws a ServiceError when key can't be used as a secret name.
+export function validateSecretKey(key: string): void {
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) {
+    throw new ServiceError(
+      "Key must be uppercase letters, digits, and underscores, starting with a letter or underscore",
+      "VALIDATION_ERROR",
+      400
+    )
+  }
+  if (RESERVED_ENV_KEYS.has(key)) {
+    throw new ServiceError(
+      `${key} is set automatically by canette and can't be overridden — configure the runtime port instead`,
+      "RESERVED_KEY",
+      400
+    )
+  }
 }
 
 // ── Service functions ─────────────────────────────────────────────────────────
@@ -44,42 +58,52 @@ export async function upsertSecret(
   db: DB,
   appId: string,
   key: string,
-  value: string
+  value: string,
+  opts: { replaceEnvVar?: boolean } = {}
 ): Promise<AppSecret> {
-  if (!isValidKey(key)) {
-    throw new ServiceError(
-      "Key must be uppercase letters, digits, and underscores, starting with a letter or underscore",
-      "VALIDATION_ERROR",
-      400
-    )
-  }
-  if (RESERVED_ENV_KEYS.has(key)) {
-    throw new ServiceError(
-      `${key} is set automatically by canette and can't be overridden — configure the runtime port instead`,
-      "RESERVED_KEY",
-      400
-    )
-  }
+  validateSecretKey(key)
 
   const encryptedValue = encrypt(value)
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
 
-  await db
-    .insertInto("secrets")
-    .values({ id, app_id: appId, key, encrypted_value: encryptedValue, created_at: now, updated_at: now })
-    .onConflict((oc) =>
-      oc.columns(["app_id", "key"]).doUpdateSet({ encrypted_value: encryptedValue, updated_at: now })
-    )
-    .execute()
+  return await db.transaction().execute(async (tx) => {
+    // A secret must never shadow a plain env var of the same name (the
+    // reverse is checked in upsertEnvVar). Converting one deletes the plain
+    // value in the same transaction.
+    const envVar = await tx
+      .selectFrom("env_vars")
+      .select("id")
+      .where("app_id", "=", appId)
+      .where("key", "=", key)
+      .executeTakeFirst()
+    if (envVar) {
+      if (!opts.replaceEnvVar) {
+        throw new ServiceError(
+          `${key} is set as a plain environment variable on this app — convert it to a secret to replace it`,
+          "CONFLICT",
+          409
+        )
+      }
+      await tx.deleteFrom("env_vars").where("id", "=", envVar.id).execute()
+    }
 
-  const row = await db
-    .selectFrom("secrets")
-    .selectAll()
-    .where("app_id", "=", appId)
-    .where("key", "=", key)
-    .executeTakeFirstOrThrow()
-  return mapSecret(row)
+    await tx
+      .insertInto("secrets")
+      .values({ id, app_id: appId, key, encrypted_value: encryptedValue, created_at: now, updated_at: now })
+      .onConflict((oc) =>
+        oc.columns(["app_id", "key"]).doUpdateSet({ encrypted_value: encryptedValue, updated_at: now })
+      )
+      .execute()
+
+    const row = await tx
+      .selectFrom("secrets")
+      .selectAll()
+      .where("app_id", "=", appId)
+      .where("key", "=", key)
+      .executeTakeFirstOrThrow()
+    return mapSecret(row)
+  })
 }
 
 export async function deleteSecret(

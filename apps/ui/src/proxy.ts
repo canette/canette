@@ -31,8 +31,10 @@ export function proxy(request: NextRequest) {
   // Block unauthenticated access to protected routes
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p))
   if (isProtected && !hasSession) {
+    // Keep the query string: deep links such as an agent's secret request
+    // (…/request-secrets?keys=…) must survive the trip through login.
     const loginUrl = new URL("/login", request.url)
-    loginUrl.searchParams.set("next", pathname)
+    loginUrl.searchParams.set("callbackURL", pathname + request.nextUrl.search)
     return NextResponse.redirect(loginUrl)
   }
 

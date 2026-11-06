@@ -23,7 +23,7 @@ import {
 import { listTeams } from "./teams"
 import { listHostnames } from "./hostnames"
 import { listEnvVars, upsertEnvVar, deleteEnvVar, MAX_ENV_VALUE_BYTES } from "./env-vars"
-import { listSecrets } from "./secrets"
+import { listSecrets, validateSecretKey } from "./secrets"
 import { listTeamCredentials } from "./git-credentials"
 import { getAppPodTarget } from "./app-logs"
 import { fetchFromLogstreamer } from "./logstreamer"
@@ -31,6 +31,11 @@ import type { AppDeploymentType, AppMetricsUsage, AppRuntimeLogs, AppSourceType 
 
 const DEFAULT_LOG_LINES = 100
 const MAX_LOG_LINES = 1000
+
+// request_secret limits. The UI page applies the same ones, since the link's
+// query string can be edited by hand.
+const MAX_SECRET_REQUEST_KEYS = 10
+const MAX_SECRET_REQUEST_REASON = 300
 
 // Shared by create_app and update_app. Values are validated by the apps service.
 const APP_SOURCE_PROPERTIES = {
@@ -71,6 +76,7 @@ const SERVER_INSTRUCTIONS = [
   "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's latest live deployment.",
   "Runtime config such as resources, replicas, healthcheck, ingress and security lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
   "To harden an app (non-root user, read-only root filesystem, no capabilities), set security.hardened: true in its canette.yaml after reading security/hardened-mode with get_docs_page: check that the image doesn't need root at startup and listens on a port of 1024 or higher (lower ports only work on some clusters), and list the directories it writes to in security.writable_paths. If you also change the Dockerfile, use trigger_deployment instead of redeploy_deployment.",
+  "Never ask the user to paste a password, token, API key or connection string into the conversation, and never store one with set_env_var. Call request_secret instead: it returns a canette link where the user enters the value themselves, so it never reaches you.",
   "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page, and check field names and values against get_canette_yaml_schema. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
 ].join("\n")
 
@@ -285,7 +291,7 @@ export const TOOLS = [
   {
     name: "set_env_var",
     description:
-      "Create or update a plaintext environment variable on an app. Takes effect on the next deployment; env vars are injected at runtime, so apply the change with redeploy_deployment on the latest live deployment, not trigger_deployment (no rebuild needed). Do NOT use this for secrets (passwords, tokens, API keys, connection strings with credentials): values are stored unencrypted and are readable by the whole team. Ask the user to add secrets under the app's Environment settings in the canette UI instead.",
+      "Create or update a plaintext environment variable on an app. Takes effect on the next deployment; env vars are injected at runtime, so apply the change with redeploy_deployment on the latest live deployment, not trigger_deployment (no rebuild needed). Do NOT use this for secrets (passwords, tokens, API keys, connection strings with credentials): values are stored unencrypted and are readable by the whole team. Use request_secret for those instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -294,6 +300,29 @@ export const TOOLS = [
         value: { type: "string", description: "Variable value (max 10 KB)" },
       },
       required: ["app_id", "key", "value"],
+    },
+  },
+  {
+    name: "request_secret",
+    description:
+      "Ask the user to set one or more secrets (passwords, tokens, API keys, connection strings with credentials) on an app, without the value passing through you. Returns a link to a canette page where the logged-in user types the values; the link itself grants no access. Give the link to the user and wait until they say they are done — never ask for the value in the conversation. Then check secretKeys with list_env_vars and apply with redeploy_deployment. If a key already exists as a plain env var, the page offers to convert it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        keys: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: MAX_SECRET_REQUEST_KEYS,
+          description: `Secret names: uppercase letters, digits and underscores (e.g. DATABASE_URL), at most ${MAX_SECRET_REQUEST_KEYS}`,
+        },
+        reason: {
+          type: "string",
+          description: `Short plain-text explanation shown to the user on the page, e.g. what the app needs the secret for (max ${MAX_SECRET_REQUEST_REASON} characters)`,
+        },
+      },
+      required: ["app_id", "keys"],
     },
   },
   {
@@ -637,6 +666,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         return ok({ key: envVar.key, value: envVar.value, note: REDEPLOY_NOTE })
       }
 
+      case "request_secret":
+        return await requestSecretTool(args, userId)
+
       case "delete_env_var": {
         const appId = arg(args, "app_id")
         const key = arg(args, "key")
@@ -665,6 +697,62 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
     if (e instanceof ServiceError) return err(e.message)
     throw e
   }
+}
+
+// ── Secret requests ───────────────────────────────────────────────────────────
+
+type SecretRequestStatus = "new" | "replaces_secret" | "replaces_env_var"
+
+// Returns a link for the user to set secrets in the UI. Writes nothing and
+// never accepts a value: the page saves through the normal session-authed
+// secrets endpoint, so the link is safe to show in the agent's context.
+async function requestSecretTool(args: Record<string, unknown>, userId: string): Promise<ToolResult> {
+  const appId = arg(args, "app_id")
+  if (!appId) return err("app_id is required")
+
+  const rawKeys = typeof args.keys === "string" ? [args.keys] : args.keys
+  if (!Array.isArray(rawKeys) || rawKeys.length === 0) return err("keys must be a non-empty list of secret names")
+  if (!rawKeys.every((k): k is string => typeof k === "string")) return err("keys must be a list of strings")
+  const keys = [...new Set(rawKeys.map((k) => k.trim()))]
+  if (keys.length > MAX_SECRET_REQUEST_KEYS) return err(`Request at most ${MAX_SECRET_REQUEST_KEYS} secrets at a time`)
+  for (const key of keys) {
+    try {
+      validateSecretKey(key)
+    } catch (e) {
+      if (e instanceof ServiceError) return err(`${key}: ${e.message}`)
+      throw e
+    }
+  }
+
+  const reasonArg = args.reason
+  if (reasonArg !== undefined && reasonArg !== null && typeof reasonArg !== "string") return err("reason must be a string")
+  const reason = (reasonArg ?? "").replace(/\s+/g, " ").trim()
+  if (reason.length > MAX_SECRET_REQUEST_REASON) {
+    return err(`reason must be at most ${MAX_SECRET_REQUEST_REASON} characters`)
+  }
+
+  const app = await getAppById(db, appId, userId)
+  if (!app) return err("App not found or access denied")
+  const project = await getProjectByRef(db, app.projectId, userId)
+  if (!project) return err("App not found or access denied")
+
+  const [envVars, secrets] = await Promise.all([listEnvVars(db, appId), listSecrets(db, appId)])
+  const envKeys = new Set(envVars.map((v) => v.key))
+  const secretKeys = new Set(secrets.map((s) => s.key))
+  const status = (key: string): SecretRequestStatus =>
+    secretKeys.has(key) ? "replaces_secret" : envKeys.has(key) ? "replaces_env_var" : "new"
+
+  const uiUrl = (process.env.UI_URL ?? "http://localhost:3000").replace(/\/$/, "")
+  const query = new URLSearchParams({ keys: keys.join(",") })
+  if (reason) query.set("reason", reason)
+  const url = `${uiUrl}/dashboard/projects/${encodeURIComponent(project.slug)}/apps/${encodeURIComponent(app.slug)}/request-secrets?${query}`
+
+  return ok({
+    url,
+    keys: keys.map((key) => ({ key, status: status(key) })),
+    note:
+      "Show this link to the user and ask them to open it while logged in to canette; it only works for members of the app's team. Do not ask for the values in the conversation. When the user says they are done, call list_env_vars and check that every key is in secretKeys. Secrets take effect on the next deployment: apply them with redeploy_deployment on the app's latest live deployment (no rebuild needed), or trigger_deployment if the app has never been deployed.",
+  })
 }
 
 // ── Docs (public, read-only — no DB or access checks) ─────────────────────────
