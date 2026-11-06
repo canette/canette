@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Bot, CircleCheck, KeyRound, TriangleAlert } from "lucide-react"
@@ -32,12 +32,20 @@ function parseKeys(raw: string | null): { valid: string[]; invalid: string[] } {
 }
 
 export default function RequestSecretsPage() {
-  const { app, project } = useAppContext()
+  const { app } = useAppContext()
   const searchParams = useSearchParams()
   const { valid: keys, invalid } = useMemo(() => parseKeys(searchParams.get("keys")), [searchParams])
   // Agent-supplied text: rendered as plain text only, never as markup or a link.
   const reason = (searchParams.get("reason") ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_REASON)
 
+  // Keyed on the request, so a different link (even via client-side
+  // navigation) starts with a fresh form: no values, consent or "Saved"
+  // state carry over, and the old request's lookups land on an unmounted form.
+  return <RequestSecretsForm key={`${app.id}:${keys.join(",")}`} keys={keys} invalid={invalid} reason={reason} />
+}
+
+function RequestSecretsForm({ keys, invalid, reason }: { keys: string[]; invalid: string[]; reason: string }) {
+  const { app, project } = useAppContext()
   const [existing, setExisting] = useState<Record<string, Existing> | null>(null)
   const [loadError, setLoadError] = useState("")
   const [values, setValues] = useState<Record<string, string>>({})
@@ -47,18 +55,18 @@ export default function RequestSecretsPage() {
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(false)
 
-  const load = useCallback(async () => {
-    try {
-      const data = await api.env.list(app.id)
+  useEffect(() => {
+    let current = true
+    api.env.list(app.id).then((data) => {
+      if (!current) return
       const secretKeys = new Set(data.secrets.map((s) => s.key))
       const envKeys = new Set(data.envVars.map((v) => v.key))
       setExisting(Object.fromEntries(keys.map((k) => [k, secretKeys.has(k) ? "secret" : envKeys.has(k) ? "env" : null])))
-    } catch (e: unknown) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load environment")
-    }
+    }).catch((e: unknown) => {
+      if (current) setLoadError(e instanceof Error ? e.message : "Failed to load environment")
+    })
+    return () => { current = false }
   }, [app.id, keys])
-
-  useEffect(() => { load() }, [load])
 
   const pending = keys.filter((k) => !saved.includes(k))
   const filled = pending.filter((k) => (values[k] ?? "") !== "")
