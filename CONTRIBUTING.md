@@ -68,4 +68,4 @@ bun run build:docs
 
 ## Project structure
 
-See [`CLAUDE.md`](./CLAUDE.md) for a full description of the monorepo layout, architecture decisions, and component responsibilities.
+See [`AGENTS.md`](./AGENTS.md) for a full description of the monorepo layout, architecture decisions, and component responsibilities.
