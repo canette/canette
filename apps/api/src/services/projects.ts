@@ -138,7 +138,7 @@ export async function updateProject(
   db: DB,
   projectId: string,
   userId: string,
-  patch: { name?: string; description?: string; slug?: string }
+  patch: { name?: string; description?: string | null; slug?: string }
 ): Promise<Project> {
   // Access check via team membership
   const project = await db
@@ -149,6 +149,10 @@ export async function updateProject(
     .where("tm.user_id", "=", userId)
     .executeTakeFirst()
   if (!project) throw new ServiceError("Not found", "NOT_FOUND", 404)
+
+  if (patch.name !== undefined && !patch.name.trim()) {
+    throw new ServiceError("name is required", "VALIDATION_ERROR", 400)
+  }
 
   if (patch.slug !== undefined && !isValidProjectSlug(patch.slug)) {
     throw new ServiceError(
@@ -180,7 +184,8 @@ export async function updateProject(
 
   const updates: Updateable<Database["projects"]> = {}
   if (patch.name !== undefined)        updates.name = patch.name.trim()
-  if (patch.description !== undefined) updates.description = patch.description
+  // null (or an empty string) clears the description
+  if (patch.description !== undefined) updates.description = patch.description || null
   if (patch.slug !== undefined)        updates.slug = patch.slug
   if (!Object.keys(updates).length) throw new ServiceError("Nothing to update", "VALIDATION_ERROR", 400)
   updates.updated_at = new Date().toISOString()

@@ -63,8 +63,10 @@ An access token is tied to the browser session you authorized it from. Signing o
 | Tool | Description |
 |------|-------------|
 | `list_projects` | List all projects you have access to |
+| `list_teams` | List the teams you belong to, which one is your personal team, and your role in each — including teams with no projects yet |
 | `list_apps` | List apps within a project |
-| `create_project` | Create a new project (uses your personal team by default) |
+| `create_project` | Create a new project in a team from `list_teams` (uses your personal team by default) |
+| `update_project` | Change a project's name or description (`null` removes the description). The slug can only be changed in the UI |
 | `create_app` | Create an app in a project — built from a Git repository (including monorepo subdirectories and private repositories) or run from a Docker image, as a `web`, `private` or `cronjob` app |
 | `update_app` | Change an existing app's settings, such as branch, port, image tag or its [canette.yaml config](#runtime-config-canetteyaml) — applied on the next deployment (a rebuild for source changes, a redeploy for runtime settings) |
 | `list_git_credentials` | List the Git credentials a project can use for private repositories (names and types only, never tokens or keys) |
@@ -72,8 +74,9 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `list_deployments` | List an app's recent deployments, newest first (10 by default, up to 100 with `limit`) — use this to find a `deployment_id` when troubleshooting a deployment not triggered in this session, or an earlier deployment to roll back to |
 | `get_deployment` | Get the status and details of a deployment — provide `app_id` for the latest, or `deployment_id` for a specific one |
 | `get_build_logs` | Fetch the end of a deployment's build log (the last 200 lines by default, up to 2000 with `lines`; `offset` reads further back) — useful for diagnosing build failures |
-| `redeploy_deployment` | Deploy an already-built image again, without rebuilding, using the app's current settings and environment — to apply configuration changes or to roll back |
-| `get_app` | Get an app's current state — live URL, custom hostnames, whether password protection is on, the live deployment serving traffic, the latest deployment and runtime health |
+| `redeploy_deployment` | Deploy an already-built image again, without rebuilding, using the app's current settings and environment — to apply configuration changes, to roll back, or to start a stopped app |
+| `stop_app` | Take an app offline by stopping its live deployment. Builds and rollouts in progress are not cancelled, and the app, its settings and its volumes are kept ([details](#stopping-an-app)) |
+| `get_app` | Get an app's current state — live URL, custom hostnames, whether password protection is on, the live deployment serving traffic, the latest deployment and runtime health. Takes an `app_id`, or a `project_id` (ID or slug) with an `app_slug` |
 | `get_runtime_logs` | Fetch recent logs and pod status (restarts, `CrashLoopBackOff`, exit code) from the running app. Automatically returns the crashed container's logs when the app is crash-looping |
 | `get_app_metrics` | Get per-pod readiness, restarts, last termination reason (e.g. `OOMKilled`) and CPU/memory usage. Usage requires metrics-server on the cluster |
 | `list_env_vars` | List an app's environment variables and the names of its secrets (secret values are never returned) |
@@ -89,6 +92,7 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `search_docs` | Search the canette documentation and return the best-matching sections with their page path |
 | `get_docs_page` | Get one documentation page as markdown, e.g. `configuration/canette-yaml` |
 | `get_canette_yaml_schema` | Get the JSON Schema for `canette.yaml` or `canette-template.yaml`: every field with its type, allowed values and description |
+| `parse_template` | Validate a [`canette-template.yaml`](/docs/configuration/templates) with the same parser as the UI wizard and return the parsed apps. Creates nothing ([details](#templates)) |
 
 ### Secrets
 
@@ -116,6 +120,16 @@ Agents can't delete a Persistent Volume, because that permanently deletes its da
 Agents can put a web app behind [password protection](/docs/configuration/password-protection) without seeing the password. `request_password_protection` works like `request_secret`: it returns a link to a canette page, with an optional reason from the agent, where you set the password yourself. If protection is already on, the same page changes the password. When you tell the agent you're done, it checks `get_app` and redeploys the app.
 
 Agents can't turn protection off, because that makes the app's URL public. `disable_password_protection` changes nothing and returns a link to the app's **Settings → Password protection** section, where you can turn it off yourself.
+
+### Stopping an app
+
+`stop_app` takes an app offline, like **Stop** in the UI: its live deployment is marked stopped, the live URL is cleared, and canette removes the running containers. The app, its settings, environment variables, secrets and volumes, including the data on persistent volumes, are kept.
+
+Only the live deployment is stopped. A build or rollout that is still running is not cancelled and goes live when it finishes. To start the app again, the agent calls `redeploy_deployment` on the deployment that was live (`stop_app` returns its ID), which reuses the built image without a rebuild.
+
+### Templates
+
+`parse_template` runs a [`canette-template.yaml`](/docs/configuration/templates) through the same parser as **New app → From template** in the UI, so the agent gets the same validation errors and the same handling of extra fields, which end up in each app's canette.yaml config. It writes nothing. To set the apps up, the agent creates each one with `create_app`, sets its plain variables with `set_env_var`, and calls `request_secret` for the secrets the template lists, so you enter their values yourself. Templates don't include volumes; the agent adds them with `create_volume`.
 
 ### Rebuild or redeploy
 
