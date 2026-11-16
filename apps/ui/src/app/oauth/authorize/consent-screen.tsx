@@ -10,8 +10,9 @@ import { authorizeAction, denyAction } from "./actions"
 // Everything a token lets an MCP client do. Keep in sync with TOOLS in
 // apps/api/src/services/mcp.ts — a user must never grant more than this says.
 const TOOL_DESCRIPTIONS = [
-  "List and create projects and apps, and change app settings",
+  "List your teams, list and create projects and apps, and change project and app settings",
   "Trigger deployments and roll back to earlier ones",
+  "Stop running apps, without deleting them or their data",
   "Read deployment status, build logs, runtime logs and metrics",
   "Read, change and delete environment variables",
   "Add, change and delete app volumes (persistent volumes only you can delete)",

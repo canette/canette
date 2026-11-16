@@ -649,7 +649,7 @@ describe("services/mcp runtime diagnostics", () => {
     }
 
     it("reports invalid arguments as VALIDATION_ERROR", async () => {
-      expect(error(await handleTool("get_app", {}, "userId"))).toEqual({ error: "app_id is required", code: "VALIDATION_ERROR" })
+      expect(error(await handleTool("get_app", {}, "userId"))).toEqual({ error: "app_id is required (or project_id and app_slug)", code: "VALIDATION_ERROR" })
     })
 
     it("reports a missing and an inaccessible app identically", async () => {
@@ -671,6 +671,179 @@ describe("services/mcp runtime diagnostics", () => {
       expect(error(await handleTool("no_such_tool", {}, "userId")).code).toBe("UNKNOWN_TOOL")
       stubLogstreamer({ error: "boom" }, 500)
       expect(error(await handleTool("get_app_metrics", { app_id: appId }, "userId")).code).toBe("UNAVAILABLE")
+    })
+  })
+
+  describe("teams and projects", () => {
+    const PROJECT_ID = "11111111-2222-3333-4444-555555555555"
+
+    function error(result: Awaited<ReturnType<typeof handleTool>>) {
+      expect(result.isError).toBe(true)
+      return JSON.parse(text(result)) as { error: string; code: string }
+    }
+
+    beforeAll(async () => {
+      const now = new Date().toISOString()
+      // A team owned by the outsider that userId has joined, with no projects:
+      // list_projects can't find it, list_teams must.
+      await db.insertInto("teams").values({
+        id: "sharedTeamId", name: "Shared Team", is_personal: false, owner_id: "outsiderId",
+        created_at: now, updated_at: now,
+      }).execute()
+      await db.insertInto("team_members").values([
+        { id: "sharedOwner", team_id: "sharedTeamId", user_id: "outsiderId", created_at: now },
+        { id: "sharedMember", team_id: "sharedTeamId", user_id: "userId", created_at: now },
+      ]).execute()
+    })
+
+    it("list_teams returns the user's teams with the personal team and role", async () => {
+      const result = await handleTool("list_teams", {}, "userId")
+      expect(result.isError).toBeUndefined()
+      expect(JSON.parse(text(result))).toEqual([
+        { id: "teamId", name: "Test Team", isPersonal: true, role: "owner" },
+        { id: "sharedTeamId", name: "Shared Team", isPersonal: false, role: "member" },
+      ])
+
+      const outsider = JSON.parse(text(await handleTool("list_teams", {}, "outsiderId")))
+      expect(outsider.map((t: { id: string }) => t.id)).toEqual(["sharedTeamId"])
+    })
+
+    it("get_app resolves an app by project ID or slug plus app slug", async () => {
+      for (const project_id of ["test-project", PROJECT_ID]) {
+        const result = await handleTool("get_app", { project_id, app_slug: "web" }, "userId")
+        expect(result.isError).toBeUndefined()
+        const body = JSON.parse(text(result))
+        expect(body.id).toBe(appId)
+        expect(body.hostnames).toEqual([])
+      }
+    })
+
+    it("get_app rejects ambiguous or incomplete app references", async () => {
+      for (const args of [
+        { app_id: appId, project_id: "test-project", app_slug: "web" },
+        { app_id: appId, app_slug: "web" },
+        { project_id: "test-project" },
+        { app_slug: "web" },
+      ]) {
+        expect(error(await handleTool("get_app", args, "userId")).code).toBe("VALIDATION_ERROR")
+      }
+    })
+
+    it("get_app by slug reports a missing and an inaccessible app identically", async () => {
+      const missing = error(await handleTool("get_app", { project_id: "test-project", app_slug: "nope" }, "userId"))
+      const denied = error(await handleTool("get_app", { project_id: "test-project", app_slug: "web" }, "outsiderId"))
+      expect(missing).toEqual({ error: "App not found or access denied", code: "NOT_FOUND" })
+      expect(denied).toEqual(missing)
+    })
+
+    describe("update_project", () => {
+      const ID = "22222222-3333-4444-5555-666666666666"
+
+      beforeAll(async () => {
+        const now = new Date().toISOString()
+        await db.insertInto("projects").values({
+          id: ID, team_id: "teamId", name: "Editable", slug: "editable", description: "old",
+          created_by: "userId", created_at: now, updated_at: now,
+        }).execute()
+      })
+
+      const row = () => db.selectFrom("projects").select(["name", "slug", "description"]).where("id", "=", ID).executeTakeFirstOrThrow()
+
+      it("changes the name and description, by ID or slug", async () => {
+        const result = await handleTool("update_project", { project_id: ID, name: "  Renamed  ", description: "new" }, "userId")
+        expect(result.isError).toBeUndefined()
+        expect(JSON.parse(text(result)).name).toBe("Renamed")
+        expect(await row()).toEqual({ name: "Renamed", slug: "editable", description: "new" })
+
+        await handleTool("update_project", { project_id: "editable", name: "By slug" }, "userId")
+        expect((await row()).name).toBe("By slug")
+        expect((await row()).description).toBe("new") // untouched when absent
+      })
+
+      it("clears the description with null or an empty string", async () => {
+        for (const description of [null, ""]) {
+          await handleTool("update_project", { project_id: ID, description: "set" }, "userId")
+          expect((await handleTool("update_project", { project_id: ID, description }, "userId")).isError).toBeUndefined()
+          expect((await row()).description).toBeNull()
+        }
+      })
+
+      it("rejects an empty patch, invalid values and a slug change", async () => {
+        for (const args of [{}, { name: "" }, { name: "   " }, { name: 5 }, { description: 5 }, { slug: "renamed" }]) {
+          expect(error(await handleTool("update_project", { project_id: ID, ...args }, "userId")).code).toBe("VALIDATION_ERROR")
+        }
+        expect(error(await handleTool("update_project", { name: "x" }, "userId")).code).toBe("VALIDATION_ERROR")
+        expect((await row()).slug).toBe("editable")
+      })
+
+      it("denies access to users outside the project's team", async () => {
+        const denied = error(await handleTool("update_project", { project_id: ID, name: "Hijacked" }, "outsiderId"))
+        expect(denied).toEqual({ error: "Project not found or access denied", code: "NOT_FOUND" })
+        expect((await row()).name).not.toBe("Hijacked")
+      })
+    })
+  })
+
+  describe("parse_template", () => {
+    const TEMPLATE = [
+      "name: Demo stack",
+      "description: Web app and worker",
+      "apps:",
+      "  - name: Web",
+      "    slug: web",
+      "    git_url: https://github.com/example/web",
+      "    port: 8080",
+      "    env:",
+      "      LOG_LEVEL: info",
+      "    secrets:",
+      "      - DATABASE_URL",
+      "      - name: API_KEY",
+      "        description: Payment provider key",
+      "    replicas: 2",
+      "  - name: Nightly",
+      "    slug: nightly",
+      "    source_type: image",
+      "    image_url: ghcr.io/example/job",
+      "    deployment_type: cronjob",
+      "    schedule: '@daily'",
+    ].join("\n")
+
+    function error(result: Awaited<ReturnType<typeof handleTool>>) {
+      expect(result.isError).toBe(true)
+      return JSON.parse(text(result)) as { error: string; code: string }
+    }
+
+    it("returns the parsed apps and keeps unknown fields as canetteConfig", async () => {
+      const appsBefore = await db.selectFrom("apps").select("id").execute()
+      const result = await handleTool("parse_template", { yaml: TEMPLATE }, "userId")
+      expect(result.isError).toBeUndefined()
+      const body = JSON.parse(text(result))
+      expect(body.name).toBe("Demo stack")
+      expect(body.apps).toHaveLength(2)
+      expect(body.apps[0]).toMatchObject({
+        slug: "web", sourceType: "git", gitUrl: "https://github.com/example/web", port: 8080,
+        env: { LOG_LEVEL: "info" },
+        secrets: [{ name: "DATABASE_URL" }, { name: "API_KEY", description: "Payment provider key" }],
+        canetteConfig: "replicas: 2\n",
+      })
+      expect(body.apps[1]).toMatchObject({ slug: "nightly", deploymentType: "cronjob", schedule: "@daily" })
+      // Parsing creates nothing.
+      expect(await db.selectFrom("apps").select("id").execute()).toEqual(appsBefore)
+    })
+
+    it("keeps the parser's error codes and messages", async () => {
+      expect(error(await handleTool("parse_template", { yaml: "name: [unclosed" }, "userId")))
+        .toEqual({ error: "Invalid YAML: could not parse template", code: "INVALID_YAML" })
+      expect(error(await handleTool("parse_template", { yaml: "apps: []" }, "userId")))
+        .toEqual({ error: "Template 'name' is required", code: "INVALID_TEMPLATE" })
+      expect(error(await handleTool("parse_template", { yaml: "" }, "userId")).code).toBe("INVALID_TEMPLATE")
+      expect(error(await handleTool("parse_template", { yaml: `name: x\n#${"a".repeat(60_000)}` }, "userId")).code).toBe("TOO_LARGE")
+    })
+
+    it("rejects a missing or non-string document", async () => {
+      for (const args of [{}, { yaml: { name: "x" } }]) {
+        expect(error(await handleTool("parse_template", args, "userId")).code).toBe("VALIDATION_ERROR")
+      }
     })
   })
 
@@ -742,6 +915,48 @@ describe("services/mcp runtime diagnostics", () => {
         expect((await handleTool("list_deployments", { app_id: app.id, limit }, "userId")).isError).toBe(true)
       }
       expect((await handleTool("list_deployments", { app_id: app.id }, "outsiderId")).isError).toBe(true)
+    })
+
+    describe("stop_app", () => {
+      const statusOf = async (id: string) =>
+        (await db.selectFrom("deployments").select("status").where("id", "=", id).executeTakeFirstOrThrow()).status
+
+      it("stops only the live deployment, clears the URL and says how to resume", async () => {
+        const app = await createApp(db, PROJECT_ID, "userId", {
+          name: "demo", slug: "demo", sourceType: "git", gitUrl: "https://github.com/example/repo",
+        })
+        const live = await insertDeployment(app.id, "live")
+        const building = await insertDeployment(app.id, "building")
+        await db.updateTable("apps").set({ live_url: "https://demo.example.com" }).where("id", "=", app.id).execute()
+
+        const result = await handleTool("stop_app", { app_id: app.id }, "userId")
+        expect(result.isError).toBeUndefined()
+        const body = JSON.parse(text(result))
+        expect(body.stoppedDeployment).toBe(live)
+        expect(body.note).toContain(`redeploy_deployment with deployment_id ${live}`)
+
+        expect(await statusOf(live)).toBe("stopped")
+        expect(await statusOf(building)).toBe("building")
+        const after = JSON.parse(text(await handleTool("get_app", { app_id: app.id }, "userId")))
+        expect(after.liveUrl ?? null).toBeNull()
+        expect(after.liveDeployment).toBeNull()
+
+        // Stopping again is harmless and says nothing was live.
+        const again = JSON.parse(text(await handleTool("stop_app", { app_id: app.id }, "userId")))
+        expect(again.stoppedDeployment).toBeNull()
+      })
+
+      it("rejects a missing app_id and denies other teams", async () => {
+        const app = await createApp(db, PROJECT_ID, "userId", {
+          name: "kept", slug: "kept", sourceType: "git", gitUrl: "https://github.com/example/repo",
+        })
+        const live = await insertDeployment(app.id, "live")
+
+        expect(JSON.parse(text(await handleTool("stop_app", {}, "userId"))).code).toBe("VALIDATION_ERROR")
+        const denied = await handleTool("stop_app", { app_id: app.id }, "outsiderId")
+        expect(JSON.parse(text(denied))).toEqual({ error: "App not found or access denied", code: "NOT_FOUND" })
+        expect(await statusOf(live)).toBe("live")
+      })
     })
 
     describe("get_build_logs", () => {

@@ -11,8 +11,8 @@ import { db } from "../db/db"
 import { docs as defaultDocs, renderDocsPage, DOCS_VERSION, type DocsIndex } from "../docs"
 import { getSchema, schemaFileFor, SCHEMA_TARGETS, type SchemaFile } from "../docs/schemas"
 import { ServiceError } from "./errors"
-import { listProjects, createProject, getProjectByRef } from "./projects"
-import { listApps, createApp, updateApp, getAppById } from "./apps"
+import { listProjects, createProject, getProjectByRef, updateProject } from "./projects"
+import { listApps, createApp, updateApp, getAppById, getAppByRef } from "./apps"
 import {
   createDeployment,
   listDeployments,
@@ -20,6 +20,7 @@ import {
   getDeploymentById,
   getLiveDeployment,
   redeployDeployment,
+  stopApp,
 } from "./deployments"
 import { listTeams } from "./teams"
 import { listHostnames } from "./hostnames"
@@ -30,6 +31,7 @@ import { listVolumes, createVolume, updateVolume, deleteVolume } from "./volumes
 import { getPasswordGateStatus } from "./password-gate"
 import { getAppPodTarget } from "./app-logs"
 import { fetchFromLogstreamer } from "./logstreamer"
+import { parseTemplate } from "./templates"
 import type { AppDeploymentType, AppMetricsUsage, BuildLog, AppRuntimeLogs, AppSourceType, VolumeConfig, VolumeType } from "@canette/types"
 
 const DEFAULT_LOG_LINES = 100
@@ -89,9 +91,10 @@ const SERVER_INSTRUCTIONS = [
   "Runtime config such as resources, replicas, healthcheck, ingress and security lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
   "Mounted volumes (persistent disks, scratch space, single config files) are managed with list_volumes, create_volume, update_volume and delete_volume, and applied with redeploy_deployment. Add a volume an app needs before its first deployment. Persistent volumes (pvc) cannot be deleted through these tools, because that destroys their data: delete_volume returns a link for the user to delete it themselves.",
   "To harden an app (non-root user, read-only root filesystem, no capabilities), set security.hardened: true in its canette.yaml after reading security/hardened-mode with get_docs_page: check that the image doesn't need root at startup and listens on a port of 1024 or higher (lower ports only work on some clusters), and list the directories it writes to in security.writable_paths. If you also change the Dockerfile, use trigger_deployment instead of redeploy_deployment.",
+  "To take an app offline without deleting it, call stop_app; bring it back with redeploy_deployment on its last live deployment (no rebuild).",
   "Never ask the user to paste a password, token, API key or connection string into the conversation, and never store one with set_env_var. Call request_secret instead: it returns a canette link where the user enters the value themselves, so it never reaches you.",
   "To put a web app behind a password, call request_password_protection: it returns a canette link where the user sets the password themselves. Never ask for that password either. Removing password protection makes the app public, so disable_password_protection only returns a link for the user to do it. Apply either change with redeploy_deployment.",
-  "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page, and check field names and values against get_canette_yaml_schema. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
+  "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page, and check field names and values against get_canette_yaml_schema. To set up apps from a canette-template.yaml, validate it with parse_template first. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
 ].join("\n")
 
 const DOCS_NOT_BUNDLED = "Docs are not bundled in this build of the canette API."
@@ -107,6 +110,12 @@ export const TOOLS = [
   {
     name: "list_projects",
     description: "List all projects the authenticated user has access to.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "list_teams",
+    description:
+      "List the teams the authenticated user belongs to: ID, name, whether it is the user's personal team, and the user's role in it ('owner' or 'member'). Use a team ID as create_project's team_id. Unlike list_projects, this also finds teams that have no projects yet.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -129,9 +138,23 @@ export const TOOLS = [
         name: { type: "string", description: "Human-readable project name" },
         slug: { type: "string", description: "URL-friendly identifier (lowercase alphanumeric and hyphens, max 50 chars)" },
         description: { type: "string", description: "Optional project description" },
-        team_id: { type: "string", description: "Team ID (optional — defaults to the user's personal team)" },
+        team_id: { type: "string", description: "Team ID from list_teams (optional — defaults to the user's personal team)" },
       },
       required: ["name", "slug"],
+    },
+  },
+  {
+    name: "update_project",
+    description:
+      "Change a project's name or description. Only the fields you pass are changed. The slug can't be changed through MCP: it is part of every app's URL and of the project's Kubernetes resources.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Project ID or slug" },
+        name: { type: "string", description: "New human-readable project name" },
+        description: { type: ["string", "null"], description: "New project description. Pass null or an empty string to remove it" },
+      },
+      required: ["project_id"],
     },
   },
   {
@@ -252,15 +275,28 @@ export const TOOLS = [
     },
   },
   {
-    name: "get_app",
+    name: "stop_app",
     description:
-      "Get an app's configuration and current state: live URL, custom hostnames, mounted volumes, whether password protection is on, the live deployment (the one serving traffic, null when the app is stopped or has never gone live) and the latest deployment (status and error; it may be a newer rollout that is still in progress or failed). Start here when checking whether an app is up.",
+      "Take an app offline: its live deployment becomes 'stopped', its live URL is cleared and canette removes its running containers. Only the live deployment is stopped. A build or rollout that is still in progress is not cancelled and goes live when it finishes; check get_app's latestDeployment afterwards. The app, its settings, env vars, secrets and volumes (including persistent data) are kept. To bring it back, call redeploy_deployment on the deployment that was live (returned here as stoppedDeployment, or from list_deployments), which reuses the built image without a rebuild.",
     inputSchema: {
       type: "object",
       properties: {
         app_id: { type: "string", description: "App ID" },
       },
       required: ["app_id"],
+    },
+  },
+  {
+    name: "get_app",
+    description:
+      "Get an app's configuration and current state: live URL, custom hostnames, mounted volumes, whether password protection is on, the live deployment (the one serving traffic, null when the app is stopped or has never gone live) and the latest deployment (status and error; it may be a newer rollout that is still in progress or failed). Start here when checking whether an app is up. Identify the app by app_id, or by project_id together with app_slug (e.g. from a URL like /projects/<project>/apps/<app>), not both.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        project_id: { type: "string", description: "Project ID or slug — with app_slug, instead of app_id" },
+        app_slug: { type: "string", description: "App slug within the project — with project_id, instead of app_id" },
+      },
     },
   },
   {
@@ -476,6 +512,18 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: "parse_template",
+    description:
+      "Validate a canette-template.yaml with canette's own template parser and return the parsed apps, exactly as the 'New app from template' wizard in the UI sees them. Writes nothing and creates or deploys nothing. Fields canette doesn't store on the app are returned per app as canetteConfig YAML. To set the apps up, call create_app for each one (pass its fields as snake_case arguments, e.g. gitUrl as git_url and canetteConfig as canette_config), then set_env_var for each entry in env, and request_secret with the names in secrets — never ask the user for secret values in the conversation. Check a gitCredentialId against list_git_credentials first. Volumes are not part of templates: add them with create_volume before the first trigger_deployment.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        yaml: { type: "string", description: "The canette-template.yaml document (max 50 KB)" },
+      },
+      required: ["yaml"],
+    },
+  },
 ]
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -565,6 +613,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         return ok(result)
       }
 
+      case "list_teams": {
+        const teams = await listTeams(db, userId)
+        return ok(
+          teams.map((t) => ({
+            id: t.id,
+            name: t.name,
+            isPersonal: Boolean(t.isPersonal), // SQLite (tests) returns 0/1
+            role: t.ownerId === userId ? "owner" : "member",
+          }))
+        )
+      }
+
       case "list_apps": {
         const projectId = arg(args, "project_id")
         if (!projectId) return err("project_id is required")
@@ -592,6 +652,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const project = await createProject(db, userId, { teamId, name, slug, description: arg(args, "description") })
         return ok(project)
       }
+
+      case "update_project":
+        return await updateProjectTool(args, userId)
 
       case "create_app": {
         const projectId = arg(args, "project_id")
@@ -659,6 +722,22 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         return ok(deployment)
       }
 
+      case "stop_app": {
+        const appId = arg(args, "app_id")
+        if (!appId) return err("app_id is required")
+        const app = await getAppById(db, appId, userId)
+        if (!app) return notFound("App not found or access denied")
+        const live = await getLiveDeployment(db, appId)
+        // false means the app is gone or not in one of the user's teams.
+        if (!(await stopApp(db, appId, userId))) return notFound("App not found or access denied")
+        return ok({
+          stoppedDeployment: live?.id ?? null,
+          note: live
+            ? `The app is going offline. To bring it back, call redeploy_deployment with deployment_id ${live.id} (no rebuild needed).`
+            : "The app had no live deployment, so nothing was running. A build or rollout in progress still goes live when it finishes: check get_app's latestDeployment.",
+        })
+      }
+
       case "list_deployments": {
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
@@ -702,10 +781,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
       }
 
       case "get_app": {
-        const appId = arg(args, "app_id")
-        if (!appId) return err("app_id is required")
-        const app = await getAppById(db, appId, userId)
-        if (!app) return notFound("App not found or access denied")
+        const app = await resolveApp(args, userId)
+        if (!("id" in app)) return app
+        const appId = app.id
         const [hostnames, volumes, passwordProtection, liveDeployment, { items }] = await Promise.all([
           listHostnames(db, appId),
           listVolumes(db, appId),
@@ -872,6 +950,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
       case "get_canette_yaml_schema":
         return getSchemaTool(args)
 
+      case "parse_template": {
+        const yaml = args.yaml
+        // An empty document goes to the parser, which rejects it like the REST route does.
+        if (typeof yaml !== "string") return err("yaml is required: the canette-template.yaml document as a string")
+        return ok(await parseTemplate({ yaml }))
+      }
+
       default:
         return err(`Unknown tool: ${name}`, "UNKNOWN_TOOL")
     }
@@ -895,6 +980,45 @@ function buildLogText(items: BuildLog[], total: number, offset: number): string 
 function appUiUrl(projectSlug: string, appSlug: string, path: string): string {
   const uiUrl = (process.env.UI_URL ?? "http://localhost:3000").replace(/\/$/, "")
   return `${uiUrl}/dashboard/projects/${encodeURIComponent(projectSlug)}/apps/${encodeURIComponent(appSlug)}/${path}`
+}
+
+// get_app takes either app_id or project_id + app_slug. Returns the app, or an
+// error result for a bad combination or an app the user can't see.
+async function resolveApp(args: Record<string, unknown>, userId: string) {
+  const appId = arg(args, "app_id")
+  const projectId = arg(args, "project_id")
+  const appSlug = arg(args, "app_slug")
+  if (appId && (projectId || appSlug)) return err("Pass either app_id, or project_id and app_slug, not both")
+  if (!appId && !projectId && !appSlug) return err("app_id is required (or project_id and app_slug)")
+  if (!appId && !(projectId && appSlug)) return err("project_id and app_slug must be passed together")
+  const app = appId ? await getAppById(db, appId, userId) : await getAppByRef(db, projectId!, appSlug!, userId)
+  return app ?? notFound("App not found or access denied")
+}
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+// Name and description only: a slug change renames the project's namespace,
+// which needs every app stopped first and is left to the UI.
+async function updateProjectTool(args: Record<string, unknown>, userId: string): Promise<ToolResult> {
+  const projectId = arg(args, "project_id")
+  if (!projectId) return err("project_id is required")
+  if ("slug" in args) return err("The project slug can't be changed through MCP; change it in the project's settings in the canette UI")
+
+  const patch: Parameters<typeof updateProject>[3] = {}
+  if (args.name !== undefined) {
+    if (typeof args.name !== "string") return err("name must be a string")
+    patch.name = args.name
+  }
+  // null (or an empty string) removes the description; absent leaves it alone.
+  if (args.description !== undefined) {
+    if (args.description !== null && typeof args.description !== "string") return err("description must be a string or null")
+    patch.description = args.description
+  }
+  if (!Object.keys(patch).length) return err("Pass name or description to change")
+
+  const project = await getProjectByRef(db, projectId, userId)
+  if (!project) return notFound("Project not found or access denied")
+  return ok(await updateProject(db, project.id, userId, patch))
 }
 
 // ── Volumes ───────────────────────────────────────────────────────────────────
