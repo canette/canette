@@ -4,6 +4,7 @@ import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
 import { createApp } from "../../src/services/apps"
 import { createVolume } from "../../src/services/volumes"
+import { enablePasswordGate, getPasswordGateStatus } from "../../src/services/password-gate"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
@@ -243,6 +244,80 @@ describe("services/mcp runtime diagnostics", () => {
         { keys: ["OK"] },
       ]) {
         const result = await handleTool("request_secret", args, "userId")
+        expect(result.isError).toBe(true)
+      }
+    })
+  })
+
+  describe("password protection", () => {
+    let privateAppId: string
+
+    beforeAll(async () => {
+      const app = await createApp(db, "11111111-2222-3333-4444-555555555555", "userId", {
+        name: "internal", slug: "internal", sourceType: "git", gitUrl: "https://github.com/example/repo",
+        deploymentType: "private",
+      })
+      privateAppId = app.id
+    })
+
+    it("get_app reports whether password protection is on", async () => {
+      const body = JSON.parse(text(await handleTool("get_app", { app_id: appId }, "userId")))
+      expect(body.passwordProtection).toEqual({ enabled: false })
+    })
+
+    it("disable_password_protection is a no-op when protection is off", async () => {
+      const result = await handleTool("disable_password_protection", { app_id: appId }, "userId")
+      expect(result.isError).toBeUndefined()
+      expect(JSON.parse(text(result)).enabled).toBe(false)
+    })
+
+    it("request_password_protection returns a UI link with the reason and writes nothing", async () => {
+      const result = await handleTool("request_password_protection", {
+        app_id: appId, reason: "  Keep the demo\nprivate  ",
+      }, "userId")
+      expect(result.isError).toBeUndefined()
+      const body = JSON.parse(text(result))
+      const url = new URL(body.url)
+      expect(url.pathname).toBe("/dashboard/projects/test-project/apps/web/request-password-protection")
+      expect(url.searchParams.get("reason")).toBe("Keep the demo private")
+      expect(body.currentlyEnabled).toBe(false)
+      expect(body.note).toContain("redeploy_deployment")
+      expect(await getPasswordGateStatus(db, appId, "userId")).toEqual({ enabled: false })
+    })
+
+    it("leaves the reason out of the link when none is given", async () => {
+      const result = await handleTool("request_password_protection", { app_id: appId }, "userId")
+      expect(new URL(JSON.parse(text(result)).url).search).toBe("")
+    })
+
+    it("rejects non-web apps, an over-long reason and a missing app_id", async () => {
+      for (const args of [
+        { app_id: privateAppId },
+        { app_id: appId, reason: "x".repeat(301) },
+        {},
+      ]) {
+        const result = await handleTool("request_password_protection", args, "userId")
+        expect(result.isError).toBe(true)
+      }
+    })
+
+    it("once protection is on, reports it and only links to settings to disable it", async () => {
+      await enablePasswordGate(db, appId, "userId", { password: "hunter2" })
+
+      const app = JSON.parse(text(await handleTool("get_app", { app_id: appId }, "userId")))
+      expect(app.passwordProtection).toEqual({ enabled: true })
+      const request = JSON.parse(text(await handleTool("request_password_protection", { app_id: appId }, "userId")))
+      expect(request.currentlyEnabled).toBe(true)
+
+      const result = await handleTool("disable_password_protection", { app_id: appId }, "userId")
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain("/dashboard/projects/test-project/apps/web/settings#access")
+      expect(await getPasswordGateStatus(db, appId, "userId")).toEqual({ enabled: true })
+    })
+
+    it("denies access to users outside the app's team", async () => {
+      for (const tool of ["request_password_protection", "disable_password_protection"]) {
+        const result = await handleTool(tool, { app_id: appId }, "outsiderId")
         expect(result.isError).toBe(true)
       }
     })

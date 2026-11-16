@@ -26,6 +26,7 @@ import { listEnvVars, upsertEnvVar, deleteEnvVar, MAX_ENV_VALUE_BYTES } from "./
 import { listSecrets, validateSecretKey } from "./secrets"
 import { listTeamCredentials } from "./git-credentials"
 import { listVolumes, createVolume, updateVolume, deleteVolume } from "./volumes"
+import { getPasswordGateStatus } from "./password-gate"
 import { getAppPodTarget } from "./app-logs"
 import { fetchFromLogstreamer } from "./logstreamer"
 import type { AppDeploymentType, AppMetricsUsage, AppRuntimeLogs, AppSourceType, VolumeConfig, VolumeType } from "@canette/types"
@@ -33,8 +34,9 @@ import type { AppDeploymentType, AppMetricsUsage, AppRuntimeLogs, AppSourceType,
 const DEFAULT_LOG_LINES = 100
 const MAX_LOG_LINES = 1000
 
-// request_secret limits. The UI page applies the same ones, since the link's
-// query string can be edited by hand.
+// request_secret limits (the reason limit also applies to
+// request_password_protection). The UI pages apply the same ones, since the
+// link's query string can be edited by hand.
 const MAX_SECRET_REQUEST_KEYS = 10
 const MAX_SECRET_REQUEST_REASON = 300
 
@@ -83,6 +85,7 @@ const SERVER_INSTRUCTIONS = [
   "Mounted volumes (persistent disks, scratch space, single config files) are managed with list_volumes, create_volume, update_volume and delete_volume, and applied with redeploy_deployment. Add a volume an app needs before its first deployment. Persistent volumes (pvc) cannot be deleted through these tools, because that destroys their data: delete_volume returns a link for the user to delete it themselves.",
   "To harden an app (non-root user, read-only root filesystem, no capabilities), set security.hardened: true in its canette.yaml after reading security/hardened-mode with get_docs_page: check that the image doesn't need root at startup and listens on a port of 1024 or higher (lower ports only work on some clusters), and list the directories it writes to in security.writable_paths. If you also change the Dockerfile, use trigger_deployment instead of redeploy_deployment.",
   "Never ask the user to paste a password, token, API key or connection string into the conversation, and never store one with set_env_var. Call request_secret instead: it returns a canette link where the user enters the value themselves, so it never reaches you.",
+  "To put a web app behind a password, call request_password_protection: it returns a canette link where the user sets the password themselves. Never ask for that password either. Removing password protection makes the app public, so disable_password_protection only returns a link for the user to do it. Apply either change with redeploy_deployment.",
   "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page, and check field names and values against get_canette_yaml_schema. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
 ].join("\n")
 
@@ -243,7 +246,7 @@ export const TOOLS = [
   {
     name: "get_app",
     description:
-      "Get an app's configuration and current state: live URL, custom hostnames, mounted volumes, latest deployment (status and error), and runtime health. Start here when checking whether an app is up.",
+      "Get an app's configuration and current state: live URL, custom hostnames, mounted volumes, whether password protection is on, latest deployment (status and error), and runtime health. Start here when checking whether an app is up.",
     inputSchema: {
       type: "object",
       properties: {
@@ -395,6 +398,34 @@ export const TOOLS = [
         volume_id: { type: "string", description: "Volume ID (from list_volumes)" },
       },
       required: ["app_id", "volume_id"],
+    },
+  },
+  {
+    name: "request_password_protection",
+    description:
+      "Ask the user to put a web app behind a password, without the password passing through you. Returns a link to a canette page where the logged-in user sets (or, if protection is already on, changes) one shared password; visitors then get a login form, and scripts can use HTTP Basic auth with any username. The link itself grants no access and changes nothing. Give the link to the user and wait until they say they are done — never ask for the password in the conversation. Then check passwordProtection with get_app and apply with redeploy_deployment.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID of a 'web' app" },
+        reason: {
+          type: "string",
+          description: `Short plain-text explanation shown to the user on the page, e.g. why the app should be protected (max ${MAX_SECRET_REQUEST_REASON} characters)`,
+        },
+      },
+      required: ["app_id"],
+    },
+  },
+  {
+    name: "disable_password_protection",
+    description:
+      "Remove password protection from an app. This makes its public URL reachable by anyone, so it is not done through MCP: the tool changes nothing and returns a link to the app's settings where the user can turn protection off themselves. Afterwards, apply the change with redeploy_deployment.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+      },
+      required: ["app_id"],
     },
   },
   {
@@ -644,9 +675,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!appId) return err("app_id is required")
         const app = await getAppById(db, appId, userId)
         if (!app) return err("App not found or access denied")
-        const [hostnames, volumes, { items }] = await Promise.all([
+        const [hostnames, volumes, passwordProtection, { items }] = await Promise.all([
           listHostnames(db, appId),
           listVolumes(db, appId),
+          getPasswordGateStatus(db, appId, userId),
           listDeployments(db, appId, 1),
         ])
         return ok({
@@ -654,6 +686,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
           hostnames: hostnames.map((h) => h.hostname),
           // A summary only: configmap content can be up to 1 MiB, list_volumes has it.
           volumes: volumes.map((v) => ({ id: v.id, name: v.name, type: v.type, mountPath: v.mountPath, size: v.config.size })),
+          passwordProtection,
           latestDeployment: items[0] ?? null,
         })
       }
@@ -734,6 +767,12 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
 
       case "request_secret":
         return await requestSecretTool(args, userId)
+
+      case "request_password_protection":
+        return await requestPasswordProtectionTool(args, userId)
+
+      case "disable_password_protection":
+        return await disablePasswordProtectionTool(args, userId)
 
       case "delete_env_var": {
         const appId = arg(args, "app_id")
@@ -867,12 +906,8 @@ async function requestSecretTool(args: Record<string, unknown>, userId: string):
     }
   }
 
-  const reasonArg = args.reason
-  if (reasonArg !== undefined && reasonArg !== null && typeof reasonArg !== "string") return err("reason must be a string")
-  const reason = (reasonArg ?? "").replace(/\s+/g, " ").trim()
-  if (reason.length > MAX_SECRET_REQUEST_REASON) {
-    return err(`reason must be at most ${MAX_SECRET_REQUEST_REASON} characters`)
-  }
+  const reason = parseReason(args)
+  if (typeof reason !== "string") return reason
 
   const app = await getAppById(db, appId, userId)
   if (!app) return err("App not found or access denied")
@@ -895,6 +930,65 @@ async function requestSecretTool(args: Record<string, unknown>, userId: string):
     note:
       "Show this link to the user and ask them to open it while logged in to canette; it only works for members of the app's team. Do not ask for the values in the conversation. When the user says they are done, call list_env_vars and check that every key is in secretKeys. Secrets take effect on the next deployment: apply them with redeploy_deployment on the app's latest live deployment (no rebuild needed), or trigger_deployment if the app has never been deployed.",
   })
+}
+
+// The agent-supplied reason shown on a request page: plain text, whitespace
+// collapsed. Returns an error result when it is invalid.
+function parseReason(args: Record<string, unknown>): string | ToolResult {
+  const reasonArg = args.reason
+  if (reasonArg !== undefined && reasonArg !== null && typeof reasonArg !== "string") return err("reason must be a string")
+  const reason = (reasonArg ?? "").replace(/\s+/g, " ").trim()
+  if (reason.length > MAX_SECRET_REQUEST_REASON) {
+    return err(`reason must be at most ${MAX_SECRET_REQUEST_REASON} characters`)
+  }
+  return reason
+}
+
+// ── Password protection ───────────────────────────────────────────────────────
+
+// Like request_secret: returns a link for the user to set the password in the
+// UI, so it never passes through the agent. Writes nothing.
+async function requestPasswordProtectionTool(args: Record<string, unknown>, userId: string): Promise<ToolResult> {
+  const appId = arg(args, "app_id")
+  if (!appId) return err("app_id is required")
+  const reason = parseReason(args)
+  if (typeof reason !== "string") return reason
+
+  const app = await getAppById(db, appId, userId)
+  if (!app) return err("App not found or access denied")
+  if (app.deploymentType !== "web") return err("Password protection is only supported for web apps")
+  const project = await getProjectByRef(db, app.projectId, userId)
+  if (!project) return err("App not found or access denied")
+
+  const { enabled } = await getPasswordGateStatus(db, appId, userId)
+  const query = reason ? `?${new URLSearchParams({ reason })}` : ""
+  const url = appUiUrl(project.slug, app.slug, `request-password-protection${query}`)
+
+  return ok({
+    url,
+    currentlyEnabled: enabled,
+    note:
+      `Show this link to the user and ask them to open it while logged in to canette; it only works for members of the app's team. ${enabled ? "Password protection is already on, so the page changes the password." : "The page turns password protection on."} Do not ask for the password in the conversation. When the user says they are done, call get_app and check passwordProtection.enabled. The change takes effect on the next deployment: apply it with redeploy_deployment on the app's latest live deployment (no rebuild needed), or trigger_deployment if the app has never been deployed.`,
+  })
+}
+
+// Removing protection makes the app's URL public, so, like deleting a
+// persistent volume, it is left to the user in the UI.
+async function disablePasswordProtectionTool(args: Record<string, unknown>, userId: string): Promise<ToolResult> {
+  const appId = arg(args, "app_id")
+  if (!appId) return err("app_id is required")
+  const app = await getAppById(db, appId, userId)
+  if (!app) return err("App not found or access denied")
+
+  const { enabled } = await getPasswordGateStatus(db, appId, userId)
+  if (!enabled) return ok({ enabled: false, note: "Password protection is not on for this app; nothing to do." })
+
+  const project = await getProjectByRef(db, app.projectId, userId)
+  if (!project) return err("App not found or access denied")
+  const url = appUiUrl(project.slug, app.slug, "settings#access")
+  return err(
+    `Removing password protection makes the app's public URL reachable by anyone, so it can't be done through MCP. Give the user this link to turn it off themselves in the app's settings: ${url}. Then apply the change with redeploy_deployment.`
+  )
 }
 
 // ── Docs (public, read-only — no DB or access checks) ─────────────────────────
