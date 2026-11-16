@@ -69,11 +69,11 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `update_app` | Change an existing app's settings, such as branch, port, image tag or its [canette.yaml config](#runtime-config-canetteyaml) — applied on the next deployment (a rebuild for source changes, a redeploy for runtime settings) |
 | `list_git_credentials` | List the Git credentials a project can use for private repositories (names and types only, never tokens or keys) |
 | `trigger_deployment` | Build and deploy an app from its source — fetches the latest commit and runs a full build for a Git app. For the first deployment and whenever the code or source changed |
-| `list_deployments` | List recent deployments for an app — use this to find a `deployment_id` when troubleshooting a deployment not triggered in this session |
+| `list_deployments` | List an app's recent deployments, newest first (10 by default, up to 100 with `limit`) — use this to find a `deployment_id` when troubleshooting a deployment not triggered in this session, or an earlier deployment to roll back to |
 | `get_deployment` | Get the status and details of a deployment — provide `app_id` for the latest, or `deployment_id` for a specific one |
-| `get_build_logs` | Fetch full build logs for a deployment — useful for diagnosing build failures |
+| `get_build_logs` | Fetch the end of a deployment's build log (the last 200 lines by default, up to 2000 with `lines`; `offset` reads further back) — useful for diagnosing build failures |
 | `redeploy_deployment` | Deploy an already-built image again, without rebuilding, using the app's current settings and environment — to apply configuration changes or to roll back |
-| `get_app` | Get an app's current state — live URL, custom hostnames, whether password protection is on, latest deployment and runtime health |
+| `get_app` | Get an app's current state — live URL, custom hostnames, whether password protection is on, the live deployment serving traffic, the latest deployment and runtime health |
 | `get_runtime_logs` | Fetch recent logs and pod status (restarts, `CrashLoopBackOff`, exit code) from the running app. Automatically returns the crashed container's logs when the app is crash-looping |
 | `get_app_metrics` | Get per-pod readiness, restarts, last termination reason (e.g. `OOMKilled`) and CPU/memory usage. Usage requires metrics-server on the cluster |
 | `list_env_vars` | List an app's environment variables and the names of its secrets (secret values are never returned) |
@@ -124,7 +124,17 @@ There are two ways for an agent to start a deployment, and the server tells the 
 - **`trigger_deployment`** builds the app from its source and then deploys it. For a Git app that means fetching the latest commit and running a full image build, which takes minutes. It is needed when the source changed: new commits, or a different repository, branch, app path, Git credential or image tag.
 - **`redeploy_deployment`** deploys an image that is already built, with the app's current settings, environment variables and secrets. It takes seconds. It is enough when only configuration changed: environment variables, secrets, port, schedule, deployment type, canette.yaml config, volumes, hostnames or password protection.
 
-Environment variables are injected when the app starts, not when it is built, so changing one never requires a rebuild. After `set_env_var`, `delete_env_var` or a runtime-only `update_app`, the tool result tells the agent to redeploy the app's latest live deployment. You should not have to spell this out in your prompt.
+Environment variables are injected when the app starts, not when it is built, so changing one never requires a rebuild. After `set_env_var`, `delete_env_var` or a runtime-only `update_app`, the tool result tells the agent to redeploy the app's live deployment: `get_app` returns it as `liveDeployment`, separately from `latestDeployment`, which can be a newer rollout that failed or hasn't finished. You should not have to spell this out in your prompt.
+
+### Errors
+
+When a tool fails, its result is marked as an error and its text is a JSON object in the same shape as the REST API's errors:
+
+```json
+{ "error": "App not found or access denied", "code": "NOT_FOUND" }
+```
+
+`error` is a human-readable message and `code` is a stable machine-readable code. Besides the codes the REST API uses (such as `CONFLICT` or `FORBIDDEN`), tools return `VALIDATION_ERROR` for invalid arguments, `NOT_FOUND` for a resource that doesn't exist or that you can't access (the two aren't distinguished, so other teams' resources stay invisible), `UNAVAILABLE` when a backing service such as the log service can't be reached, `USER_ACTION_REQUIRED` when the change is left to you and the message contains a link, and `UNKNOWN_TOOL`.
 
 ### Runtime config (canette.yaml)
 

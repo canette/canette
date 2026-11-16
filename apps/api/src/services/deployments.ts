@@ -187,6 +187,23 @@ export async function listDeployments(
   return { items, total: items.length, page: 1, pageSize: items.length }
 }
 
+// getLiveDeployment returns the deployment currently serving the app, which is
+// not necessarily its latest one: a newer rollout may still be in progress or
+// have failed. Null when the app is stopped or has never gone live. Callers
+// check access to the app.
+export async function getLiveDeployment(db: DB, appId: string): Promise<Deployment | null> {
+  const row = await db
+    .selectFrom("deployments")
+    .selectAll()
+    .where("app_id", "=", appId)
+    .where("status", "=", "live")
+    .orderBy("created_at", "desc")
+    .limit(1)
+    .executeTakeFirst()
+  if (!row) return null
+  return mapDeployment(row, await hasSbomForId(db, row.id))
+}
+
 // hasActiveDeployment returns true if the app already has an in-progress deployment.
 async function hasActiveDeployment(db: DB, appId: string): Promise<boolean> {
   const row = await db
@@ -440,22 +457,27 @@ export async function getDeploymentById(
   return mapDeployment(row, await hasSbomForId(db, row.id))
 }
 
+// Access check via deployment → app → project → membership join.
+async function canReadDeployment(db: DB, deploymentId: string, userId: string): Promise<boolean> {
+  const access = await db
+    .selectFrom("deployments as d")
+    .innerJoin("apps as a", "a.id", "d.app_id")
+    .innerJoin("projects as p_access", "p_access.id", "a.project_id")
+    .innerJoin("team_members as tm", "tm.team_id", "p_access.team_id")
+    .select("d.id")
+    .where("d.id", "=", deploymentId)
+    .where("tm.user_id", "=", userId)
+    .executeTakeFirst()
+  return !!access
+}
+
 // Verifies access itself via deployment → app → project → membership join.
 export async function getDeploymentLogs(
   db: DB,
   deploymentId: string,
   userId: string
 ): Promise<BuildLog[] | null> {
-  const access = await db
-    .selectFrom("deployments as d")
-    .innerJoin("apps as a", "a.id", "d.app_id")
-    .innerJoin("projects as p_access", "p_access.id", "a.project_id")
-    .innerJoin("team_members as tm", "tm.team_id", "p_access.team_id")
-    .select(["d.id", "d.commit_sha"])
-    .where("d.id", "=", deploymentId)
-    .where("tm.user_id", "=", userId)
-    .executeTakeFirst()
-  if (!access) return null
+  if (!(await canReadDeployment(db, deploymentId, userId))) return null
 
   const rows = await db
     .selectFrom("build_logs")
@@ -464,4 +486,34 @@ export async function getDeploymentLogs(
     .orderBy("created_at", "asc")
     .execute()
   return rows.map(mapBuildLog)
+}
+
+// getDeploymentLogTail returns up to `lines` log lines in order, counted back
+// from the end of the log after skipping the newest `skip` lines, so a caller
+// can page backwards without loading the whole log. Null without access.
+export async function getDeploymentLogTail(
+  db: DB,
+  deploymentId: string,
+  userId: string,
+  { lines, skip = 0 }: { lines: number; skip?: number }
+): Promise<{ items: BuildLog[]; total: number } | null> {
+  if (!(await canReadDeployment(db, deploymentId, userId))) return null
+
+  const [{ total }, rows] = await Promise.all([
+    db
+      .selectFrom("build_logs")
+      .select((eb) => eb.fn.countAll<number>().as("total"))
+      .where("deployment_id", "=", deploymentId)
+      .executeTakeFirstOrThrow(),
+    db
+      .selectFrom("build_logs")
+      .selectAll()
+      .where("deployment_id", "=", deploymentId)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .limit(lines)
+      .offset(skip)
+      .execute(),
+  ])
+  return { items: rows.reverse().map(mapBuildLog), total: Number(total) }
 }

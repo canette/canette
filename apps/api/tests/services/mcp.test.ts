@@ -641,6 +641,167 @@ describe("services/mcp runtime diagnostics", () => {
       }
     })
   })
+
+  describe("errors", () => {
+    function error(result: Awaited<ReturnType<typeof handleTool>>) {
+      expect(result.isError).toBe(true)
+      return JSON.parse(text(result)) as { error: string; code: string }
+    }
+
+    it("reports invalid arguments as VALIDATION_ERROR", async () => {
+      expect(error(await handleTool("get_app", {}, "userId"))).toEqual({ error: "app_id is required", code: "VALIDATION_ERROR" })
+    })
+
+    it("reports a missing and an inaccessible app identically", async () => {
+      const missing = error(await handleTool("get_app", { app_id: "00000000-0000-0000-0000-000000000000" }, "userId"))
+      const denied = error(await handleTool("get_app", { app_id: appId }, "outsiderId"))
+      expect(missing).toEqual({ error: "App not found or access denied", code: "NOT_FOUND" })
+      expect(denied).toEqual(missing)
+    })
+
+    it("keeps a service error's own code", async () => {
+      const result = error(await handleTool("create_app", {
+        project_id: "11111111-2222-3333-4444-555555555555", name: "web", slug: "web", source_type: "git", git_url: "https://github.com/example/repo",
+      }, "userId"))
+      expect(result.code).toBe("CONFLICT")
+      expect(result.error).toBe("An app with that slug already exists in this project")
+    })
+
+    it("reports an unknown tool and an unreachable backing service", async () => {
+      expect(error(await handleTool("no_such_tool", {}, "userId")).code).toBe("UNKNOWN_TOOL")
+      stubLogstreamer({ error: "boom" }, 500)
+      expect(error(await handleTool("get_app_metrics", { app_id: appId }, "userId")).code).toBe("UNAVAILABLE")
+    })
+  })
+
+  describe("deployments", () => {
+    const PROJECT_ID = "11111111-2222-3333-4444-555555555555"
+    let depAppId: string
+    let seq = 0
+
+    // Inserts a deployment created `seq` seconds after the previous one, so
+    // newest-first ordering is deterministic.
+    async function insertDeployment(app: string, status: "live" | "failed" | "building" | "stopped") {
+      const id = crypto.randomUUID()
+      const at = new Date(Date.UTC(2026, 0, 1, 0, 0, seq++)).toISOString()
+      await db.insertInto("deployments").values({
+        id, app_id: app, status, commit_sha: "abc123", image_digest: status === "building" ? null : "sha256:abc",
+        created_at: at, updated_at: at,
+      }).execute()
+      return id
+    }
+
+    beforeAll(async () => {
+      const app = await createApp(db, PROJECT_ID, "userId", {
+        name: "deploys", slug: "deploys", sourceType: "git", gitUrl: "https://github.com/example/repo",
+      })
+      depAppId = app.id
+    })
+
+    it("get_app returns the live deployment separately from a newer failed or unfinished one", async () => {
+      await insertDeployment(depAppId, "stopped")
+      const live = await insertDeployment(depAppId, "live")
+      await insertDeployment(depAppId, "failed")
+      const building = await insertDeployment(depAppId, "building")
+
+      const body = JSON.parse(text(await handleTool("get_app", { app_id: depAppId }, "userId")))
+      expect(body.liveDeployment.id).toBe(live)
+      expect(body.liveDeployment.status).toBe("live")
+      expect(body.latestDeployment.id).toBe(building)
+    })
+
+    it("get_app returns a null live deployment for a stopped app", async () => {
+      const stopped = await createApp(db, PROJECT_ID, "userId", {
+        name: "stopped", slug: "stopped", sourceType: "git", gitUrl: "https://github.com/example/repo",
+      })
+      const id = await insertDeployment(stopped.id, "stopped")
+
+      const body = JSON.parse(text(await handleTool("get_app", { app_id: stopped.id }, "userId")))
+      expect(body.liveDeployment).toBeNull()
+      expect(body.latestDeployment.id).toBe(id)
+    })
+
+    it("list_deployments defaults to 10, accepts a limit and caps it at 100", async () => {
+      const app = await createApp(db, PROJECT_ID, "userId", {
+        name: "history", slug: "history", sourceType: "git", gitUrl: "https://github.com/example/repo",
+      })
+      for (let i = 0; i < 105; i++) await insertDeployment(app.id, "stopped")
+
+      const list = async (args: Record<string, unknown>) => {
+        const result = await handleTool("list_deployments", { app_id: app.id, ...args }, "userId")
+        expect(result.isError).toBeUndefined()
+        return JSON.parse(text(result)) as { createdAt: string }[]
+      }
+      expect(await list({})).toHaveLength(10)
+      expect(await list({ limit: 25 })).toHaveLength(25)
+      expect(await list({ limit: 1000 })).toHaveLength(100)
+      const items = await list({ limit: 3 })
+      expect(items[0]!.createdAt > items[1]!.createdAt).toBe(true)
+
+      for (const limit of [0, -1, "many"]) {
+        expect((await handleTool("list_deployments", { app_id: app.id, limit }, "userId")).isError).toBe(true)
+      }
+      expect((await handleTool("list_deployments", { app_id: app.id }, "outsiderId")).isError).toBe(true)
+    })
+
+    describe("get_build_logs", () => {
+      let deploymentId: string
+
+      beforeAll(async () => {
+        deploymentId = await insertDeployment(depAppId, "failed")
+        const base = Date.UTC(2026, 1, 1)
+        await db.insertInto("build_logs").values(
+          Array.from({ length: 250 }, (_, i) => ({
+            id: crypto.randomUUID(), deployment_id: deploymentId, line: `line ${i + 1}`, stream: "stdout",
+            created_at: new Date(base + i).toISOString(),
+          }))
+        ).execute()
+      })
+
+      const logs = async (args: Record<string, unknown>) => {
+        const result = await handleTool("get_build_logs", { deployment_id: deploymentId, ...args }, "userId")
+        expect(result.isError).toBeUndefined()
+        return text(result).split("\n")
+      }
+
+      it("returns the last 200 lines in order, with a header saying how to read further back", async () => {
+        const lines = await logs({})
+        expect(lines[0]).toBe("[Showing lines 51-250 of 250. For the 50 lines before these, call again with offset 200.]")
+        expect(lines[1]).toBe("line 51")
+        expect(lines.at(-1)).toBe("line 250")
+        expect(lines).toHaveLength(201)
+      })
+
+      it("pages back with offset and returns the whole log without a header when it fits", async () => {
+        const older = await logs({ offset: 200 })
+        expect(older[0]).toBe("[Showing lines 1-50 of 250.]")
+        expect(older.slice(1)).toEqual(Array.from({ length: 50 }, (_, i) => `line ${i + 1}`))
+
+        const window = await logs({ lines: 10, offset: 5 })
+        expect(window[0]).toBe("[Showing lines 236-245 of 250. For the 235 lines before these, call again with offset 15.]")
+
+        const all = await logs({ lines: 5000 })
+        expect(all).toHaveLength(250)
+        expect(all[0]).toBe("line 1")
+      })
+
+      it("rejects invalid arguments, an offset past the start and other teams", async () => {
+        for (const args of [{ lines: 0 }, { lines: "x" }, { offset: -1 }, { offset: 250 }]) {
+          const result = await handleTool("get_build_logs", { deployment_id: deploymentId, ...args }, "userId")
+          expect(JSON.parse(text(result)).code).toBe("VALIDATION_ERROR")
+        }
+        const outsider = await handleTool("get_build_logs", { deployment_id: deploymentId }, "outsiderId")
+        expect(JSON.parse(text(outsider)).code).toBe("NOT_FOUND")
+      })
+
+      it("explains a deployment with no build logs", async () => {
+        const empty = await insertDeployment(depAppId, "live")
+        const result = await handleTool("get_build_logs", { deployment_id: empty }, "userId")
+        expect(result.isError).toBeUndefined()
+        expect(text(result)).toContain("No build logs found")
+      })
+    })
+  })
 })
 
 describe("services/mcp docs", () => {
