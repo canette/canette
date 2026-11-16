@@ -25,9 +25,10 @@ import { listHostnames } from "./hostnames"
 import { listEnvVars, upsertEnvVar, deleteEnvVar, MAX_ENV_VALUE_BYTES } from "./env-vars"
 import { listSecrets, validateSecretKey } from "./secrets"
 import { listTeamCredentials } from "./git-credentials"
+import { listVolumes, createVolume, updateVolume, deleteVolume } from "./volumes"
 import { getAppPodTarget } from "./app-logs"
 import { fetchFromLogstreamer } from "./logstreamer"
-import type { AppDeploymentType, AppMetricsUsage, AppRuntimeLogs, AppSourceType } from "@canette/types"
+import type { AppDeploymentType, AppMetricsUsage, AppRuntimeLogs, AppSourceType, VolumeConfig, VolumeType } from "@canette/types"
 
 const DEFAULT_LOG_LINES = 100
 const MAX_LOG_LINES = 1000
@@ -68,6 +69,10 @@ const REBUILD_NOTE =
 // else (name, port, schedule, deployment type) is applied at deploy time only.
 const SOURCE_ARGS = ["source_type", "git_url", "git_branch", "app_path", "image_url", "image_tag", "git_credential_id"]
 
+// Which volume type to pick is the part an agent can't infer from the schema.
+const VOLUME_TYPES_NOTE =
+  "Types: 'pvc' is a persistent disk that survives restarts and redeploys (databases, SQLite files, uploads); it requires size, locks the app to 1 replica, makes every deploy stop the old pod before starting the new one (brief downtime), and cannot be resized or changed later. 'emptyDir' is scratch space that is wiped whenever the pod restarts; size is an optional limit. 'configmap' mounts a single file with the given content at exactly mount_path (e.g. /etc/nginx/nginx.conf); the content is stored in plaintext and readable by the whole team, so never put secrets in it (use request_secret). Directory mounts over system paths (/etc, /usr, /var, ...) are rejected: use a path like /data."
+
 // Sent to the client at initialize, alongside the per-tool descriptions.
 const SERVER_INSTRUCTIONS = [
   "canette builds apps from Git into an image and deploys that image. There are two ways to start a deployment, and picking the right one matters:",
@@ -75,6 +80,7 @@ const SERVER_INSTRUCTIONS = [
   "- redeploy_deployment deploys an already-built image again (seconds) with the app's current settings, env vars and secrets. Use it when only configuration changed: env vars, secrets, port, schedule, deployment type, canette.yaml config, volumes, hostnames or password protection. Env vars are injected at runtime, not at build time, so a rebuild is never needed for them.",
   "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's latest live deployment.",
   "Runtime config such as resources, replicas, healthcheck, ingress and security lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
+  "Mounted volumes (persistent disks, scratch space, single config files) are managed with list_volumes, create_volume, update_volume and delete_volume, and applied with redeploy_deployment. Add a volume an app needs before its first deployment. Persistent volumes (pvc) cannot be deleted through these tools, because that destroys their data: delete_volume returns a link for the user to delete it themselves.",
   "To harden an app (non-root user, read-only root filesystem, no capabilities), set security.hardened: true in its canette.yaml after reading security/hardened-mode with get_docs_page: check that the image doesn't need root at startup and listens on a port of 1024 or higher (lower ports only work on some clusters), and list the directories it writes to in security.writable_paths. If you also change the Dockerfile, use trigger_deployment instead of redeploy_deployment.",
   "Never ask the user to paste a password, token, API key or connection string into the conversation, and never store one with set_env_var. Call request_secret instead: it returns a canette link where the user enters the value themselves, so it never reaches you.",
   "Before writing a canette.yaml or canette-template.yaml, or setting canette_config, read configuration/canette-yaml (and configuration/templates for templates) with get_docs_page, and check field names and values against get_canette_yaml_schema. Use search_docs for anything else about canette. These docs match the version of this canette instance, so prefer them over other sources.",
@@ -123,7 +129,7 @@ export const TOOLS = [
   {
     name: "create_app",
     description:
-      "Create a new app within a project, built from a Git repository (default) or run from a prebuilt Docker image. For a private repository, pass a git_credential_id from list_git_credentials. Does not deploy — call trigger_deployment afterwards.",
+      "Create a new app within a project, built from a Git repository (default) or run from a prebuilt Docker image. For a private repository, pass a git_credential_id from list_git_credentials. Does not deploy — call trigger_deployment afterwards. If the app needs storage (e.g. a persistent disk for a database), add it with create_volume before the first trigger_deployment.",
     inputSchema: {
       type: "object",
       properties: {
@@ -237,7 +243,7 @@ export const TOOLS = [
   {
     name: "get_app",
     description:
-      "Get an app's configuration and current state: live URL, custom hostnames, latest deployment (status and error), and runtime health. Start here when checking whether an app is up.",
+      "Get an app's configuration and current state: live URL, custom hostnames, mounted volumes, latest deployment (status and error), and runtime health. Start here when checking whether an app is up.",
     inputSchema: {
       type: "object",
       properties: {
@@ -336,6 +342,59 @@ export const TOOLS = [
         key: { type: "string", description: "Variable name" },
       },
       required: ["app_id", "key"],
+    },
+  },
+  {
+    name: "list_volumes",
+    description:
+      "List an app's mounted volumes: ID, name, type (pvc, emptyDir or configmap), mount path and config (size, or the file content for a configmap).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+      },
+      required: ["app_id"],
+    },
+  },
+  {
+    name: "create_volume",
+    description: `Mount a volume into an app's container. ${VOLUME_TYPES_NOTE} ${REDEPLOY_NOTE}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        type: { type: "string", enum: ["pvc", "emptyDir", "configmap"], description: "Volume type" },
+        mount_path: { type: "string", description: "Absolute path in the container: a directory for pvc and emptyDir, the file itself for configmap" },
+        size: { type: "string", description: "Kubernetes quantity, e.g. '5Gi' or '500Mi': required for pvc, an optional limit for emptyDir" },
+        content: { type: "string", description: "File content (max 1 MiB) — required for configmap" },
+      },
+      required: ["app_id", "type", "mount_path"],
+    },
+  },
+  {
+    name: "update_volume",
+    description: `Change a volume's config: the file content of a configmap, or the size limit of an emptyDir. A pvc cannot be changed after creation. The type and mount path can't be changed: delete the volume and create a new one instead. ${REDEPLOY_NOTE}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        volume_id: { type: "string", description: "Volume ID (from list_volumes)" },
+        size: { type: ["string", "null"], description: "emptyDir only: new size limit, e.g. '1Gi'. Pass null or an empty string to remove the limit" },
+        content: { type: "string", description: "configmap only: the new file content, replacing the old one (max 1 MiB)" },
+      },
+      required: ["app_id", "volume_id"],
+    },
+  },
+  {
+    name: "delete_volume",
+    description: `Remove an emptyDir or configmap volume from an app. Persistent volumes (pvc) cannot be deleted with this tool, because that permanently deletes their data: for a pvc it returns a link to the app's settings, where the user can delete it themselves. Give the user that link and don't look for another way to delete it. ${REDEPLOY_NOTE}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string", description: "App ID" },
+        volume_id: { type: "string", description: "Volume ID (from list_volumes)" },
+      },
+      required: ["app_id", "volume_id"],
     },
   },
   {
@@ -585,11 +644,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!appId) return err("app_id is required")
         const app = await getAppById(db, appId, userId)
         if (!app) return err("App not found or access denied")
-        const [hostnames, { items }] = await Promise.all([
+        const [hostnames, volumes, { items }] = await Promise.all([
           listHostnames(db, appId),
+          listVolumes(db, appId),
           listDeployments(db, appId, 1),
         ])
-        return ok({ ...app, hostnames: hostnames.map((h) => h.hostname), latestDeployment: items[0] ?? null })
+        return ok({
+          ...app,
+          hostnames: hostnames.map((h) => h.hostname),
+          // A summary only: configmap content can be up to 1 MiB, list_volumes has it.
+          volumes: volumes.map((v) => ({ id: v.id, name: v.name, type: v.type, mountPath: v.mountPath, size: v.config.size })),
+          latestDeployment: items[0] ?? null,
+        })
       }
 
       case "get_runtime_logs": {
@@ -681,6 +747,50 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         return ok({ deleted: key, note: REDEPLOY_NOTE })
       }
 
+      case "list_volumes": {
+        const appId = arg(args, "app_id")
+        if (!appId) return err("app_id is required")
+        const app = await getAppById(db, appId, userId)
+        if (!app) return err("App not found or access denied")
+        return ok(await listVolumes(db, appId))
+      }
+
+      case "create_volume": {
+        const appId = arg(args, "app_id")
+        const type = arg(args, "type")
+        const mountPath = arg(args, "mount_path")
+        if (!appId) return err("app_id is required")
+        if (!type) return err("type is required")
+        if (!mountPath) return err("mount_path is required")
+        const app = await getAppById(db, appId, userId)
+        if (!app) return err("App not found or access denied")
+        const volume = await createVolume(db, appId, userId, {
+          type: type as VolumeType,
+          mountPath,
+          config: { size: arg(args, "size"), content: arg(args, "content") },
+        })
+        return ok({ ...volume, note: REDEPLOY_NOTE })
+      }
+
+      case "update_volume": {
+        const appId = arg(args, "app_id")
+        const volumeId = arg(args, "volume_id")
+        if (!appId) return err("app_id is required")
+        if (!volumeId) return err("volume_id is required")
+        const app = await getAppById(db, appId, userId)
+        if (!app) return err("App not found or access denied")
+        if (!(await listVolumes(db, appId)).some((v) => v.id === volumeId)) return err("Volume not found on this app")
+        // The service only touches size when the key is present; null clears it.
+        const config: VolumeConfig = {}
+        if ("size" in args) config.size = arg(args, "size") ?? ""
+        if ("content" in args) config.content = arg(args, "content")
+        const volume = await updateVolume(db, appId, volumeId, userId, { config })
+        return ok({ ...volume, note: REDEPLOY_NOTE })
+      }
+
+      case "delete_volume":
+        return await deleteVolumeTool(args, userId)
+
       case "search_docs":
         return searchDocsTool(args)
 
@@ -697,6 +807,39 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
     if (e instanceof ServiceError) return err(e.message)
     throw e
   }
+}
+
+// A link to one of the app's pages in the UI, e.g. "settings#volumes".
+function appUiUrl(projectSlug: string, appSlug: string, path: string): string {
+  const uiUrl = (process.env.UI_URL ?? "http://localhost:3000").replace(/\/$/, "")
+  return `${uiUrl}/dashboard/projects/${encodeURIComponent(projectSlug)}/apps/${encodeURIComponent(appSlug)}/${path}`
+}
+
+// ── Volumes ───────────────────────────────────────────────────────────────────
+
+// Deleting a PVC deletes its data for good, so that is left to the user in the
+// UI. emptyDir and configmap volumes hold nothing that isn't recreated.
+async function deleteVolumeTool(args: Record<string, unknown>, userId: string): Promise<ToolResult> {
+  const appId = arg(args, "app_id")
+  const volumeId = arg(args, "volume_id")
+  if (!appId) return err("app_id is required")
+  if (!volumeId) return err("volume_id is required")
+  const app = await getAppById(db, appId, userId)
+  if (!app) return err("App not found or access denied")
+  const volume = (await listVolumes(db, appId)).find((v) => v.id === volumeId)
+  if (!volume) return err("Volume not found on this app")
+
+  if (volume.type === "pvc") {
+    const project = await getProjectByRef(db, app.projectId, userId)
+    if (!project) return err("App not found or access denied")
+    const url = appUiUrl(project.slug, app.slug, "settings#volumes")
+    return err(
+      `'${volume.name}' (${volume.mountPath}) is a persistent volume, and deleting it permanently deletes its data. Persistent volumes can't be deleted through MCP. Give the user this link to delete it themselves in the app's settings: ${url}`
+    )
+  }
+
+  await deleteVolume(db, appId, volumeId, userId)
+  return ok({ deleted: volume.name, note: REDEPLOY_NOTE })
 }
 
 // ── Secret requests ───────────────────────────────────────────────────────────
@@ -742,10 +885,9 @@ async function requestSecretTool(args: Record<string, unknown>, userId: string):
   const status = (key: string): SecretRequestStatus =>
     secretKeys.has(key) ? "replaces_secret" : envKeys.has(key) ? "replaces_env_var" : "new"
 
-  const uiUrl = (process.env.UI_URL ?? "http://localhost:3000").replace(/\/$/, "")
   const query = new URLSearchParams({ keys: keys.join(",") })
   if (reason) query.set("reason", reason)
-  const url = `${uiUrl}/dashboard/projects/${encodeURIComponent(project.slug)}/apps/${encodeURIComponent(app.slug)}/request-secrets?${query}`
+  const url = appUiUrl(project.slug, app.slug, `request-secrets?${query}`)
 
   return ok({
     url,

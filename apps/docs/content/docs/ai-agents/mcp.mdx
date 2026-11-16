@@ -80,6 +80,10 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `set_env_var` | Create or update a plaintext environment variable — applied on the next deployment, a redeploy is enough |
 | `delete_env_var` | Delete an environment variable — applied on the next deployment, a redeploy is enough |
 | `request_secret` | Ask you to enter one or more secrets on a canette page, so the values never pass through the agent ([details](#secrets)) |
+| `list_volumes` | List an app's mounted volumes with their type, mount path and config |
+| `create_volume` | Mount a persistent volume, an emptyDir or a ConfigMap file into an app ([details](#volumes)) |
+| `update_volume` | Change a ConfigMap's file content or an emptyDir's size limit |
+| `delete_volume` | Remove an emptyDir or ConfigMap volume. Persistent volumes are left to you ([details](#volumes)) |
 | `search_docs` | Search the canette documentation and return the best-matching sections with their page path |
 | `get_docs_page` | Get one documentation page as markdown, e.g. `configuration/canette-yaml` |
 | `get_canette_yaml_schema` | Get the JSON Schema for `canette.yaml` or `canette-template.yaml`: every field with its type, allowed values and description |
@@ -98,6 +102,12 @@ You open the link, enter the values and save. They go straight to canette, encry
 - The reason is written by the agent. canette shows it as plain text, labelled as coming from the agent. Check that the request makes sense before you enter a value.
 - If a name already exists as a secret, saving replaces its value. If it exists as a plain environment variable, the page offers to convert it to a secret and deletes the plaintext value.
 - Secrets can't be deleted through MCP. Delete them under **Settings → Environment**.
+
+### Volumes
+
+Agents can add all three [volume types](/docs/configuration/volumes) with `create_volume`: a Persistent Volume for data that must survive restarts, an emptyDir for scratch space, or a ConfigMap to mount a single file. The tool descriptions explain the trade-offs to the agent, including that a Persistent Volume locks the app to one replica. Like other configuration changes, a volume change takes effect on the next deployment, and a redeploy is enough.
+
+Agents can't delete a Persistent Volume, because that permanently deletes its data. When an agent tries, `delete_volume` refuses and returns a link to the app's **Settings → Volumes** section, where you can delete it yourself. emptyDir and ConfigMap volumes hold nothing that isn't recreated on the next deployment, so agents can delete those.
 
 ### Rebuild or redeploy
 
