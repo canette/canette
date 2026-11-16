@@ -73,7 +73,7 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `get_deployment` | Get the status and details of a deployment — provide `app_id` for the latest, or `deployment_id` for a specific one |
 | `get_build_logs` | Fetch full build logs for a deployment — useful for diagnosing build failures |
 | `redeploy_deployment` | Deploy an already-built image again, without rebuilding, using the app's current settings and environment — to apply configuration changes or to roll back |
-| `get_app` | Get an app's current state — live URL, custom hostnames, latest deployment and runtime health |
+| `get_app` | Get an app's current state — live URL, custom hostnames, whether password protection is on, latest deployment and runtime health |
 | `get_runtime_logs` | Fetch recent logs and pod status (restarts, `CrashLoopBackOff`, exit code) from the running app. Automatically returns the crashed container's logs when the app is crash-looping |
 | `get_app_metrics` | Get per-pod readiness, restarts, last termination reason (e.g. `OOMKilled`) and CPU/memory usage. Usage requires metrics-server on the cluster |
 | `list_env_vars` | List an app's environment variables and the names of its secrets (secret values are never returned) |
@@ -84,6 +84,8 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `create_volume` | Mount a persistent volume, an emptyDir or a ConfigMap file into an app ([details](#volumes)) |
 | `update_volume` | Change a ConfigMap's file content or an emptyDir's size limit |
 | `delete_volume` | Remove an emptyDir or ConfigMap volume. Persistent volumes are left to you ([details](#volumes)) |
+| `request_password_protection` | Ask you to set a password for a web app on a canette page, so the password never passes through the agent ([details](#password-protection)) |
+| `disable_password_protection` | Removing password protection is left to you: returns a link to the app's settings ([details](#password-protection)) |
 | `search_docs` | Search the canette documentation and return the best-matching sections with their page path |
 | `get_docs_page` | Get one documentation page as markdown, e.g. `configuration/canette-yaml` |
 | `get_canette_yaml_schema` | Get the JSON Schema for `canette.yaml` or `canette-template.yaml`: every field with its type, allowed values and description |
@@ -108,6 +110,12 @@ You open the link, enter the values and save. They go straight to canette, encry
 Agents can add all three [volume types](/docs/configuration/volumes) with `create_volume`: a Persistent Volume for data that must survive restarts, an emptyDir for scratch space, or a ConfigMap to mount a single file. The tool descriptions explain the trade-offs to the agent, including that a Persistent Volume locks the app to one replica. Like other configuration changes, a volume change takes effect on the next deployment, and a redeploy is enough.
 
 Agents can't delete a Persistent Volume, because that permanently deletes its data. When an agent tries, `delete_volume` refuses and returns a link to the app's **Settings → Volumes** section, where you can delete it yourself. emptyDir and ConfigMap volumes hold nothing that isn't recreated on the next deployment, so agents can delete those.
+
+### Password protection
+
+Agents can put a web app behind [password protection](/docs/configuration/password-protection) without seeing the password. `request_password_protection` works like `request_secret`: it returns a link to a canette page, with an optional reason from the agent, where you set the password yourself. If protection is already on, the same page changes the password. When you tell the agent you're done, it checks `get_app` and redeploys the app.
+
+Agents can't turn protection off, because that makes the app's URL public. `disable_password_protection` changes nothing and returns a link to the app's **Settings → Password protection** section, where you can turn it off yourself.
 
 ### Rebuild or redeploy
 

@@ -29,6 +29,8 @@ Every app has a **deployment type** that controls what Kubernetes resources are 
 
 Set the deployment type in the **Visibility** toggle on the app creation or settings page. It can also be set via `deployment_type` in a [template](/docs/configuration/templates), or `web`/`private` overridden per-deployment by setting `ingress.enabled: false` in [`canette.yaml`](/docs/configuration/canette-yaml).
 
+A Public app can be put behind a shared password with [password protection](/docs/configuration/password-protection).
+
 Use **Private** for databases, internal APIs, message brokers, or any service that should not be exposed through the gateway. Use **Scheduled** for batch jobs, cleanup tasks, or anything that should run on a cron schedule instead of serving traffic — it requires a `schedule` (a standard 5-field cron expression, e.g. `0 2 * * *`, or a predefined schedule like `@daily`) and does not accept a `port` — canette does not inject `PORT` into scheduled apps since there's no server to listen on.
 
 <Callout type="info">
