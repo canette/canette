@@ -16,8 +16,9 @@ import { listApps, createApp, updateApp, getAppById } from "./apps"
 import {
   createDeployment,
   listDeployments,
-  getDeploymentLogs,
+  getDeploymentLogTail,
   getDeploymentById,
+  getLiveDeployment,
   redeployDeployment,
 } from "./deployments"
 import { listTeams } from "./teams"
@@ -29,10 +30,14 @@ import { listVolumes, createVolume, updateVolume, deleteVolume } from "./volumes
 import { getPasswordGateStatus } from "./password-gate"
 import { getAppPodTarget } from "./app-logs"
 import { fetchFromLogstreamer } from "./logstreamer"
-import type { AppDeploymentType, AppMetricsUsage, AppRuntimeLogs, AppSourceType, VolumeConfig, VolumeType } from "@canette/types"
+import type { AppDeploymentType, AppMetricsUsage, BuildLog, AppRuntimeLogs, AppSourceType, VolumeConfig, VolumeType } from "@canette/types"
 
 const DEFAULT_LOG_LINES = 100
 const MAX_LOG_LINES = 1000
+const DEFAULT_BUILD_LOG_LINES = 200
+const MAX_BUILD_LOG_LINES = 2000
+const DEFAULT_DEPLOYMENTS = 10
+const MAX_DEPLOYMENTS = 100
 
 // request_secret limits (the reason limit also applies to
 // request_password_protection). The UI pages apply the same ones, since the
@@ -63,7 +68,7 @@ const APP_SOURCE_PROPERTIES = {
 // redeploying the existing image is enough, while trigger_deployment runs a
 // full build for a Git app. Agents default to the latter unless told otherwise.
 const REDEPLOY_NOTE =
-  "Takes effect on the next deployment. This change does not need a new build: apply it with redeploy_deployment on the app's latest live deployment (get_app or list_deployments gives the ID), which reuses the built image. Only use trigger_deployment if the app has no deployment with a built image yet."
+  "Takes effect on the next deployment. This change does not need a new build: apply it with redeploy_deployment on the app's live deployment (get_app's liveDeployment.id), which reuses the built image. If liveDeployment is null, redeploy the latest deployment that has a built image. Only use trigger_deployment if the app has no deployment with a built image yet."
 const REBUILD_NOTE =
   "Takes effect on the next deployment. This changes what the app is built or run from, so call trigger_deployment to apply it."
 
@@ -80,7 +85,7 @@ const SERVER_INSTRUCTIONS = [
   "canette builds apps from Git into an image and deploys that image. There are two ways to start a deployment, and picking the right one matters:",
   "- trigger_deployment fetches the latest commit and runs a full build (minutes) before deploying. Use it when the source changed: new commits, or a different repository, branch, app path, credential or image tag. Also use it for an app's first deployment.",
   "- redeploy_deployment deploys an already-built image again (seconds) with the app's current settings, env vars and secrets. Use it when only configuration changed: env vars, secrets, port, schedule, deployment type, canette.yaml config, volumes, hostnames or password protection. Env vars are injected at runtime, not at build time, so a rebuild is never needed for them.",
-  "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's latest live deployment.",
+  "Do not rebuild just to apply a configuration change. To redeploy, pass the ID of the app's live deployment: get_app's liveDeployment, not latestDeployment, which may be a failed or unfinished rollout.",
   "Runtime config such as resources, replicas, healthcheck, ingress and security lives in the app's canette.yaml. Change it with update_app's canette_config, then redeploy_deployment.",
   "Mounted volumes (persistent disks, scratch space, single config files) are managed with list_volumes, create_volume, update_volume and delete_volume, and applied with redeploy_deployment. Add a volume an app needs before its first deployment. Persistent volumes (pvc) cannot be deleted through these tools, because that destroys their data: delete_volume returns a link for the user to delete it themselves.",
   "To harden an app (non-root user, read-only root filesystem, no capabilities), set security.hardened: true in its canette.yaml after reading security/hardened-mode with get_docs_page: check that the image doesn't need root at startup and listens on a port of 1024 or higher (lower ports only work on some clusters), and list the directories it writes to in security.writable_paths. If you also change the Dockerfile, use trigger_deployment instead of redeploy_deployment.",
@@ -154,7 +159,7 @@ export const TOOLS = [
   {
     name: "update_app",
     description:
-      "Change an existing app's settings, such as its branch, port or image tag. Only the fields you pass are changed. Takes effect on the next deployment: after changing the source (repository, branch, app path, credential, image) call trigger_deployment; after changing only runtime settings (port, schedule, deployment type, name, canette_config) call redeploy_deployment on the latest live deployment instead, which skips the build.",
+      "Change an existing app's settings, such as its branch, port or image tag. Only the fields you pass are changed. Takes effect on the next deployment: after changing the source (repository, branch, app path, credential, image) call trigger_deployment; after changing only runtime settings (port, schedule, deployment type, name, canette_config) call redeploy_deployment on the live deployment (get_app's liveDeployment) instead, which skips the build.",
     inputSchema: {
       type: "object",
       properties: {
@@ -200,11 +205,12 @@ export const TOOLS = [
   },
   {
     name: "list_deployments",
-    description: "List the 10 most recent deployments for an app. Use this to find a deployment_id when troubleshooting a failed deployment that was not triggered by this session.",
+    description: `List an app's most recent deployments, newest first (${DEFAULT_DEPLOYMENTS} by default). Use this to find a deployment_id when troubleshooting a failed deployment that was not triggered by this session, or an earlier live deployment to roll back to.`,
     inputSchema: {
       type: "object",
       properties: {
         app_id: { type: "string", description: "App ID" },
+        limit: { type: "number", description: `How many deployments to return (default ${DEFAULT_DEPLOYMENTS}, max ${MAX_DEPLOYMENTS})` },
       },
       required: ["app_id"],
     },
@@ -222,11 +228,13 @@ export const TOOLS = [
   },
   {
     name: "get_build_logs",
-    description: "Retrieve build logs for a deployment. Useful for diagnosing build failures.",
+    description: `Retrieve the end of a deployment's build log (the last ${DEFAULT_BUILD_LOG_LINES} lines by default), where a build failure is usually reported. When the log is longer, the first line of the result says which lines are shown and the offset to pass for the lines before them.`,
     inputSchema: {
       type: "object",
       properties: {
         deployment_id: { type: "string", description: "Deployment ID" },
+        lines: { type: "number", description: `Number of lines to return (default ${DEFAULT_BUILD_LOG_LINES}, max ${MAX_BUILD_LOG_LINES})` },
+        offset: { type: "number", description: "Number of lines to skip from the end of the log, to read further back (default 0)" },
       },
       required: ["deployment_id"],
     },
@@ -234,11 +242,11 @@ export const TOOLS = [
   {
     name: "redeploy_deployment",
     description:
-      "Deploy an already-built image again, without rebuilding (seconds instead of minutes). Creates a new deployment that uses the given deployment's image with the app's CURRENT settings, env vars and secrets. Two uses: (1) apply configuration changes — after set_env_var, delete_env_var, a secret change or a runtime-only update_app, pass the app's latest live deployment; (2) roll back — pass an earlier deployment that was live. Use list_deployments to find the ID. Only works for deployments that have a built image and are live, stopped or failed.",
+      "Deploy an already-built image again, without rebuilding (seconds instead of minutes). Creates a new deployment that uses the given deployment's image with the app's CURRENT settings, env vars and secrets. Two uses: (1) apply configuration changes — after set_env_var, delete_env_var, a secret change or a runtime-only update_app, pass the app's live deployment (get_app's liveDeployment); (2) roll back — pass an earlier deployment that was live (list_deployments). A rollback restores the earlier image only: the new deployment still uses the current settings, env vars and secrets, not the ones the earlier deployment had. Only works for deployments that have a built image and are live, stopped or failed.",
     inputSchema: {
       type: "object",
       properties: {
-        deployment_id: { type: "string", description: "ID of the deployment whose image should be deployed again: the latest live one to apply configuration changes, an earlier one to roll back" },
+        deployment_id: { type: "string", description: "ID of the deployment whose image should be deployed again: the live one (get_app's liveDeployment) to apply configuration changes, an earlier live one to roll back" },
       },
       required: ["deployment_id"],
     },
@@ -246,7 +254,7 @@ export const TOOLS = [
   {
     name: "get_app",
     description:
-      "Get an app's configuration and current state: live URL, custom hostnames, mounted volumes, whether password protection is on, latest deployment (status and error), and runtime health. Start here when checking whether an app is up.",
+      "Get an app's configuration and current state: live URL, custom hostnames, mounted volumes, whether password protection is on, the live deployment (the one serving traffic, null when the app is stopped or has never gone live) and the latest deployment (status and error; it may be a newer rollout that is still in progress or failed). Start here when checking whether an app is up.",
     inputSchema: {
       type: "object",
       properties: {
@@ -300,7 +308,7 @@ export const TOOLS = [
   {
     name: "set_env_var",
     description:
-      "Create or update a plaintext environment variable on an app. Takes effect on the next deployment; env vars are injected at runtime, so apply the change with redeploy_deployment on the latest live deployment, not trigger_deployment (no rebuild needed). Do NOT use this for secrets (passwords, tokens, API keys, connection strings with credentials): values are stored unencrypted and are readable by the whole team. Use request_secret for those instead.",
+      "Create or update a plaintext environment variable on an app. Takes effect on the next deployment; env vars are injected at runtime, so apply the change with redeploy_deployment on the live deployment (get_app's liveDeployment), not trigger_deployment (no rebuild needed). Do NOT use this for secrets (passwords, tokens, API keys, connection strings with credentials): values are stored unencrypted and are readable by the whole team. Use request_secret for those instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -337,7 +345,7 @@ export const TOOLS = [
   {
     name: "delete_env_var",
     description:
-      "Delete an environment variable from an app. Takes effect on the next deployment; apply it with redeploy_deployment on the latest live deployment, not trigger_deployment (no rebuild needed). Cannot delete secrets.",
+      "Delete an environment variable from an app. Takes effect on the next deployment; apply it with redeploy_deployment on the live deployment (get_app's liveDeployment), not trigger_deployment (no rebuild needed). Cannot delete secrets.",
     inputSchema: {
       type: "object",
       properties: {
@@ -481,8 +489,18 @@ function ok(data: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] }
 }
 
-function err(message: string): ToolResult {
-  return { content: [{ type: "text", text: message }], isError: true }
+// Tool errors use the REST error shape, so a client can branch on the code
+// instead of parsing the message. Codes are a ServiceError's own, or:
+// VALIDATION_ERROR (bad arguments), NOT_FOUND (also when access is denied, so
+// other teams' resources stay invisible), UNAVAILABLE (a backing service is
+// down or not configured), USER_ACTION_REQUIRED (refused over MCP; the message
+// has a link for the user) and UNKNOWN_TOOL.
+function err(message: string, code = "VALIDATION_ERROR"): ToolResult {
+  return { content: [{ type: "text", text: JSON.stringify({ error: message, code }) }], isError: true }
+}
+
+function notFound(message: string): ToolResult {
+  return err(message, "NOT_FOUND")
 }
 
 function arg(args: Record<string, unknown>, key: string): string | undefined {
@@ -532,6 +550,13 @@ function argNum(args: Record<string, unknown>, key: string): number | undefined 
   return undefined
 }
 
+// An optional whole-number argument: undefined when absent, NaN when it was
+// passed but is not a number, so the caller's range check rejects it.
+function argInt(args: Record<string, unknown>, key: string): number | undefined {
+  if (args[key] === undefined || args[key] === null) return undefined
+  return Math.trunc(argNum(args, key) ?? NaN)
+}
+
 export async function handleTool(name: string, args: Record<string, unknown>, userId: string): Promise<ToolResult> {
   try {
     switch (name) {
@@ -544,9 +569,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const projectId = arg(args, "project_id")
         if (!projectId) return err("project_id is required")
         const project = await getProjectByRef(db, projectId, userId)
-        if (!project) return err("Project not found or access denied")
+        if (!project) return notFound("Project not found or access denied")
         const result = await listApps(db, project.id, userId)
-        if (!result) return err("Project not found or access denied")
+        if (!result) return notFound("Project not found or access denied")
         return ok(result)
       }
 
@@ -560,7 +585,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!teamId) {
           const teams = await listTeams(db, userId)
           const personal = teams.find((t) => t.isPersonal)
-          if (!personal) return err("No personal team found — provide a team_id explicitly")
+          if (!personal) return notFound("No personal team found — provide a team_id explicitly")
           teamId = personal.id
         }
 
@@ -603,7 +628,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (Object.values(patch).every((v) => v === undefined)) return err("Pass at least one setting to change")
 
         const app = await updateApp(db, appId, userId, patch)
-        if (!app) return err("App not found or access denied")
+        if (!app) return notFound("App not found or access denied")
         const sourceChanged = SOURCE_ARGS.some((key) => key in args)
         return ok({ ...app, note: sourceChanged ? REBUILD_NOTE : REDEPLOY_NOTE })
       }
@@ -612,9 +637,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const projectId = arg(args, "project_id")
         if (!projectId) return err("project_id is required")
         const project = await getProjectByRef(db, projectId, userId)
-        if (!project) return err("Project not found or access denied")
+        if (!project) return notFound("Project not found or access denied")
         const credentials = await listTeamCredentials(db, project.teamId, userId)
-        if (!credentials) return err("Project not found or access denied")
+        if (!credentials) return notFound("Project not found or access denied")
         return ok(
           credentials.map((c) => ({
             id: c.id,
@@ -630,7 +655,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const deploymentId = arg(args, "deployment_id")
         if (!deploymentId) return err("deployment_id is required")
         const deployment = await redeployDeployment(db, deploymentId, userId)
-        if (!deployment) return err("Deployment not found or access denied")
+        if (!deployment) return notFound("Deployment not found or access denied")
         return ok(deployment)
       }
 
@@ -638,8 +663,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
-        const { items } = await listDeployments(db, appId, 10)
+        if (!app) return notFound("App not found or access denied")
+        const limit = argInt(args, "limit") ?? DEFAULT_DEPLOYMENTS
+        if (!(limit >= 1)) return err("limit must be a positive integer")
+        const { items } = await listDeployments(db, appId, Math.min(limit, MAX_DEPLOYMENTS))
         return ok(items)
       }
 
@@ -647,7 +674,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
+        if (!app) return notFound("App not found or access denied")
         const deployment = await createDeployment(db, appId, userId)
         return ok(deployment)
       }
@@ -656,29 +683,34 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const deploymentId = arg(args, "deployment_id")
         if (!deploymentId) return err("deployment_id is required")
         const deployment = await getDeploymentById(db, deploymentId, userId)
-        if (!deployment) return err("Deployment not found or access denied")
+        if (!deployment) return notFound("Deployment not found or access denied")
         return ok(deployment)
       }
 
       case "get_build_logs": {
         const deploymentId = arg(args, "deployment_id")
         if (!deploymentId) return err("deployment_id is required")
-        const logs = await getDeploymentLogs(db, deploymentId, userId)
-        if (!logs) return err("Deployment not found or access denied")
-        if (!logs.length) return ok({ message: "No build logs found (image-based deployments skip the build stage)" })
-        const text = logs.map((l) => l.line).join("\n")
-        return { content: [{ type: "text", text }] }
+        const lines = argInt(args, "lines") ?? DEFAULT_BUILD_LOG_LINES
+        if (!(lines >= 1)) return err("lines must be a positive integer")
+        const offset = argInt(args, "offset") ?? 0
+        if (!(offset >= 0)) return err("offset must be a non-negative integer")
+        const logs = await getDeploymentLogTail(db, deploymentId, userId, { lines: Math.min(lines, MAX_BUILD_LOG_LINES), skip: offset })
+        if (!logs) return notFound("Deployment not found or access denied")
+        if (!logs.total) return ok({ message: "No build logs found (image-based deployments skip the build stage)" })
+        if (!logs.items.length) return err(`offset ${offset} is past the start of the log, which has ${logs.total} lines`)
+        return { content: [{ type: "text", text: buildLogText(logs.items, logs.total, offset) }] }
       }
 
       case "get_app": {
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
-        const [hostnames, volumes, passwordProtection, { items }] = await Promise.all([
+        if (!app) return notFound("App not found or access denied")
+        const [hostnames, volumes, passwordProtection, liveDeployment, { items }] = await Promise.all([
           listHostnames(db, appId),
           listVolumes(db, appId),
           getPasswordGateStatus(db, appId, userId),
+          getLiveDeployment(db, appId),
           listDeployments(db, appId, 1),
         ])
         return ok({
@@ -687,6 +719,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
           // A summary only: configmap content can be up to 1 MiB, list_volumes has it.
           volumes: volumes.map((v) => ({ id: v.id, name: v.name, type: v.type, mountPath: v.mountPath, size: v.config.size })),
           passwordProtection,
+          liveDeployment,
           latestDeployment: items[0] ?? null,
         })
       }
@@ -695,7 +728,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
         const podTarget = await getAppPodTarget(db, appId, userId)
-        if (!podTarget) return err("App not found or access denied")
+        if (!podTarget) return notFound("App not found or access denied")
 
         const lines = argNum(args, "lines") ?? DEFAULT_LOG_LINES
         if (!Number.isInteger(lines) || lines < 1) return err("lines must be a positive integer")
@@ -705,7 +738,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const deploymentId = arg(args, "deployment_id")
         if (deploymentId) {
           const deployment = await getDeploymentById(db, deploymentId, userId)
-          if (!deployment || deployment.appId !== appId) return err("Deployment not found for this app")
+          if (!deployment || deployment.appId !== appId) return notFound("Deployment not found for this app")
           params.deployment_id = deploymentId
         }
 
@@ -714,7 +747,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const result = await fetchFromLogstreamer<AppRuntimeLogs>("/logs/tail", podTarget, params, {
           scopeToLiveDeployment: false,
         })
-        if (!result) return err("Could not reach the log service — try again shortly")
+        if (!result) return err("Could not reach the log service — try again shortly", "UNAVAILABLE")
         if (!result.found) {
           return ok({
             message: "No pods found for this app — it may not be deployed yet, be stopped, or (for cronjobs) not have run yet",
@@ -733,9 +766,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
         const podTarget = await getAppPodTarget(db, appId, userId)
-        if (!podTarget) return err("App not found or access denied")
+        if (!podTarget) return notFound("App not found or access denied")
         const usage = await fetchFromLogstreamer<AppMetricsUsage>("/metrics/usage", podTarget)
-        if (!usage) return err("Could not reach the metrics service — try again shortly")
+        if (!usage) return err("Could not reach the metrics service — try again shortly", "UNAVAILABLE")
         return ok(usage)
       }
 
@@ -743,7 +776,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
+        if (!app) return notFound("App not found or access denied")
         const [envVars, secrets] = await Promise.all([listEnvVars(db, appId), listSecrets(db, appId)])
         return ok({
           envVars: envVars.map((v) => ({ key: v.key, value: v.value })),
@@ -760,7 +793,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (value === undefined) return err("value is required")
         if (Buffer.byteLength(value, "utf8") > MAX_ENV_VALUE_BYTES) return err("Value exceeds 10 KB limit")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
+        if (!app) return notFound("App not found or access denied")
         const envVar = await upsertEnvVar(db, appId, key, value)
         return ok({ key: envVar.key, value: envVar.value, note: REDEPLOY_NOTE })
       }
@@ -780,9 +813,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!appId) return err("app_id is required")
         if (!key) return err("key is required")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
+        if (!app) return notFound("App not found or access denied")
         const deleted = await deleteEnvVar(db, appId, key)
-        if (!deleted) return err(`No environment variable named ${key} on this app`)
+        if (!deleted) return notFound(`No environment variable named ${key} on this app`)
         return ok({ deleted: key, note: REDEPLOY_NOTE })
       }
 
@@ -790,7 +823,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         const appId = arg(args, "app_id")
         if (!appId) return err("app_id is required")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
+        if (!app) return notFound("App not found or access denied")
         return ok(await listVolumes(db, appId))
       }
 
@@ -802,7 +835,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!type) return err("type is required")
         if (!mountPath) return err("mount_path is required")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
+        if (!app) return notFound("App not found or access denied")
         const volume = await createVolume(db, appId, userId, {
           type: type as VolumeType,
           mountPath,
@@ -817,8 +850,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         if (!appId) return err("app_id is required")
         if (!volumeId) return err("volume_id is required")
         const app = await getAppById(db, appId, userId)
-        if (!app) return err("App not found or access denied")
-        if (!(await listVolumes(db, appId)).some((v) => v.id === volumeId)) return err("Volume not found on this app")
+        if (!app) return notFound("App not found or access denied")
+        if (!(await listVolumes(db, appId)).some((v) => v.id === volumeId)) return notFound("Volume not found on this app")
         // The service only touches size when the key is present; null clears it.
         const config: VolumeConfig = {}
         if ("size" in args) config.size = arg(args, "size") ?? ""
@@ -840,12 +873,22 @@ export async function handleTool(name: string, args: Record<string, unknown>, us
         return getSchemaTool(args)
 
       default:
-        return err(`Unknown tool: ${name}`)
+        return err(`Unknown tool: ${name}`, "UNKNOWN_TOOL")
     }
   } catch (e) {
-    if (e instanceof ServiceError) return err(e.message)
+    if (e instanceof ServiceError) return err(e.message, e.code)
     throw e
   }
+}
+
+// Build log lines as plain text. When only part of the log is shown, a first
+// line says which part and how to read further back.
+function buildLogText(items: BuildLog[], total: number, offset: number): string {
+  const text = items.map((l) => l.line).join("\n")
+  if (items.length === total) return text
+  const first = total - offset - items.length + 1
+  const older = first > 1 ? ` For the ${first - 1} lines before these, call again with offset ${offset + items.length}.` : ""
+  return `[Showing lines ${first}-${first + items.length - 1} of ${total}.${older}]\n${text}`
 }
 
 // A link to one of the app's pages in the UI, e.g. "settings#volumes".
@@ -864,16 +907,17 @@ async function deleteVolumeTool(args: Record<string, unknown>, userId: string): 
   if (!appId) return err("app_id is required")
   if (!volumeId) return err("volume_id is required")
   const app = await getAppById(db, appId, userId)
-  if (!app) return err("App not found or access denied")
+  if (!app) return notFound("App not found or access denied")
   const volume = (await listVolumes(db, appId)).find((v) => v.id === volumeId)
-  if (!volume) return err("Volume not found on this app")
+  if (!volume) return notFound("Volume not found on this app")
 
   if (volume.type === "pvc") {
     const project = await getProjectByRef(db, app.projectId, userId)
-    if (!project) return err("App not found or access denied")
+    if (!project) return notFound("App not found or access denied")
     const url = appUiUrl(project.slug, app.slug, "settings#volumes")
     return err(
-      `'${volume.name}' (${volume.mountPath}) is a persistent volume, and deleting it permanently deletes its data. Persistent volumes can't be deleted through MCP. Give the user this link to delete it themselves in the app's settings: ${url}`
+      `'${volume.name}' (${volume.mountPath}) is a persistent volume, and deleting it permanently deletes its data. Persistent volumes can't be deleted through MCP. Give the user this link to delete it themselves in the app's settings: ${url}`,
+      "USER_ACTION_REQUIRED"
     )
   }
 
@@ -901,7 +945,7 @@ async function requestSecretTool(args: Record<string, unknown>, userId: string):
     try {
       validateSecretKey(key)
     } catch (e) {
-      if (e instanceof ServiceError) return err(`${key}: ${e.message}`)
+      if (e instanceof ServiceError) return err(`${key}: ${e.message}`, e.code)
       throw e
     }
   }
@@ -910,9 +954,9 @@ async function requestSecretTool(args: Record<string, unknown>, userId: string):
   if (typeof reason !== "string") return reason
 
   const app = await getAppById(db, appId, userId)
-  if (!app) return err("App not found or access denied")
+  if (!app) return notFound("App not found or access denied")
   const project = await getProjectByRef(db, app.projectId, userId)
-  if (!project) return err("App not found or access denied")
+  if (!project) return notFound("App not found or access denied")
 
   const [envVars, secrets] = await Promise.all([listEnvVars(db, appId), listSecrets(db, appId)])
   const envKeys = new Set(envVars.map((v) => v.key))
@@ -928,7 +972,7 @@ async function requestSecretTool(args: Record<string, unknown>, userId: string):
     url,
     keys: keys.map((key) => ({ key, status: status(key) })),
     note:
-      "Show this link to the user and ask them to open it while logged in to canette; it only works for members of the app's team. Do not ask for the values in the conversation. When the user says they are done, call list_env_vars and check that every key is in secretKeys. Secrets take effect on the next deployment: apply them with redeploy_deployment on the app's latest live deployment (no rebuild needed), or trigger_deployment if the app has never been deployed.",
+      "Show this link to the user and ask them to open it while logged in to canette; it only works for members of the app's team. Do not ask for the values in the conversation. When the user says they are done, call list_env_vars and check that every key is in secretKeys. Secrets take effect on the next deployment: apply them with redeploy_deployment on the app's live deployment (get_app's liveDeployment, no rebuild needed), or trigger_deployment if the app has never been deployed.",
   })
 }
 
@@ -955,10 +999,10 @@ async function requestPasswordProtectionTool(args: Record<string, unknown>, user
   if (typeof reason !== "string") return reason
 
   const app = await getAppById(db, appId, userId)
-  if (!app) return err("App not found or access denied")
+  if (!app) return notFound("App not found or access denied")
   if (app.deploymentType !== "web") return err("Password protection is only supported for web apps")
   const project = await getProjectByRef(db, app.projectId, userId)
-  if (!project) return err("App not found or access denied")
+  if (!project) return notFound("App not found or access denied")
 
   const { enabled } = await getPasswordGateStatus(db, appId, userId)
   const query = reason ? `?${new URLSearchParams({ reason })}` : ""
@@ -968,7 +1012,7 @@ async function requestPasswordProtectionTool(args: Record<string, unknown>, user
     url,
     currentlyEnabled: enabled,
     note:
-      `Show this link to the user and ask them to open it while logged in to canette; it only works for members of the app's team. ${enabled ? "Password protection is already on, so the page changes the password." : "The page turns password protection on."} Do not ask for the password in the conversation. When the user says they are done, call get_app and check passwordProtection.enabled. The change takes effect on the next deployment: apply it with redeploy_deployment on the app's latest live deployment (no rebuild needed), or trigger_deployment if the app has never been deployed.`,
+      `Show this link to the user and ask them to open it while logged in to canette; it only works for members of the app's team. ${enabled ? "Password protection is already on, so the page changes the password." : "The page turns password protection on."} Do not ask for the password in the conversation. When the user says they are done, call get_app and check passwordProtection.enabled. The change takes effect on the next deployment: apply it with redeploy_deployment on the app's live deployment (get_app's liveDeployment, no rebuild needed), or trigger_deployment if the app has never been deployed.`,
   })
 }
 
@@ -978,23 +1022,24 @@ async function disablePasswordProtectionTool(args: Record<string, unknown>, user
   const appId = arg(args, "app_id")
   if (!appId) return err("app_id is required")
   const app = await getAppById(db, appId, userId)
-  if (!app) return err("App not found or access denied")
+  if (!app) return notFound("App not found or access denied")
 
   const { enabled } = await getPasswordGateStatus(db, appId, userId)
   if (!enabled) return ok({ enabled: false, note: "Password protection is not on for this app; nothing to do." })
 
   const project = await getProjectByRef(db, app.projectId, userId)
-  if (!project) return err("App not found or access denied")
+  if (!project) return notFound("App not found or access denied")
   const url = appUiUrl(project.slug, app.slug, "settings#access")
   return err(
-    `Removing password protection makes the app's public URL reachable by anyone, so it can't be done through MCP. Give the user this link to turn it off themselves in the app's settings: ${url}. Then apply the change with redeploy_deployment.`
+    `Removing password protection makes the app's public URL reachable by anyone, so it can't be done through MCP. Give the user this link to turn it off themselves in the app's settings: ${url}. Then apply the change with redeploy_deployment.`,
+    "USER_ACTION_REQUIRED"
   )
 }
 
 // ── Docs (public, read-only — no DB or access checks) ─────────────────────────
 
 export function searchDocsTool(args: Record<string, unknown>, index: DocsIndex = defaultDocs): ToolResult {
-  if (index.isEmpty) return err(DOCS_NOT_BUNDLED)
+  if (index.isEmpty) return err(DOCS_NOT_BUNDLED, "UNAVAILABLE")
   const query = arg(args, "query")
   if (!query) return err("query is required")
   const limit = Math.min(Math.max(Math.trunc(argNum(args, "limit") ?? 5), 1), MAX_DOCS_RESULTS)
@@ -1003,12 +1048,12 @@ export function searchDocsTool(args: Record<string, unknown>, index: DocsIndex =
 }
 
 export function getDocsPageTool(args: Record<string, unknown>, index: DocsIndex = defaultDocs): ToolResult {
-  if (index.isEmpty) return err(DOCS_NOT_BUNDLED)
+  if (index.isEmpty) return err(DOCS_NOT_BUNDLED, "UNAVAILABLE")
   const path = arg(args, "path")
   if (!path) return err("path is required")
   const page = index.getPage(path)
   if (!page) {
-    return err(`No docs page "${path}". Closest matches: ${index.suggest(path).join(", ")}. Use search_docs to find a page.`)
+    return err(`No docs page "${path}". Closest matches: ${index.suggest(path).join(", ")}. Use search_docs to find a page.`, "NOT_FOUND")
   }
   return { content: [{ type: "text", text: renderDocsPage(page) }] }
 }
