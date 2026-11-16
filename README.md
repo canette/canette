@@ -59,7 +59,7 @@ canette runs entirely inside your own Kubernetes cluster, installed as a single 
 
 See [canette.dev](https://canette.dev) for installation guides, configuration reference, and architecture documentation.
 
-For AI-assisted development, see [CLAUDE.md](./CLAUDE.md).
+For AI-assisted development, see [AGENTS.md](./AGENTS.md).
 
 ---
 
