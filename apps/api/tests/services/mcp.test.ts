@@ -436,6 +436,136 @@ describe("services/mcp runtime diagnostics", () => {
       expect(outsider.isError).toBe(true)
     })
   })
+
+  describe("volumes", () => {
+    const PROJECT_ID = "11111111-2222-3333-4444-555555555555"
+    let volAppId: string
+
+    beforeAll(async () => {
+      const app = await createApp(db, PROJECT_ID, "userId", {
+        name: "Vols", slug: "vols", sourceType: "image", imageUrl: "nginx",
+      })
+      volAppId = app.id
+    })
+
+    async function create(args: Record<string, unknown>) {
+      return handleTool("create_volume", { app_id: volAppId, ...args }, "userId")
+    }
+
+    // Volumes created in the same millisecond have no stable order, so look them up by type.
+    async function volumesByType() {
+      const listed = JSON.parse(text(await handleTool("list_volumes", { app_id: volAppId }, "userId")))
+      return Object.fromEntries(listed.map((v: { type: string }) => [v.type, v]))
+    }
+
+    async function pendingDeletions() {
+      const row = await db.selectFrom("pending_volume_deletions").select(db.fn.countAll().as("n")).executeTakeFirstOrThrow()
+      return Number(row.n)
+    }
+
+    it("creates and lists all three types, and get_app summarises them", async () => {
+      for (const args of [
+        { type: "pvc", mount_path: "/data", size: "1Gi" },
+        { type: "emptyDir", mount_path: "/cache" },
+        { type: "configmap", mount_path: "/etc/nginx/nginx.conf", content: "events {}\n" },
+      ]) {
+        const result = await create(args)
+        expect(result.isError).toBeUndefined()
+        expect(JSON.parse(text(result)).note).toContain("redeploy_deployment")
+      }
+
+      const { pvc, emptyDir, configmap } = await volumesByType()
+      expect(pvc).toMatchObject({ mountPath: "/data", config: { size: "1Gi" } })
+      expect(emptyDir.mountPath).toBe("/cache")
+      expect(configmap).toMatchObject({ mountPath: "/etc/nginx/nginx.conf", config: { content: "events {}\n" } })
+
+      const app = JSON.parse(text(await handleTool("get_app", { app_id: volAppId }, "userId")))
+      expect(app.volumes).toHaveLength(3)
+      expect(app.volumes).toContainEqual({ id: pvc.id, name: pvc.name, type: "pvc", mountPath: "/data", size: "1Gi" })
+      expect(JSON.stringify(app.volumes)).not.toContain("events")
+    })
+
+    it("returns validation errors as tool errors", async () => {
+      for (const args of [
+        { type: "pvc", mount_path: "/db" },
+        { type: "pvc", mount_path: "/db", size: "lots" },
+        { type: "emptyDir", mount_path: "/etc" },
+        { type: "emptyDir", mount_path: "/data" },
+        { type: "configmap", mount_path: "/app/config.json" },
+        { type: "tmpfs", mount_path: "/scratch" },
+        { mount_path: "/scratch" },
+        { type: "emptyDir" },
+      ]) {
+        const result = await create(args)
+        expect(result.isError).toBe(true)
+      }
+    })
+
+    it("refuses a PVC on an app with more than one replica", async () => {
+      const app = await createApp(db, PROJECT_ID, "userId", {
+        name: "Scaled", slug: "scaled", sourceType: "image", imageUrl: "nginx", canetteConfig: "replicas: 2\n",
+      })
+      const result = await handleTool("create_volume", { app_id: app.id, type: "pvc", mount_path: "/data", size: "1Gi" }, "userId")
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain("replicas")
+    })
+
+    it("updates configmap content and emptyDir size, but not a PVC", async () => {
+      const { pvc, emptyDir, configmap } = await volumesByType()
+
+      const content = await handleTool("update_volume", { app_id: volAppId, volume_id: configmap.id, content: "events { worker_connections 64; }\n" }, "userId")
+      expect(JSON.parse(text(content)).config.content).toContain("worker_connections")
+
+      const sized = await handleTool("update_volume", { app_id: volAppId, volume_id: emptyDir.id, size: "256Mi" }, "userId")
+      expect(JSON.parse(text(sized)).config.size).toBe("256Mi")
+      const cleared = await handleTool("update_volume", { app_id: volAppId, volume_id: emptyDir.id, size: null }, "userId")
+      expect(JSON.parse(text(cleared)).config.size).toBeUndefined()
+
+      const frozen = await handleTool("update_volume", { app_id: volAppId, volume_id: pvc.id, size: "2Gi" }, "userId")
+      expect(frozen.isError).toBe(true)
+    })
+
+    it("deletes emptyDir and configmap volumes but leaves a PVC to the user", async () => {
+      const { pvc, emptyDir, configmap } = await volumesByType()
+      const before = await pendingDeletions()
+
+      const refused = await handleTool("delete_volume", { app_id: volAppId, volume_id: pvc.id }, "userId")
+      expect(refused.isError).toBe(true)
+      expect(text(refused)).toContain("/dashboard/projects/test-project/apps/vols/settings#volumes")
+      expect(await pendingDeletions()).toBe(before)
+
+      for (const volume of [emptyDir, configmap]) {
+        const result = await handleTool("delete_volume", { app_id: volAppId, volume_id: volume.id }, "userId")
+        expect(result.isError).toBeUndefined()
+        expect(JSON.parse(text(result)).deleted).toBe(volume.name)
+      }
+      // Only the configmap leaves a cluster resource behind for the controller to remove.
+      expect(await pendingDeletions()).toBe(before + 1)
+
+      const remaining = JSON.parse(text(await handleTool("list_volumes", { app_id: volAppId }, "userId")))
+      expect(remaining.map((v: { id: string }) => v.id)).toEqual([pvc.id])
+    })
+
+    it("denies access to users outside the app's team and to other apps' volumes", async () => {
+      const { pvc } = await volumesByType()
+      for (const [tool, args] of [
+        ["list_volumes", {}],
+        ["create_volume", { type: "emptyDir", mount_path: "/tmp/x" }],
+        ["update_volume", { volume_id: pvc.id, size: "2Gi" }],
+        ["delete_volume", { volume_id: pvc.id }],
+      ] as const) {
+        const result = await handleTool(tool, { app_id: volAppId, ...args }, "outsiderId")
+        expect(result.isError).toBe(true)
+        expect(text(result)).toContain("access denied")
+      }
+
+      for (const tool of ["update_volume", "delete_volume"]) {
+        const result = await handleTool(tool, { app_id: appId, volume_id: pvc.id, size: "2Gi" }, "userId")
+        expect(result.isError).toBe(true)
+        expect(text(result)).toContain("not found")
+      }
+    })
+  })
 })
 
 describe("services/mcp docs", () => {

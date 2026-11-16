@@ -14,6 +14,7 @@ const TOOL_DESCRIPTIONS = [
   "Trigger deployments and roll back to earlier ones",
   "Read deployment status, build logs, runtime logs and metrics",
   "Read, change and delete environment variables",
+  "Add, change and delete app volumes (persistent volumes only you can delete)",
   "See the names of secrets and Git credentials, never their values",
   "Ask you to enter secret values yourself on a canette page",
 ]
