@@ -3,21 +3,17 @@ title: Deployments
 description: A deployment is a single attempt to build and ship a commit of an app.
 ---
 
-import { Callout } from "fumadocs-ui/components/callout"
-
 A **deployment** is a single attempt to build and ship a commit of an app.
-
-<Callout type="info">
-  This page is a work in progress.
-</Callout>
 
 ## Status lifecycle
 
 | Status | Meaning |
 |---|---|
-| `pending` | Queued, waiting for the builder to pick it up |
+| `pending_build` | Queued, waiting for the builder to pick it up |
 | `building` | Build Job is running (git-clone → image-build → push) |
-| `deploying` | Image pushed, controller applying K8s manifests |
+| `scanning` | Image pushed, vulnerability scan running (only when [scanning](/docs/security/build-security#image-content) is enabled) |
+| `pending_deployment` | Image ready, waiting for the controller to pick it up. Image apps and redeploys start here |
+| `deploying` | Controller applying K8s manifests |
 | `live` | Deployment is running and passing health checks |
 | `failed` | Build or deploy failed — see logs for details |
 | `stopped` | App was manually stopped — K8s resources have been torn down |
@@ -51,7 +47,7 @@ The app page exposes up to three deploy actions depending on the app's current s
 
 ### Redeploy
 
-Re-applies the Kubernetes manifests using the **same image** from the current deployment. The controller reads all settings (port, environment variables, secrets) fresh from the database — so any changes you saved since the last deploy are picked up without requiring a rebuild.
+Creates a new deployment record that reuses the **same image** as the current deployment, skipping the build. Settings (port, environment variables, secrets) are read fresh when you click it, so any changes you saved since the last deploy are picked up without requiring a rebuild.
 
 Use **Redeploy** when:
 - You changed an environment variable, secret, or port and want to apply it to the running app

@@ -3,17 +3,23 @@ title: Projects
 description: A project is the top-level organisational unit in canette, grouping related apps and controlling access.
 ---
 
-import { Callout } from "fumadocs-ui/components/callout"
-
 A **project** is an organisational unit that groups related apps. Projects belong to a [team](/docs/concepts/teams) — access to a project is granted by being a member of its team.
-
-<Callout type="info">
-  This page is a work in progress.
-</Callout>
 
 ## What a project contains
 
 - One or more **apps** (each app maps to a Git repository or container image)
+
+All apps in a project share one Kubernetes namespace, so they can reach each other over cluster DNS. You can create apps one at a time or several at once from a [template](/docs/configuration/templates).
+
+## Project slug
+
+The slug is part of every app URL and of the project's namespace. It must be lowercase letters, numbers and hyphens, at most 50 characters, and unique across the installation.
+
+You can change the slug in the project settings, but only while all of the project's apps are stopped. Their URLs change with it, and the apps move to a new namespace on their next deploy. The old namespace is deleted, including the data on any [persistent volumes](/docs/configuration/volumes), so back up that data before renaming.
+
+## Deleting a project
+
+A project can only be deleted once it has no apps. Delete its apps first.
 
 ## Access control
 

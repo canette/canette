@@ -3,13 +3,7 @@ title: Build pipeline
 description: How canette builds container images using Railpack and BuildKit inside the cluster.
 ---
 
-import { Callout } from "fumadocs-ui/components/callout"
-
 canette builds container images inside the cluster using [Railpack](https://railpack.com) and [BuildKit](https://github.com/moby/buildkit).
-
-<Callout type="info">
-  This page is a work in progress.
-</Callout>
 
 ## Stages
 
@@ -27,9 +21,15 @@ The `canette-build` binary reads `canette.yaml` (size-checked and validated), de
 2. **Auto-detect Dockerfile** — if a `Dockerfile` exists at the app root
 3. **Railpack** — runs `railpack prepare` then builds via the BuildKit gateway frontend
 
+The built image is pushed to the configured registry.
+
+### Vulnerability scan (optional)
+
+When [image scanning](/docs/security/build-security#image-content) is enabled, the deployment moves to `scanning` after the push. With `security.scan.mandatory: true`, findings at or above the configured severity fail the deployment before it reaches the cluster.
+
 ## Supported frameworks
 
-Railpack auto-detects: Node.js, Python, Go, Ruby, PHP, Java, Rust, Elixir, Deno, .NET, and more. A `Dockerfile` in the repo root is used directly if present.
+Railpack auto-detects: Node.js, Python, Go, Ruby, PHP, Java, Rust, Elixir, Deno, .NET, and more. A `Dockerfile` at the app root is used directly if present.
 
 ## When Railpack does not produce a working image
 
@@ -39,4 +39,4 @@ A `Dockerfile` at the app root takes precedence over Railpack automatically. Thi
 
 ## BuildKit daemon
 
-A long-lived rootless `buildkitd` deployment runs in `canette-system`. Build jobs connect to it via `BUILDKIT_HOST` — no daemon is started per-job.
+A long-lived, shared `buildkitd` deployment runs in the build namespace (`<release namespace>-build`, e.g. `canette-system-build`), alongside the build jobs. Build jobs connect to it via `BUILDKIT_HOST` — no daemon is started per-job. It runs rootless by default; see [Requirements](/docs/self-hosting/requirements#node-requirements-for-builds) for the node support it needs and the rooted fallback.

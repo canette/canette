@@ -5,10 +5,6 @@ description: Recommendations for running a production-ready canette installation
 
 import { Callout } from "fumadocs-ui/components/callout"
 
-<Callout type="warn">
-  This page is a work in progress. Content may be incomplete or change significantly.
-</Callout>
-
 The default Helm installation is designed to get you up and running quickly — it bundles PostgreSQL and an in-cluster image registry so nothing extra is required. For production use, you should replace both with dedicated external services.
 
 ## Keep image versions in sync with the chart
@@ -23,7 +19,7 @@ The Helm chart handles this automatically: the default `image.tag` is the chart'
 
 ## Use an external database
 
-The bundled PostgreSQL instance has no persistent storage configured by default and is not suitable for production. Replace it with a managed database or a self-hosted PostgreSQL instance you operate separately.
+The bundled PostgreSQL is a single instance on a 5Gi PersistentVolumeClaim, with no replication or failover. For production, use a managed database or a self-hosted PostgreSQL instance you operate separately. If you keep the bundled database, at least enable [scheduled backups](/docs/self-hosting/backup).
 
 ```yaml
 # values.yaml
@@ -47,8 +43,8 @@ kubectl create secret generic canette-db-secret \
 
 Good options for managed PostgreSQL: AWS RDS, DigitalOcean Managed Databases, Supabase, Neon, or a self-hosted instance with regular backups.
 
-<Callout type="warn">
-  Run canette's migrations against your external database before the first install. The migration job runs automatically as a Helm pre-upgrade hook — make sure `DATABASE_URL` points to the right instance before you `helm install`.
+<Callout type="info">
+  The API applies database migrations automatically when it starts, so an empty database is fine for the first install. To run them as a Helm pre-upgrade Job instead, set `migrations.enabled: true`.
 </Callout>
 
 ## Use an external image registry
@@ -94,11 +90,11 @@ The master encryption key for git credentials and app secrets is auto-generated 
 kubectl get secret canette-encryption-key -n canette-system -o yaml > canette-encryption-key-backup.yaml
 ```
 
-Or supply a known key at install time:
+Or supply a known key at install time. The key must be 64 hex characters (32 bytes), for example from `openssl rand -hex 32`:
 
 ```yaml
 # values.yaml
-encryptionKey: "your-32-character-key-here"
+encryptionKey: "<64 hex characters>"
 ```
 
 <Callout type="warn">
@@ -129,7 +125,7 @@ Each cloud provider has its own quirks when running Kubernetes workloads. Detail
 
 - Use **RDS for PostgreSQL** as the external database. Enable automated backups and multi-AZ for production.
 - Use **ECR** (Elastic Container Registry) as the external registry with **IRSA** (IAM Roles for Service Accounts) for credential-free authentication. ECR repositories are automatically created on first build. See the [AWS (EKS) guide](/docs/self-hosting/aws#ecr-integration) for IAM role setup.
-- Build jobs require user namespace syscalls. AL2023 and Bottlerocket nodes support this out of the box.
+- Rootless BuildKit requires user namespace support. AL2023 nodes support this out of the box. Bottlerocket nodes need `buildkit.rootless: false` because of their SELinux policy (see [Bottlerocket](/docs/self-hosting/aws#bottlerocket)).
 - Gateway API support: Traefik and Cilium both work well on EKS. AWS Load Balancer Controller can also serve as the gateway implementation.
 
 See the full [AWS (EKS) deployment guide](/docs/self-hosting/aws) for detailed configuration.
