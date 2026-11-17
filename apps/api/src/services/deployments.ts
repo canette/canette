@@ -204,13 +204,16 @@ export async function getLiveDeployment(db: DB, appId: string): Promise<Deployme
   return mapDeployment(row, await hasSbomForId(db, row.id))
 }
 
+// Statuses of a deployment that is still being built or rolled out.
+export const ACTIVE_DEPLOYMENT_STATUSES = ["pending_build", "building", "scanning", "pending_deployment", "deploying"] as const
+
 // hasActiveDeployment returns true if the app already has an in-progress deployment.
 async function hasActiveDeployment(db: DB, appId: string): Promise<boolean> {
   const row = await db
     .selectFrom("deployments")
     .select("id")
     .where("app_id", "=", appId)
-    .where("status", "in", ["pending_build", "building", "scanning", "pending_deployment", "deploying"])
+    .where("status", "in", ACTIVE_DEPLOYMENT_STATUSES)
     .limit(1)
     .executeTakeFirst()
   return !!row

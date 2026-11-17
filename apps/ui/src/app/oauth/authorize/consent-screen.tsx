@@ -13,6 +13,7 @@ const TOOL_DESCRIPTIONS = [
   "List your teams, list and create projects and apps, and change project and app settings",
   "Trigger deployments and roll back to earlier ones",
   "Stop running apps, without deleting them or their data",
+  "Turn automatic deployments on Git push on and off, without seeing webhook secrets",
   "Read deployment status, build logs, runtime logs and metrics",
   "Read, change and delete environment variables",
   "Add, change and delete app volumes (persistent volumes only you can delete)",

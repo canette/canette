@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test"
+import { createHmac } from "node:crypto"
 import { join } from "path"
 import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
@@ -6,7 +7,7 @@ import { createTestDb } from "../utils/sqlite"
 process.env.ENCRYPTION_KEY ??= "00".repeat(32)
 
 const { encrypt } = await import("../../src/utils/crypto")
-const { createWebhook, deleteWebhook } = await import("../../src/services/webhooks")
+const { createWebhook, deleteWebhook, processWebhookEvent } = await import("../../src/services/webhooks")
 
 const db = createTestDb()
 const realFetch = globalThis.fetch
@@ -123,6 +124,7 @@ describe("services/webhooks credential destination binding", () => {
       process.env.GIT_CREDENTIAL_ALLOWED_ORIGINS = originalAllowedOrigins
     }
     await db.deleteFrom("webhook_secrets").execute()
+    await db.deleteFrom("deployments").execute()
     await db.deleteFrom("apps").execute()
     await db.deleteFrom("git_credentials").execute()
   })
@@ -206,5 +208,61 @@ describe("services/webhooks credential destination binding", () => {
 
     expect(await deleteWebhook(db, "unsafe-delete", "userId")).toBe(true)
     expect(requests).toHaveLength(0)
+  })
+
+  describe("push events", () => {
+    const SECRET = "push-secret"
+    let seq = 0
+
+    async function hookedApp(id: string): Promise<void> {
+      await insertCredential({ id: `${id}-pat`, provider: "github" })
+      await insertApp(id, "https://github.com/acme/repo.git", `${id}-pat`)
+      await db.insertInto("webhook_secrets").values({
+        id: `${id}-hook`, app_id: id, provider: "github", secret: encrypt(SECRET), watch_path: "",
+        provider_hook_id: null, verified_at: new Date().toISOString(), created_at: new Date().toISOString(),
+      }).execute()
+    }
+
+    async function insertDeployment(appId: string, status: "live" | "pending_build" | "pending_deployment"): Promise<void> {
+      const at = new Date(Date.UTC(2026, 0, 1, 0, 0, seq++)).toISOString()
+      await db.insertInto("deployments").values({
+        id: crypto.randomUUID(), app_id: appId, status, commit_sha: "old", image_digest: "sha256:abc",
+        created_at: at, updated_at: at,
+      }).execute()
+    }
+
+    function push(appId: string) {
+      const body = Buffer.from(JSON.stringify({ ref: "refs/heads/main", head_commit: { id: "new", message: "change" }, commits: [] }))
+      const signature = "sha256=" + createHmac("sha256", SECRET).update(body).digest("hex")
+      return processWebhookEvent(db, appId, body, { "x-hub-signature-256": signature, "x-github-event": "push" })
+    }
+
+    const deploymentCount = async (appId: string) =>
+      (await db.selectFrom("deployments").select("id").where("app_id", "=", appId).execute()).length
+
+    it("triggers a deployment when nothing is in progress", async () => {
+      await hookedApp("push-idle")
+      await insertDeployment("push-idle", "live")
+      expect(await push("push-idle")).toEqual({ status: 200, message: "Deployment triggered" })
+      expect(await deploymentCount("push-idle")).toBe(2)
+    })
+
+    it("acknowledges a push while the latest deployment is queued", async () => {
+      for (const status of ["pending_build", "pending_deployment"] as const) {
+        const id = `push-${status.replace("_", "-")}`
+        await hookedApp(id)
+        await insertDeployment(id, status)
+        expect(await push(id)).toEqual({ status: 200, message: "Deployment already in progress" })
+        expect(await deploymentCount(id)).toBe(1)
+      }
+    })
+
+    it("acknowledges a push while an older deployment is still in progress", async () => {
+      await hookedApp("push-older")
+      await insertDeployment("push-older", "pending_deployment")
+      await insertDeployment("push-older", "live")
+      expect(await push("push-older")).toEqual({ status: 200, message: "Deployment already in progress" })
+      expect(await deploymentCount("push-older")).toBe(2)
+    })
   })
 })
