@@ -9,11 +9,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 const db = createTestDb()
+process.env.ENCRYPTION_KEY ??= "00".repeat(32)
 
 // handleTool reads the module-level db — point it at the in-memory test db.
 mock.module("../../src/db/db", () => ({ db }))
 const { handleTool, buildMcpServer, searchDocsTool, getDocsPageTool, getSchemaTool } = await import("../../src/services/mcp")
 const { createDocsIndex } = await import("../../src/docs")
+const { encrypt, decrypt } = await import("../../src/utils/crypto")
 
 const realFetch = globalThis.fetch
 let fetchedUrls: string[] = []
@@ -1015,6 +1017,149 @@ describe("services/mcp runtime diagnostics", () => {
         expect(result.isError).toBeUndefined()
         expect(text(result)).toContain("No build logs found")
       })
+    })
+  })
+
+  describe("webhooks", () => {
+    const PROJECT_ID = "11111111-2222-3333-4444-555555555555"
+    let providerRequests: Array<{ method: string; url: string }> = []
+
+    function stubProvider(status = 201) {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        providerRequests.push({ method: init?.method ?? "GET", url: String(input) })
+        return new Response(JSON.stringify({ id: 42 }), { status, headers: { "Content-Type": "application/json" } })
+      }) as typeof fetch
+    }
+
+    function error(result: Awaited<ReturnType<typeof handleTool>>) {
+      expect(result.isError).toBe(true)
+      return JSON.parse(text(result)) as { error: string; code: string }
+    }
+
+    const storedSecret = async (id: string) => {
+      const row = await db.selectFrom("webhook_secrets").select(["secret", "provider_hook_id"]).where("app_id", "=", id).executeTakeFirst()
+      return row && { secret: decrypt(row.secret), hookId: row.provider_hook_id }
+    }
+
+    async function gitApp(slug: string, gitCredentialId?: string) {
+      return createApp(db, PROJECT_ID, "userId", {
+        name: slug, slug, sourceType: "git", gitUrl: "https://github.com/example/repo", gitCredentialId,
+      })
+    }
+
+    beforeAll(async () => {
+      await db.insertInto("git_credentials").values({
+        id: "hookCredId", team_id: "teamId", name: "Hook token", provider: "github", type: "pat",
+        encrypted_value: encrypt("ghp_token"), ssh_known_hosts: null, installation_id: null,
+        connected_by_user_id: null, created_at: new Date().toISOString(),
+      }).execute()
+    })
+
+    afterEach(() => {
+      providerRequests = []
+    })
+
+    it("registers the webhook with the provider and never returns its secret", async () => {
+      const app = await gitApp("hooked", "hookCredId")
+      const before = JSON.parse(text(await handleTool("get_webhook", { app_id: app.id }, "userId")))
+      expect(before).toMatchObject({ enabled: false, supported: true, webhook: null, autoRegistration: { possible: true } })
+
+      stubProvider()
+      const result = await handleTool("enable_webhook", { app_id: app.id, watch_path: "/apps/web" }, "userId")
+      expect(result.isError).toBeUndefined()
+      const body = JSON.parse(text(result))
+      expect(body.webhook).toMatchObject({ provider: "github", watchPath: "apps/web", autoRegistered: true })
+      expect(body.replaced).toBe(false)
+      expect(providerRequests).toEqual([{ method: "POST", url: "https://api.github.com/repos/example/repo/hooks" }])
+
+      const stored = await storedSecret(app.id)
+      expect(stored?.hookId).toBe("42")
+      expect(text(result)).not.toContain(stored!.secret)
+      const status = await handleTool("get_webhook", { app_id: app.id }, "userId")
+      expect(JSON.parse(text(status)).enabled).toBe(true)
+      expect(text(status)).not.toContain(stored!.secret)
+    })
+
+    it("only replaces an existing webhook when asked, removing the old one from the provider", async () => {
+      const app = await gitApp("rotated", "hookCredId")
+      stubProvider()
+      await handleTool("enable_webhook", { app_id: app.id }, "userId")
+      const first = await storedSecret(app.id)
+      providerRequests = []
+
+      expect(error(await handleTool("enable_webhook", { app_id: app.id }, "userId")).code).toBe("CONFLICT")
+      expect(providerRequests).toEqual([])
+      expect((await storedSecret(app.id))?.secret).toBe(first!.secret)
+
+      const replaced = await handleTool("enable_webhook", { app_id: app.id, replace: true }, "userId")
+      expect(JSON.parse(text(replaced)).replaced).toBe(true)
+      expect(providerRequests.map((r) => r.method)).toEqual(["DELETE", "POST"])
+      expect(providerRequests[0]!.url).toEndWith("/hooks/42")
+      expect((await storedSecret(app.id))?.secret).not.toBe(first!.secret)
+    })
+
+    it("hands manual setup to the user when canette can't register the webhook", async () => {
+      const app = await gitApp("manual")
+      const status = JSON.parse(text(await handleTool("get_webhook", { app_id: app.id }, "userId")))
+      expect(status.autoRegistration.possible).toBe(false)
+      expect(status.autoRegistration.reason).toContain("no Git credential")
+
+      const result = error(await handleTool("enable_webhook", { app_id: app.id }, "userId"))
+      expect(result.code).toBe("USER_ACTION_REQUIRED")
+      expect(result.error).toContain("/dashboard/projects/test-project/apps/manual/settings#webhook")
+      expect(await storedSecret(app.id)).toBeUndefined()
+    })
+
+    it("keeps no webhook when the provider refuses the token", async () => {
+      const app = await gitApp("refused", "hookCredId")
+      const realConsoleError = console.error
+      console.error = () => {}
+      try {
+        stubProvider(403)
+        const result = error(await handleTool("enable_webhook", { app_id: app.id }, "userId"))
+        expect(result.code).toBe("USER_ACTION_REQUIRED")
+        expect(result.error).toContain("GitHub API 403")
+        expect(result.error).toContain("admin:repo_hook")
+      } finally {
+        console.error = realConsoleError
+      }
+      expect(await storedSecret(app.id)).toBeUndefined()
+    })
+
+    it("disables a webhook and says when there is nothing to disable", async () => {
+      const app = await gitApp("unhooked", "hookCredId")
+      stubProvider()
+      await handleTool("enable_webhook", { app_id: app.id }, "userId")
+      providerRequests = []
+
+      const disabled = await handleTool("disable_webhook", { app_id: app.id }, "userId")
+      expect(JSON.parse(text(disabled)).enabled).toBe(false)
+      expect(providerRequests).toEqual([{ method: "DELETE", url: "https://api.github.com/repos/example/repo/hooks/42" }])
+      expect(await storedSecret(app.id)).toBeUndefined()
+
+      const again = JSON.parse(text(await handleTool("disable_webhook", { app_id: app.id }, "userId")))
+      expect(again.note).toContain("nothing to do")
+    })
+
+    it("reports apps that can't have a webhook", async () => {
+      const app = await createApp(db, PROJECT_ID, "userId", {
+        name: "image", slug: "hook-image", sourceType: "image", imageUrl: "nginx", imageTag: "latest",
+      })
+      const status = JSON.parse(text(await handleTool("get_webhook", { app_id: app.id }, "userId")))
+      expect(status).toMatchObject({ enabled: false, supported: false })
+      expect(error(await handleTool("enable_webhook", { app_id: app.id }, "userId")).code).toBe("INVALID_SOURCE_TYPE")
+    })
+
+    it("rejects invalid arguments and denies other teams", async () => {
+      const app = await gitApp("guarded", "hookCredId")
+      for (const tool of ["get_webhook", "enable_webhook", "disable_webhook"]) {
+        expect(error(await handleTool(tool, {}, "userId")).code).toBe("VALIDATION_ERROR")
+        expect(error(await handleTool(tool, { app_id: app.id }, "outsiderId"))).toEqual({
+          error: "App not found or access denied", code: "NOT_FOUND",
+        })
+      }
+      expect(error(await handleTool("enable_webhook", { app_id: app.id, watch_path: 5 }, "userId")).code).toBe("VALIDATION_ERROR")
+      expect(providerRequests).toEqual([])
     })
   })
 })

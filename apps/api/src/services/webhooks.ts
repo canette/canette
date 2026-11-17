@@ -135,22 +135,63 @@ interface AutoRegisterResult {
   autoRegistered: boolean
   providerHookId?: string
   setupInstructions?: string
+  // Why auto-registration didn't happen, in one sentence for the user.
+  failureReason?: string
+}
+
+const SCOPE_HINTS: Record<string, string> = {
+  github: "The PAT needs the `admin:repo_hook` scope (or `write:repo_hook` for fine-grained tokens).",
+  gitlab: "The PAT needs the `api` scope.",
+  gitea: "The PAT needs the `write:repository` scope.",
 }
 
 function manualInstructions(parsed: ParsedGitUrl, webhookUrl: string, provider: string): string {
-  const scopeHint: Record<string, string> = {
-    github: "The PAT needs the `admin:repo_hook` scope (or `write:repo_hook` for fine-grained tokens).",
-    gitlab: "The PAT needs the `api` scope.",
-    gitea: "The PAT needs the `write:repository` scope.",
-  }
   return (
     `Auto-registration failed. Add the webhook manually in your ${provider} repository settings:\n\n` +
     `**URL:** \`${webhookUrl}\`\n` +
     `**Content type:** \`application/json\`\n` +
     `**Secret:** *(shown above — copy it now)*\n\n` +
-    (scopeHint[provider] ?? "") +
-    `\n\nSee the [canette webhook docs](https://canette.dev/docs/configuration/webhooks) for step-by-step instructions.`
+    (SCOPE_HINTS[provider] ?? "") +
+    `\n\nSee the [canette webhook docs](https://canette.dev/docs/getting-started/webhooks) for step-by-step instructions.`
   )
+}
+
+type AutoRegisterCredential =
+  | { ok: true; credential: WebhookCredential }
+  | { ok: false; reason: string }
+
+// The checks that can be made without calling the provider: the app needs a
+// token-type credential that may be sent to the provider's API. Whether the
+// token has the permissions it needs only shows when the provider is called.
+async function autoRegisterCredential(db: DB, app: AppRow, parsed: ParsedGitUrl): Promise<AutoRegisterCredential> {
+  if (!app.git_credential_id) {
+    return { ok: false, reason: `The app has no Git credential, so canette can't register the webhook with ${parsed.provider} itself.` }
+  }
+
+  const cred = await db
+    .selectFrom("git_credentials")
+    .select(["provider", "type", "encrypted_value", "installation_id"])
+    .where("id", "=", app.git_credential_id)
+    .executeTakeFirst()
+  // Need a PAT credential to call the provider API. SSH keys don't work here.
+  if (!cred || (cred.type !== "pat" && cred.type !== "github_app")) {
+    return {
+      ok: false,
+      reason: `The app's Git credential is not a personal access token or GitHub App, so canette can't call the ${parsed.provider} API to register the webhook.`,
+    }
+  }
+  // Enforce the credential's provider and the administrator-approved API origin
+  // before decrypting a PAT or minting a GitHub installation token.
+  if (!credentialMatchesDestination(cred, parsed)) {
+    return {
+      ok: false,
+      reason:
+        `Auto-registration is disabled for ${parsed.apiBase}: the app's git credential can only be ` +
+        `sent to its provider's public API or to hosts an administrator has allowed via ` +
+        `${ALLOWED_ORIGINS_ENV}.`,
+    }
+  }
+  return { ok: true, credential: cred }
 }
 
 async function tryAutoRegister(
@@ -160,28 +201,15 @@ async function tryAutoRegister(
   webhookUrl: string,
   plaintextSecret: string
 ): Promise<AutoRegisterResult> {
-  // Need a PAT credential to call the provider API. SSH keys don't work here.
-  if (!app.git_credential_id) {
-    return { autoRegistered: false, setupInstructions: manualInstructions(parsed, webhookUrl, parsed.provider) }
+  const check = await autoRegisterCredential(db, app, parsed)
+  if (!check.ok) {
+    return {
+      autoRegistered: false,
+      failureReason: check.reason,
+      setupInstructions: `${check.reason}\n\n${manualInstructions(parsed, webhookUrl, parsed.provider)}`,
+    }
   }
-
-  const cred = await db
-    .selectFrom("git_credentials")
-    .select(["provider", "type", "encrypted_value", "installation_id"])
-    .where("id", "=", app.git_credential_id)
-    .executeTakeFirst()
-  if (!cred || (cred.type !== "pat" && cred.type !== "github_app")) {
-    return { autoRegistered: false, setupInstructions: manualInstructions(parsed, webhookUrl, parsed.provider) }
-  }
-  // Enforce the credential's provider and the administrator-approved API origin
-  // before decrypting a PAT or minting a GitHub installation token.
-  if (!credentialMatchesDestination(cred, parsed)) {
-    const reason =
-      `Auto-registration is disabled for ${parsed.apiBase}: the app's git credential can only be ` +
-      `sent to its provider's public API or to hosts an administrator has allowed via ` +
-      `${ALLOWED_ORIGINS_ENV}.\n\n`
-    return { autoRegistered: false, setupInstructions: reason + manualInstructions(parsed, webhookUrl, parsed.provider) }
-  }
+  const cred = check.credential
 
   let pat: string
   try {
@@ -190,7 +218,11 @@ async function tryAutoRegister(
       : decrypt(cred.encrypted_value)
   } catch (err) {
     console.error("webhook auto-register: failed to obtain token", err)
-    return { autoRegistered: false, setupInstructions: manualInstructions(parsed, webhookUrl, parsed.provider) }
+    return {
+      autoRegistered: false,
+      failureReason: "canette could not obtain a token from the app's Git credential.",
+      setupInstructions: manualInstructions(parsed, webhookUrl, parsed.provider),
+    }
   }
 
   try {
@@ -266,7 +298,11 @@ async function tryAutoRegister(
     const detail = err instanceof Error ? err.message : String(err)
     console.error("webhook auto-register: provider API error:", detail)
     const instructions = manualInstructions(parsed, webhookUrl, parsed.provider)
-    return { autoRegistered: false, setupInstructions: `Auto-registration failed: ${detail}\n\n${instructions}` }
+    return {
+      autoRegistered: false,
+      failureReason: `Registering the webhook with the ${parsed.provider} API failed (${detail}). ${SCOPE_HINTS[parsed.provider] ?? ""}`.trim(),
+      setupInstructions: `Auto-registration failed: ${detail}\n\n${instructions}`,
+    }
   }
 }
 
@@ -296,19 +332,14 @@ async function tryDeregister(parsed: ParsedGitUrl, providerHookId: string, pat: 
 
 // ── Public service functions ───────────────────────────────────────────────────
 
-export async function createWebhook(
-  db: DB,
-  appId: string,
-  userId: string,
-  opts: { watchPath: string }
-): Promise<{
-  config: WebhookConfig
-  webhookUrl: string
-  webhookSecret: string
-  autoRegistered: boolean
-  setupInstructions?: string
-}> {
-  // Verify membership
+interface WebhookTarget {
+  app: AppRow
+  parsed: ParsedGitUrl
+}
+
+// The app a webhook can be created for, after the team-access check. Throws
+// for an app whose source can't have a webhook.
+async function resolveWebhookTarget(db: DB, appId: string, userId: string): Promise<WebhookTarget> {
   const accessRow = await db
     .selectFrom("apps as a")
     .innerJoin("projects as p_access", "p_access.id", "a.project_id")
@@ -339,6 +370,79 @@ export async function createWebhook(
       422
     )
   }
+  return { app, parsed }
+}
+
+export interface WebhookSupport {
+  provider: ParsedGitUrl["provider"]
+  // Whether createWebhook can register the webhook with the provider itself.
+  // true is not a guarantee: the provider can still refuse the token.
+  autoRegister: { possible: true } | { possible: false; reason: string }
+}
+
+// What createWebhook would do for this app, without changing anything. Throws
+// like createWebhook for an app that can't have a webhook.
+export async function checkWebhookSupport(db: DB, appId: string, userId: string): Promise<WebhookSupport> {
+  const { app, parsed } = await resolveWebhookTarget(db, appId, userId)
+  const check = await autoRegisterCredential(db, app, parsed)
+  return {
+    provider: parsed.provider,
+    autoRegister: check.ok ? { possible: true } : { possible: false, reason: check.reason },
+  }
+}
+
+// Best-effort removal of a webhook canette registered with the provider.
+async function deregisterProviderHook(
+  db: DB,
+  app: Pick<AppRow, "git_url" | "git_credential_id">,
+  providerHookId: string
+): Promise<void> {
+  if (!app.git_credential_id) return
+  const parsed = parseGitUrl(app.git_url)
+  if (!parsed) return
+  const cred = await db
+    .selectFrom("git_credentials")
+    .select(["provider", "type", "encrypted_value", "installation_id"])
+    .where("id", "=", app.git_credential_id)
+    .executeTakeFirst()
+  if (
+    (cred?.type === "pat" || cred?.type === "github_app") &&
+    credentialMatchesDestination(cred, parsed)
+  ) {
+    try {
+      const pat = cred.type === "github_app"
+        ? await generateInstallationToken(cred.installation_id ?? undefined)
+        : decrypt(cred.encrypted_value)
+      await tryDeregister(parsed, providerHookId, pat)
+    } catch {
+      // Best-effort — don't fail the delete if token generation fails
+    }
+  }
+}
+
+export async function createWebhook(
+  db: DB,
+  appId: string,
+  userId: string,
+  opts: { watchPath: string }
+): Promise<{
+  config: WebhookConfig
+  webhookUrl: string
+  webhookSecret: string
+  autoRegistered: boolean
+  setupInstructions?: string
+  autoRegisterFailureReason?: string
+}> {
+  const { app, parsed } = await resolveWebhookTarget(db, appId, userId)
+
+  // Replacing a webhook rotates its secret, so the hook canette registered for
+  // the old one would only fail signature checks from now on.
+  const existing = await db
+    .selectFrom("webhook_secrets")
+    .select("provider_hook_id")
+    .where("app_id", "=", appId)
+    .executeTakeFirst()
+  if (existing?.provider_hook_id) await deregisterProviderHook(db, app, existing.provider_hook_id)
 
   // Remove any existing webhook for this app (idempotent re-creation)
   await db
@@ -380,6 +484,7 @@ export async function createWebhook(
     webhookSecret: plaintextSecret,
     autoRegistered: result.autoRegistered,
     setupInstructions: result.setupInstructions,
+    autoRegisterFailureReason: result.failureReason,
   }
 }
 
@@ -440,29 +545,7 @@ export async function deleteWebhook(
   if (!row) return false
 
   // Best-effort deregistration from provider
-  if (row.provider_hook_id && accessRow.git_credential_id) {
-    const parsed = parseGitUrl(accessRow.git_url)
-    if (parsed) {
-      const cred = await db
-        .selectFrom("git_credentials")
-        .select(["provider", "type", "encrypted_value", "installation_id"])
-        .where("id", "=", accessRow.git_credential_id)
-        .executeTakeFirst()
-      if (
-        (cred?.type === "pat" || cred?.type === "github_app") &&
-        credentialMatchesDestination(cred, parsed)
-      ) {
-        try {
-          const pat = cred.type === "github_app"
-            ? await generateInstallationToken(cred.installation_id ?? undefined)
-            : decrypt(cred.encrypted_value)
-          await tryDeregister(parsed, row.provider_hook_id, pat)
-        } catch {
-          // Best-effort — don't fail the delete if token generation fails
-        }
-      }
-    }
-  }
+  if (row.provider_hook_id) await deregisterProviderHook(db, accessRow, row.provider_hook_id)
 
   await db
     .deleteFrom("webhook_secrets")

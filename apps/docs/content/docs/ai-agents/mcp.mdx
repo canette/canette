@@ -89,6 +89,9 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `delete_volume` | Remove an emptyDir or ConfigMap volume. Persistent volumes are left to you ([details](#volumes)) |
 | `request_password_protection` | Ask you to set a password for a web app on a canette page, so the password never passes through the agent ([details](#password-protection)) |
 | `disable_password_protection` | Removing password protection is left to you: returns a link to the app's settings ([details](#password-protection)) |
+| `get_webhook` | Check whether pushes deploy an app automatically: the webhook's provider, watch path, and whether canette registered it with the provider. Never returns the secret |
+| `enable_webhook` | Turn on [push-to-deploy](/docs/getting-started/webhooks), optionally for one directory (`watch_path`). Replacing an existing webhook needs `replace: true` ([details](#webhooks)) |
+| `disable_webhook` | Turn off push-to-deploy by removing the app's webhook |
 | `search_docs` | Search the canette documentation and return the best-matching sections with their page path |
 | `get_docs_page` | Get one documentation page as markdown, e.g. `configuration/canette-yaml` |
 | `get_canette_yaml_schema` | Get the JSON Schema for `canette.yaml` or `canette-template.yaml`: every field with its type, allowed values and description |
@@ -120,6 +123,14 @@ Agents can't delete a Persistent Volume, because that permanently deletes its da
 Agents can put a web app behind [password protection](/docs/configuration/password-protection) without seeing the password. `request_password_protection` works like `request_secret`: it returns a link to a canette page, with an optional reason from the agent, where you set the password yourself. If protection is already on, the same page changes the password. When you tell the agent you're done, it checks `get_app` and redeploys the app.
 
 Agents can't turn protection off, because that makes the app's URL public. `disable_password_protection` changes nothing and returns a link to the app's **Settings → Password protection** section, where you can turn it off yourself.
+
+### Webhooks
+
+Agents can turn on [push-to-deploy](/docs/getting-started/webhooks) for a Git app with `enable_webhook`, optionally limited to changes under one directory with `watch_path`. canette registers the webhook with GitHub, GitLab or Gitea using the app's Git credential, exactly as **Settings → Webhook** does, and the agent never sees the webhook secret.
+
+- If canette can't register the webhook itself, because the app has no Git credential, the credential is an SSH key, or the provider refuses the token (for example a missing webhook scope), `enable_webhook` enables nothing. It tells the agent why and returns a link to **Settings → Webhook**, where you enable the webhook and copy its URL and secret into the provider yourself.
+- An app has one webhook. Enabling it again replaces it with a new secret, so when the app already has one, `enable_webhook` fails unless the agent passes `replace: true`. canette removes the old webhook from the provider if it registered it. `get_webhook` only reads, and never rotates anything.
+- `disable_webhook` removes the webhook. A webhook you added to the provider by hand has to be deleted there as well.
 
 ### Stopping an app
 
