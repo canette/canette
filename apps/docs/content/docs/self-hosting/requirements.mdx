@@ -5,10 +5,6 @@ description: Kubernetes, node, and registry requirements for running canette.
 
 import { Callout } from "fumadocs-ui/components/callout"
 
-<Callout type="info">
-  This page is a work in progress.
-</Callout>
-
 ## Kubernetes
 
 - Kubernetes **1.27+**
@@ -66,7 +62,6 @@ canette builds images using BuildKit. By default it runs in **rootless mode**, w
 Some node configurations cannot support rootless BuildKit:
 
 - **EKS Bottlerocket** — uses SELinux enforcing mode; the SELinux policy blocks the mount namespace operations that rootlesskit requires, even when user namespaces are available at the kernel level.
-- Clusters running with the `Restricted` Pod Security Standard in the build namespace.
 - Nodes with kernel < 4.18 or `user.max_user_namespaces=0` that cannot be reconfigured.
 
 In these cases, set `buildkit.rootless: false` in your Helm values. This runs buildkitd as root with `privileged: true`, which bypasses the user namespace requirement entirely:
@@ -79,25 +74,28 @@ buildkit:
 No node-level configuration is needed in rooted mode. The `privileged: true` container gets the `spc_t` SELinux label on SELinux nodes, which bypasses policy restrictions.
 
 <Callout type="warn">
-  Rooted mode is less secure than rootless — the buildkitd pod runs with full host privileges. Ensure the `{system}-build` namespace has appropriate RBAC and network policies, and that the buildkitd pod is not reachable from outside the cluster.
+  Rooted mode is less secure than rootless — the buildkitd pod runs with full host privileges. Ensure the build namespace (`<release namespace>-build`) has appropriate RBAC and network policies, and that the buildkitd pod is not reachable from outside the cluster.
 </Callout>
 
 ## Container registry
 
 canette pushes built images to a registry you provide. Options:
 
-- **In-cluster** — a plain `registry:2` deployment (no auth, for testing)
-- **External** — any OCI-compatible registry (GHCR, ECR, GCR, Docker Hub, etc.)
+- **In-cluster** (default) — a `registry:2` deployment with auto-generated credentials, stored on a PVC or S3-compatible storage. See [Container registry](/docs/self-hosting/registry)
+- **External** — any OCI-compatible registry (GHCR, ECR, GCR, Docker Hub, etc.). Recommended for [production](/docs/getting-started/production#use-an-external-image-registry)
 
-## Resource recommendations
+## Resource requests
+
+The chart's default requests, which you can change in the Helm values for each component:
 
 | Component | CPU request | Memory request |
 |---|---|---|
 | `canette-api` | 100m | 128Mi |
-| `canette-ui` | 50m | 64Mi |
-| `canette-builder` | 100m | 128Mi |
-| `canette-controller` | 100m | 128Mi |
-| `canette-logstreamer` | 50m | 64Mi |
+| `canette-ui` | 100m | 256Mi |
+| `canette-builder` | 100m | 64Mi |
+| `canette-controller` | 100m | 64Mi |
+| `canette-logstreamer` | 50m | 32Mi |
 | `buildkitd` | 500m | 512Mi |
-| `registry` | 50m | 64Mi |
+| `registry` (if bundled) | 50m | 64Mi |
+| `postgres` (if bundled) | 100m | 128Mi |
 | Per build job | 250m | 256Mi |
