@@ -3,7 +3,7 @@ import type { DB } from "../db/db"
 import type { WebhookConfig } from "@canette/types"
 import { encrypt, decrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
-import { createDeployment } from "./deployments"
+import { ACTIVE_DEPLOYMENT_STATUSES, createDeployment } from "./deployments"
 import { generateInstallationToken } from "./github-app-token"
 import { ALLOWED_ORIGINS_ENV, isAdminAllowedOrigin, normaliseHttpsOrigin } from "./git-credential-destination"
 
@@ -669,14 +669,23 @@ export async function processWebhookEvent(
   if (!latestStatus || latestStatus === "stopped") {
     return { status: 200, message: "App is not running — push acknowledged but no deployment triggered" }
   }
-  if (["pending", "building", "scanning", "deploying"].includes(latestStatus)) {
+  if ((ACTIVE_DEPLOYMENT_STATUSES as readonly string[]).includes(latestStatus)) {
     return { status: 200, message: "Deployment already in progress" }
   }
   // ── Trigger deployment ────────────────────────────────────────────────────
-  await createDeployment(db, appId, null, {
-    commitSha: headCommitSha,
-    commitMessage: headCommitMessage,
-  })
+  try {
+    await createDeployment(db, appId, null, {
+      commitSha: headCommitSha,
+      commitMessage: headCommitMessage,
+    })
+  } catch (err) {
+    // A deployment started since the check above (or an older one is still
+    // running). Not an error for the provider, which would retry it.
+    if (err instanceof ServiceError && err.code === "DEPLOYMENT_IN_PROGRESS") {
+      return { status: 200, message: "Deployment already in progress" }
+    }
+    throw err
+  }
 
   return { status: 200, message: "Deployment triggered" }
 }
