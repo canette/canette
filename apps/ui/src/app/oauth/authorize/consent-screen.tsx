@@ -7,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator"
 import { authorizeAction, denyAction } from "./actions"
 
-// Everything a token lets an MCP client do. Keep in sync with TOOLS in
-// apps/api/src/services/mcp.ts — a user must never grant more than this says.
+// Everything a token lets an MCP client do. Keep in sync with the MCP tools in
+// apps/api/src/services/mcp/tools/ — a user must never grant more than this says.
 const TOOL_DESCRIPTIONS = [
   "List your teams, list and create projects and apps, and change project and app settings",
   "Trigger deployments and roll back to earlier ones",

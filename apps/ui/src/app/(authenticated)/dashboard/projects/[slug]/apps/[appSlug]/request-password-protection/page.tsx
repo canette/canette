@@ -13,7 +13,7 @@ import { FormError } from "@/components/ui/form-error"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
 
-// Same limit as the request_password_protection MCP tool (apps/api/src/services/mcp.ts).
+// Same limit as the request_password_protection MCP tool (apps/api/src/services/mcp/tools/access.ts).
 // Enforced again here because the link's query string can be edited by hand.
 const MAX_REASON = 300
 

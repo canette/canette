@@ -14,7 +14,7 @@ import { EnvValueField } from "@/components/env-value-field"
 import { useAppContext } from "@/lib/app-context"
 import * as api from "@/lib/api"
 
-// Same limits as the request_secret MCP tool (apps/api/src/services/mcp.ts).
+// Same limits as the request_secret MCP tool (apps/api/src/services/mcp/tools/env.ts).
 // Enforced again here because the link's query string can be edited by hand.
 const MAX_KEYS = 10
 const MAX_REASON = 300

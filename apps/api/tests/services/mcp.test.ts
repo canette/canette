@@ -13,7 +13,7 @@ process.env.ENCRYPTION_KEY ??= "00".repeat(32)
 
 // handleTool reads the module-level db — point it at the in-memory test db.
 mock.module("../../src/db/db", () => ({ db }))
-const { handleTool, buildMcpServer, searchDocsTool, getDocsPageTool, getSchemaTool } = await import("../../src/services/mcp")
+const { handleTool, buildMcpServer, searchDocsTool, getDocsPageTool, getSchemaTool, ALL_TOOLS } = await import("../../src/services/mcp")
 const { createDocsIndex } = await import("../../src/docs")
 const { encrypt, decrypt } = await import("../../src/utils/crypto")
 
@@ -1161,6 +1161,14 @@ describe("services/mcp runtime diagnostics", () => {
       expect(error(await handleTool("enable_webhook", { app_id: app.id, watch_path: 5 }, "userId")).code).toBe("VALIDATION_ERROR")
       expect(providerRequests).toEqual([])
     })
+  })
+})
+
+describe("services/mcp registry", () => {
+  it("registers every tool once, with a handler", () => {
+    const names = ALL_TOOLS.map((t) => t.name)
+    expect(new Set(names).size).toBe(names.length)
+    for (const tool of ALL_TOOLS) expect(typeof tool.handler).toBe("function")
   })
 })
 

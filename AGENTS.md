@@ -122,6 +122,7 @@ Auth is handled by `better-auth` embedded in the API server. Supported methods i
 - Auth middleware (better-auth sessions)
 - Writes desired state to the database
 - Does NOT talk to the Kubernetes API directly (that's the controller's job)
+- MCP tools live in `src/services/mcp/tools/<domain>.ts`: one `defineTool()` per tool, holding its definition and handler, and each domain's list is registered in `src/services/mcp/registry.ts` (whose order is the `tools/list` order). Tool errors use `err(message, code)` / `notFound()` from `src/services/mcp/tool.ts`
 
 ### `apps/ui` (TypeScript · Next.js 16)
 - Talks only to `apps/api` — never directly to Kubernetes
