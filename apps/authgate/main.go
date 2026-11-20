@@ -6,9 +6,10 @@
 // one app's traffic with the username/password stored in
 // apps.password_gate_*), same wiring (Secret-mounted credentials, Service
 // targetPort switches to this container when the gate is enabled), but with a
-// branded no-JS login page for browsers instead of the native Basic Auth
-// dialog. Verifies the exact bcrypt hash apps/api/src/services/password-gate.ts
-// already produces — no change to the API layer or DB schema.
+// branded login page for browsers (works without JS) instead of the native
+// Basic Auth dialog. Verifies the exact bcrypt hash
+// apps/api/src/services/password-gate.ts already produces — no change to the
+// API layer or DB schema.
 package main
 
 import (

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"html/template"
 	"net/http"
 	"strings"
@@ -13,6 +15,19 @@ import (
 const gatePathPrefix = "/.canette-gate/"
 
 var loginTemplate = template.Must(template.New("login").Parse(loginPageHTML))
+
+// loginScript carries the URL fragment through the login POST. Fragments are
+// never sent to the server, so the "return" path can't hold one; the browser
+// does keep it on the redirect to the login page, and it keeps it on the 303
+// back to the app when the POST URL has one too. Without JS the form still
+// works and only the fragment is lost.
+const loginScript = `document.getElementById("login").action += location.hash;`
+
+// loginScriptCSP allows exactly loginScript and no other script.
+var loginScriptCSP = func() string {
+	sum := sha256.Sum256([]byte(loginScript))
+	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+}()
 
 type loginPageData struct {
 	ReturnPath   string
@@ -33,7 +48,7 @@ func setGatePageHeaders(w http.ResponseWriter) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		"default-src 'none'; script-src "+loginScriptCSP+"; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 }
 
 // safeReturnPath restricts login/logout redirect targets to a single
@@ -96,13 +111,14 @@ const loginPageHTML = `<!doctype html>
   <h1>Authentication required</h1>
   <p class="sub">Enter the password to continue.</p>
   {{if .ErrorMessage}}<p class="error">{{.ErrorMessage}}</p>{{end}}
-  <form method="post" action="/.canette-gate/login">
+  <form id="login" method="post" action="/.canette-gate/login">
     <input type="hidden" name="return" value="{{.ReturnPath}}">
     <label for="password">Password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
     <button type="submit">Continue</button>
   </form>
 </main>
+<script>` + loginScript + `</script>
 </body>
 </html>
 `
