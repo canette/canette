@@ -54,7 +54,7 @@ bun run test:logstreamer
 
 ### Local end-to-end smoke test
 
-On an Apple Silicon Mac, use the [Lima smoke test](./scripts/e2e/README.md) for a quick pre-merge check of Helm changes, Git builds, or HTTPS routing. It installs the checked-out commit into a dedicated K3s VM and deploys a small Git-backed app.
+On an Apple Silicon Mac, use the [local smoke test](./scripts/e2e/README.md) for a quick pre-merge check of Helm changes, Git builds, or HTTPS routing. It installs the checked-out commit in a dedicated cluster and deploys a small Git-backed app. Choose Lima with K3s or the experimental Apple Container backend.
 
 ## Type checking
 

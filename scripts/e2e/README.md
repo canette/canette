@@ -1,6 +1,9 @@
 # Local Canette end-to-end test
 
-This smoke test currently runs **only on macOS on Apple Silicon**. [macos-lima.sh](./macos-lima.sh) tests committed `HEAD` on a single-node K3s cluster in Lima. It builds the Canette images into K3s’s containerd, installs the checkout’s Helm chart, and deploys a small app from an in-cluster Git fixture. It checks that the node pulls the app image over TLS and that Traefik serves the expected HTTPS response.
+This smoke test currently runs **only on macOS on Apple Silicon**. Both backends install the Helm chart from committed `HEAD`, build a small app from an in-cluster Git fixture, and check the node’s HTTPS registry pull and the app response through Traefik.
+
+- [Lima](#set-up-the-lima-vm) runs single-node K3s in a reusable VM.
+- [Apple Container](#apple-container-experimental) runs Kubernetes in Apple’s container runtime and shares its local image store.
 
 ## Set up the Lima VM
 
@@ -110,3 +113,44 @@ limactl stop canette-e2e
 ```
 
 Run `limactl delete canette-e2e` when you want to remove the VM and its disk, including the build cache.
+
+## Apple Container (experimental)
+
+Install [Apple Container](https://github.com/apple/container/releases) 1.7.1 or later on macOS 26 or later, then start its system service. Install the other host tools with Homebrew if needed. Run from a clean checkout of a trusted branch.
+
+```sh
+brew install kubernetes-cli helm mkcert jq
+container system start
+./scripts/e2e/macos-apple-container.sh
+```
+
+[macos-apple-container.sh](./macos-apple-container.sh) creates a dedicated single-node cluster named `canette-apple-e2e` with 4 CPUs, 6 GiB of memory, and the Apple shared image store. It builds the platform images with `container build` and installs Gateway API, Traefik, and the Local Path Provisioner in the test cluster. Kubernetes uses Apple Container’s bundled CNI. This smoke test covers application delivery and TLS.
+
+The default run deletes the cluster and its recorded branch image tags on exit. Apple Container’s builder cache is shared with other local builds.
+
+If disk space is tight, set `APPLE_E2E_BUILDER_CACHE_MB=3500` to have BuildKit trim unused cache toward 3,500 MB after each image build. This can evict cached layers from other Apple Container builds. The cache target covers BuildKit’s cache, and the node, images, and current build use additional disk space.
+
+If the node cannot resolve Docker Hub, set `APPLE_E2E_DNS` to the IPv4 address of a DNS resolver reachable from the node. This sets DNS for the dedicated test node and passes the same address to Apple’s image builder. The command below uses Google’s public DNS.
+
+```sh
+APPLE_E2E_DNS=8.8.8.8 ./scripts/e2e/macos-apple-container.sh
+```
+
+| Option | Behavior |
+| --- | --- |
+| `--setup` | Creates the test cluster or reuses an existing running one. |
+| `--check` | Checks the checkout and running test cluster. |
+| `--keep` | Keeps the cluster for debugging and prints the test login if it was created. |
+| `--cleanup` | Deletes the dedicated cluster, test volumes, and its recorded branch image tags. |
+
+For browser access after `--keep`, use the Apple cluster’s kubeconfig and test CA.
+
+```sh
+apple_e2e_state="${XDG_CACHE_HOME:-$HOME/.cache}/canette-e2e/apple-container"
+export KUBECONFIG="$apple_e2e_state/kubeconfig"
+kubectl -n kube-system get gateway canette-apple-e2e \
+  -o jsonpath='{.status.addresses[0].value}{"\n"}'
+CAROOT="$apple_e2e_state/ca" mkcert -install
+```
+
+Map `ui.apps.canette-apple-e2e.test` and the printed app hostname to that IP in `/etc/hosts`. Sign in at the [Apple test dashboard](https://ui.apps.canette-apple-e2e.test/login/email) with the credentials printed by the script. To inspect the node, run `container exec -it canette-apple-e2e bash`.
