@@ -29,9 +29,14 @@ func newGate(log *zap.Logger, cfg config) *gate {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
-			// Never forward our own session cookie to the app — it's only
-			// meaningful to the gate, and the app has no use for it.
+			// Forward application cookies and keep both gate session cookie names private.
+			cookies := pr.Out.Cookies()
 			pr.Out.Header.Del("Cookie")
+			for _, cookie := range cookies {
+				if cookie.Name != sessionCookieName && cookie.Name != insecureSessionCookieName {
+					pr.Out.AddCookie(cookie)
+				}
+			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			// Log the real cause server-side (connection refused, timeout, ...) —
