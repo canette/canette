@@ -59,6 +59,8 @@ spec:
             - name: AUTHGATE_IMAGE
               {{- $authgateImage := include "canette.serviceImage" (list . "canette-authgate" .Values.authgate.image) }}
               value: {{ $authgateImage | quote }}
+            - name: AUTHGATE_IMAGE_PULL_POLICY
+              value: {{ include "canette.imagePullPolicy" $authgateImage | quote }}
             - name: BUILDER_NAMESPACE
               value: {{ include "canette.buildNamespace" . | quote }}
             - name: POLL_INTERVAL

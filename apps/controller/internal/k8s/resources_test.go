@@ -119,6 +119,9 @@ func TestBuildResources_PasswordGateAddsSidecarAndSecret(t *testing.T) {
 	if got := authgate["image"]; got != cfg.AuthgateImage {
 		t.Errorf("authgate image = %q, want %q", got, cfg.AuthgateImage)
 	}
+	if _, ok := authgate["imagePullPolicy"]; ok {
+		t.Error("expected no imagePullPolicy on the authgate sidecar when AuthgateImagePullPolicy is empty")
+	}
 	envFrom, _ := authgate["envFrom"].([]interface{})
 	if len(envFrom) != 1 {
 		t.Fatalf("expected 1 envFrom entry referencing the authgate secret, got %d", len(envFrom))
@@ -217,6 +220,27 @@ func TestBuildResources_PasswordGateUpstreamEnv(t *testing.T) {
 	}
 	if got["AUTHGATE_APP_SLUG"] != "my-app" {
 		t.Errorf("AUTHGATE_APP_SLUG = %q, want %q", got["AUTHGATE_APP_SLUG"], "my-app")
+	}
+}
+
+func TestBuildResources_PasswordGateImagePullPolicy(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.AuthgateImage = "registry.example.com/canette-authgate:edge"
+	cfg.AuthgateImagePullPolicy = "Always"
+	cfg.PasswordGate = PasswordGateConfig{Enabled: true, PasswordHash: "$2b$10$fakehash"}
+	res := BuildResources(cfg)
+
+	depSpec, _ := res.Deployment["spec"].(map[string]interface{})
+	tmpl, _ := depSpec["template"].(map[string]interface{})
+	podSpec, _ := tmpl["spec"].(map[string]interface{})
+	containers, _ := podSpec["containers"].([]interface{})
+	authgate, _ := containers[1].(map[string]interface{})
+	if got := authgate["imagePullPolicy"]; got != "Always" {
+		t.Errorf("authgate imagePullPolicy = %v, want %q", got, "Always")
+	}
+	app, _ := containers[0].(map[string]interface{})
+	if _, ok := app["imagePullPolicy"]; ok {
+		t.Error("expected the app container's imagePullPolicy to be unaffected by AuthgateImagePullPolicy")
 	}
 }
 

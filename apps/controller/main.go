@@ -126,6 +126,14 @@ func run(log *zap.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Set by Helm via canette.imagePullPolicy (Always for :latest/:edge), so a
+	// pod restart picks up a newly pushed mutable tag instead of the node cache.
+	authgateImagePullPolicy := os.Getenv("AUTHGATE_IMAGE_PULL_POLICY")
+	switch authgateImagePullPolicy {
+	case "", "Always", "IfNotPresent", "Never":
+	default:
+		return fmt.Errorf("invalid AUTHGATE_IMAGE_PULL_POLICY %q: must be Always, IfNotPresent, Never or empty", authgateImagePullPolicy)
+	}
 
 	// Extract registry host from pullRepo for imagePullSecret matching
 	// e.g., "registry.example.com/" → "registry.example.com"
@@ -160,6 +168,7 @@ func run(log *zap.Logger) error {
 		RegistryAuthConfigFile:  registryAuthConfigFile,
 		RegistryHost:            registryHost,
 		AuthgateImage:           authgateImage,
+		AuthgateImagePullPolicy: authgateImagePullPolicy,
 		Workload:                workload,
 		NamespacePolicy:         nsPolicy,
 		StorageClassName:        os.Getenv("STORAGE_CLASS_NAME"),

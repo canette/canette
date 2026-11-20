@@ -31,6 +31,7 @@ type Config struct {
 	RegistryAuthConfigFile  string // Path to mounted .dockerconfigjson file
 	RegistryHost            string // Registry host extracted from PullRepo (e.g., "registry.example.com")
 	AuthgateImage           string // canette-authgate sidecar image ref, only used when an app's password gate is enabled
+	AuthgateImagePullPolicy string // imagePullPolicy for the authgate sidecar; empty leaves the Kubernetes default
 	Workload                k8sres.WorkloadDefaults
 	NamespacePolicy         k8sres.NamespacePolicy
 	StorageClassName        string // PVC storage class for new volumes; empty uses the cluster default
@@ -260,12 +261,13 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 			Enabled:      cfg.PasswordGate.Enabled,
 			PasswordHash: cfg.PasswordGate.PasswordHash,
 		},
-		AuthgateImage:    c.cfg.AuthgateImage,
-		Healthcheck:      healthcheckSpec(cfg.Healthcheck),
-		Security:         securitySpec(cfg.Security),
-		Workload:         c.cfg.Workload,
-		NamespacePolicy:  c.cfg.NamespacePolicy,
-		StorageClassName: c.cfg.StorageClassName,
+		AuthgateImage:           c.cfg.AuthgateImage,
+		AuthgateImagePullPolicy: c.cfg.AuthgateImagePullPolicy,
+		Healthcheck:             healthcheckSpec(cfg.Healthcheck),
+		Security:                securitySpec(cfg.Security),
+		Workload:                c.cfg.Workload,
+		NamespacePolicy:         c.cfg.NamespacePolicy,
+		StorageClassName:        c.cfg.StorageClassName,
 	}
 }
 
