@@ -109,37 +109,38 @@ type SecuritySpec struct {
 
 // DeployConfig carries everything needed to build resources.
 type DeployConfig struct {
-	ProjectID            string
-	ProjectSlug          string
-	ProjectOwner         string // user ID who created the project (may be empty)
-	AppSlug              string
-	ImageRef             string // full image reference including digest, e.g. "registry/proj/app@sha256:..."
-	Port                 int
-	Replicas             int
-	Resources            Resources
-	EnvVars              map[string]string // plain-text env vars
-	SecretData           map[string][]byte // decrypted secret values
-	GatewayName          string
-	GatewayNamespace     string
-	NetworkPolicyEnabled bool // global toggle for the default per-app NetworkPolicy
-	ClusterDomain        string
-	Command              []string // optional command override (canette.yaml runtime.command)
-	SkipHTTPRoute        bool     // true when deployment_type == "private" or ingress.enabled == false
-	IsCronJob            bool     // true when deployment_type == "cronjob"
-	Schedule             string   // cron expression, only used when IsCronJob
-	ImagePullSecretName  string   // Name of the imagePullSecret to reference in pod spec
-	ImagePullSecretData  []byte   // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
-	Volumes              []VolumeSpec
-	ExtraHostnames       []string // admin-assigned custom hostnames, added to the HTTPRoute alongside the platform-generated one
-	CommitSha            string   // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
-	DeploymentID         string   // deployments.id row that triggered this apply, surfaced as an annotation
-	PasswordGate         PasswordGateConfig
-	AuthgateImage        string           // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
-	Healthcheck          *HealthcheckSpec // nil when canette.yaml has no healthcheck block
-	Security             *SecuritySpec    // nil when canette.yaml hardened mode is off
-	Workload             WorkloadDefaults
-	NamespacePolicy      NamespacePolicy
-	StorageClassName     string // PVC storage class; empty uses the cluster default
+	ProjectID               string
+	ProjectSlug             string
+	ProjectOwner            string // user ID who created the project (may be empty)
+	AppSlug                 string
+	ImageRef                string // full image reference including digest, e.g. "registry/proj/app@sha256:..."
+	Port                    int
+	Replicas                int
+	Resources               Resources
+	EnvVars                 map[string]string // plain-text env vars
+	SecretData              map[string][]byte // decrypted secret values
+	GatewayName             string
+	GatewayNamespace        string
+	NetworkPolicyEnabled    bool // global toggle for the default per-app NetworkPolicy
+	ClusterDomain           string
+	Command                 []string // optional command override (canette.yaml runtime.command)
+	SkipHTTPRoute           bool     // true when deployment_type == "private" or ingress.enabled == false
+	IsCronJob               bool     // true when deployment_type == "cronjob"
+	Schedule                string   // cron expression, only used when IsCronJob
+	ImagePullSecretName     string   // Name of the imagePullSecret to reference in pod spec
+	ImagePullSecretData     []byte   // raw .dockerconfigjson content; Go's JSON marshaler base64-encodes []byte in data fields
+	Volumes                 []VolumeSpec
+	ExtraHostnames          []string // admin-assigned custom hostnames, added to the HTTPRoute alongside the platform-generated one
+	CommitSha               string   // git commit SHA for the deployed revision, surfaced as app.kubernetes.io/version
+	DeploymentID            string   // deployments.id row that triggered this apply, surfaced as an annotation
+	PasswordGate            PasswordGateConfig
+	AuthgateImage           string           // canette-authgate sidecar image ref, only read when PasswordGate.Enabled
+	AuthgateImagePullPolicy string           // imagePullPolicy for the authgate sidecar; empty leaves the Kubernetes default
+	Healthcheck             *HealthcheckSpec // nil when canette.yaml has no healthcheck block
+	Security                *SecuritySpec    // nil when canette.yaml hardened mode is off
+	Workload                WorkloadDefaults
+	NamespacePolicy         NamespacePolicy
+	StorageClassName        string // PVC storage class; empty uses the cluster default
 }
 
 // setIfSet sets m[key] = *v only when v is non-nil, so unset defaults are
@@ -728,6 +729,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 			"readinessProbe": map[string]interface{}{
 				"httpGet": map[string]interface{}{"path": authgateHealthzPath, "port": authgateSidecarPort},
 			},
+		}
+		if cfg.AuthgateImagePullPolicy != "" {
+			authgateContainer["imagePullPolicy"] = cfg.AuthgateImagePullPolicy
 		}
 		podSpec["containers"] = append(podSpec["containers"].([]interface{}), authgateContainer)
 	}
