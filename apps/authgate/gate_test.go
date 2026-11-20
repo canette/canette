@@ -181,6 +181,29 @@ func TestGate_ValidSessionCookieProxies(t *testing.T) {
 	}
 }
 
+func TestGate_ForwardsApplicationCookies(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const want = `app_session=session-value; preference="dark mode"; app_session=second-value`
+		if got := r.Header.Get("Cookie"); got != want {
+			t.Errorf("upstream Cookie header = %q, want %q", got, want)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	g := newTestGate(t, upstream)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.AddCookie(&http.Cookie{Name: "app_session", Value: "session-value"})
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: signSession(g.cfg.PasswordHash, time.Now())})
+	req.Header.Add("Cookie", `preference="dark mode"; `+insecureSessionCookieName+`=localdev; app_session=second-value`)
+	rec := httptest.NewRecorder()
+	g.mux().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("got status=%d, want 204", rec.Code)
+	}
+}
+
 func TestGate_ExpiredSessionCookieDoesNotProxy(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("upstream should not be reached with an expired session")
