@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
+import { requestBodyLimit } from "./middleware/body-limit"
 import { auth, emailProviderConfigured } from "./auth/auth"
 import { db } from "./db/db"
 import { getSignupMode } from "./services/admin"
@@ -24,6 +25,7 @@ export function createApp() {
     const app = new Hono()
 
     app.use("*", logger())
+    app.use("*", requestBodyLimit())
 
     // OAuth and MCP endpoints are public (bearer token auth, no cookies).
     // Must be registered before the session-cookie CORS below so that OPTIONS

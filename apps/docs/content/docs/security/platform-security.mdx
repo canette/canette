@@ -71,6 +71,7 @@ Webhooks from GitHub, GitLab, and Gitea are validated with HMAC before any proce
 - Each webhook endpoint has a per-project secret stored in the database
 - Incoming requests are rejected immediately if the `X-Hub-Signature-256` (or equivalent) header is absent or does not match
 - Validation happens before any payload parsing — an invalid signature produces no side effects
+- A delivery for an app without a webhook is rejected before its body is read, and bodies over 25 MiB are rejected with `413`
 
 ---
 
@@ -80,6 +81,7 @@ Webhooks from GitHub, GitLab, and Gitea are validated with HMAC before any proce
 - The API server does not talk to the Kubernetes API directly — that is the controller's responsibility. A compromised API process cannot create, modify, or delete Kubernetes resources
 - The UI talks only to the API — it has no direct database access and no Kubernetes credentials
 - Paginated list responses include only the fields needed for display; encrypted values are never included
+- Request bodies are size-limited: 1 MiB by default, 8 MiB for volume and MCP requests (ConfigMap content can be up to 1 MiB), 25 MiB for webhooks, and a 30 MiB hard ceiling in the server. Larger requests get `413` with code `PAYLOAD_TOO_LARGE`. For defense in depth you can also set a body limit on your Gateway
 
 ---
 
@@ -88,8 +90,8 @@ Webhooks from GitHub, GitLab, and Gitea are validated with HMAC before any proce
 canette uses the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) exclusively — no legacy `networking.k8s.io/v1 Ingress` resources are generated.
 
 - Each app gets an `HTTPRoute` that routes from the cluster gateway to the app's `Service`
-- The `gatewayClassName` is set via Helm values — canette does not hardcode any controller-specific behaviour
-- Traefik is included as a subchart and enabled by default; it can be replaced with any Gateway API-compatible controller
+- Routes attach to a pre-existing Gateway set by `controller.gateway.name` and `controller.gateway.namespace` in the Helm values. canette does not create the Gateway, its class, listeners or TLS certificates, and does not hardcode any controller-specific behaviour
+- No Gateway controller is bundled. Install a Gateway API implementation (Traefik, Cilium, Envoy Gateway, etc.) before installing canette — see [Requirements](/docs/self-hosting/requirements)
 
 ---
 
