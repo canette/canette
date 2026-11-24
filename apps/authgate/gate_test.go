@@ -100,6 +100,47 @@ func TestGate_BasicAuthSuccess(t *testing.T) {
 	}
 }
 
+func TestGate_BasicAuthHeaderNotForwarded(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("upstream saw Authorization = %q, the gate password must never be forwarded", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	g := newTestGate(t, upstream)
+
+	req := httptest.NewRequest("GET", "/anything", nil)
+	req.Header.Set("Authorization", basicAuthHeader("demo", testPassword))
+	rec := httptest.NewRecorder()
+	g.mux().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("got status=%d, want 204", rec.Code)
+	}
+}
+
+func TestGate_SessionCookieKeepsAppAuthorizationHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
+			t.Errorf("upstream Authorization = %q, want %q", got, "Bearer app-token")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	g := newTestGate(t, upstream)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer app-token")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: signSession(g.cfg.PasswordHash, time.Now())})
+	rec := httptest.NewRecorder()
+	g.mux().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("got status=%d, want 204", rec.Code)
+	}
+}
+
 func TestGate_BasicAuthWrongPassword(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("upstream should not be reached with a wrong password")

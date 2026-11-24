@@ -78,6 +78,11 @@ func (g *gate) mux() http.Handler {
 func (g *gate) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if _, pass, ok := r.BasicAuth(); ok {
 		if g.verifyPassword(pass) {
+			// The header carries the gate password, so the app (and anything
+			// that logs its requests) must never see it. Only this branch
+			// strips it: a cookie-authenticated request keeps any Authorization
+			// header that belongs to the app, e.g. a Bearer token.
+			r.Header.Del("Authorization")
 			g.proxy.ServeHTTP(w, r)
 			return
 		}

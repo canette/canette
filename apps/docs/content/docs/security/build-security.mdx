@@ -85,7 +85,9 @@ If Railpack does not produce a working image for your project, add a `Dockerfile
 
 Build jobs have outbound internet access (required to fetch dependencies). During a build, the build process can make arbitrary outbound network requests — for example, to exfiltrate environment variables or source code, or to reach internal services on your network if your cluster does not enforce egress restrictions.
 
-**Mitigation**: Configure network policies on your cluster to restrict egress from the `canette-build` namespace to only what is needed (package registries, your git host, your image registry).
+With `buildkit.restrictEgress: true` (the default), a NetworkPolicy on `buildkitd`, where `RUN` steps execute, only allows DNS, the in-cluster registry and the public internet. Private ranges (RFC 1918 and `100.64.0.0/10`), link-local addresses (`169.254.0.0/16`, which includes cloud metadata endpoints such as `169.254.169.254`) and loopback are blocked. This needs a CNI that enforces NetworkPolicy.
+
+**Mitigation**: Keep `buildkit.restrictEgress` on, and protect node metadata at the provider as well: IMDSv2 with a hop limit of 1 on EKS, Workload Identity or metadata concealment on GKE. To narrow egress further, add your own network policies restricting the build namespace to only what is needed (package registries, your git host, your image registry).
 
 ### Image content
 
@@ -113,7 +115,8 @@ All builds share a single `buildkitd` daemon. Build cache is shared between buil
 | Concern | Recommendation |
 |---------|----------------|
 | Untrusted repositories | Review `canette.yaml` and `Dockerfile` before triggering a build |
-| Network exfiltration | Add a `NetworkPolicy` restricting egress from `canette-build` |
+| Network exfiltration | Keep `buildkit.restrictEgress: true`, and add a `NetworkPolicy` restricting egress from `canette-build` further |
+| Cloud metadata access | Enforce IMDSv2 with hop limit 1 (EKS) or Workload Identity (GKE) on build nodes |
 | Vulnerable images | Enable scanning via `security.scan.enabled: "true"`; set `security.scan.mandatory: true` to block deployments |
 | Shared build cache | Use separate canette installations for trusted and untrusted workloads |
 | Build secrets | Never pass sensitive secrets as build args — use runtime secrets instead |

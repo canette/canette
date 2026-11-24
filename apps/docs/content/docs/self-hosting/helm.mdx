@@ -188,7 +188,7 @@ Applied to every project namespace on its next deploy. See [Pod Security Admissi
 | `buildkit.rootless` | `true` | Run buildkitd in rootless mode. Requires user namespace support on build nodes. Set to `false` on nodes that cannot support user namespaces (e.g. EKS Bottlerocket). |
 | `buildkit.image` | derived | Override the buildkitd image. When empty, defaults to `moby/buildkit:v0.21.0-rootless` when `rootless=true`, or `moby/buildkit:v0.21.0` when `rootless=false`. |
 | `buildkit.registries` | `{}` | Additional registry trust entries for buildkitd. The in-cluster registry is added automatically. Format: `"host:port": { http: true, insecure: true }` |
-| `buildkit.restrictEgress` | `true` | Block RFC-1918 egress from the build namespace. Prevents a compromised build from reaching cluster-internal services while allowing internet access for package fetches. |
+| `buildkit.restrictEgress` | `true` | Block private (RFC 1918, `100.64.0.0/10`), link-local (`169.254.0.0/16`, including cloud metadata) and loopback egress from buildkitd. Prevents a compromised build from reaching cluster-internal services or node credentials while allowing internet access for package fetches. |
 
 ## Registry authentication
 
