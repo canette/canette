@@ -556,6 +556,15 @@ export async function deleteWebhook(
 
 // ── Webhook event processing (called by the public receiver route) ─────────────
 
+export async function hasWebhook(db: DB, appId: string): Promise<boolean> {
+  const row = await db
+    .selectFrom("webhook_secrets")
+    .select("app_id")
+    .where("app_id", "=", appId)
+    .executeTakeFirst()
+  return row !== undefined
+}
+
 export async function processWebhookEvent(
   db: DB,
   appId: string,

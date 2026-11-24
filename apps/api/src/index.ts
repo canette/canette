@@ -1,6 +1,7 @@
 import { resolve } from "path"
 import { runMigrations } from "./db/migrations"
 import { db } from "./db/db"
+import { MAX_REQUEST_BODY_SIZE } from "./middleware/body-limit"
 
 // Ordering matters here. better-auth validates the database schema as soon as
 // `betterAuth()` is constructed and caches a failed result for the life of the
@@ -39,5 +40,7 @@ const app = createApp()
 
 export default {
   port: Number(process.env.PORT ?? 3001),
+  // Hard ceiling; the per-route limits live in middleware/body-limit.ts.
+  maxRequestBodySize: MAX_REQUEST_BODY_SIZE,
   fetch: app.fetch,
 }
