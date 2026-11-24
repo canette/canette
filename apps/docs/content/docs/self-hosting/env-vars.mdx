@@ -31,6 +31,8 @@ Each canette service is a single binary or container. All configuration is provi
 | `GITHUB_APP_ID` | no | GitHub App ID (for GitHub App git credential type). |
 | `GITHUB_APP_INSTALLATION_ID` | no | GitHub App installation ID (for system credential mode). |
 | `GITHUB_APP_PUBLIC_LINK` | no | GitHub App public URL or slug, e.g. `https://github.com/apps/my-app`. |
+| `GITHUB_APP_CLIENT_ID` | no | GitHub App Client ID (starts with `Iv`). With `GITHUB_APP_CLIENT_SECRET`, required for the per-team installation wizard. |
+| `GITHUB_APP_CLIENT_SECRET` | no | GitHub App client secret, generated on the App's Credentials tab. Also read from `GITHUB_APP_CLIENT_SECRET_FILE`. |
 | `GITHUB_APP_PRIVATE_KEY_FILE` | no | Path to the GitHub App RSA private key PEM file. |
 | `DEFAULT_CPU_REQUEST` | no | Default CPU request for app deployments. Default: `100m`. |
 | `DEFAULT_MEMORY_REQUEST` | no | Default memory request for app deployments. Default: `128Mi`. |

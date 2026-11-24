@@ -14,7 +14,7 @@ canette can authenticate with GitHub as a **GitHub App** instead of using person
 | **System credential** | Admin installs once, configures `installationId` in Helm | Small teams, shared organisation, admin controls repo access |
 | **Per-team installation** | Each team connects their own GitHub account or org via a wizard | Larger deployments where users manage their own repository access |
 
-Both modes can be active at the same time — a team can use either the system credential or their own installation when configuring an app. You can start with the system credential and add the per-team wizard later by setting `publicLink` in Helm and the Setup URL in the GitHub App settings.
+Both modes can be active at the same time — a team can use either the system credential or their own installation when configuring an app. You can start with the system credential and add the per-team wizard later by setting `publicLink`, `clientId` and `clientSecret` in Helm and the Setup and Callback URLs in the GitHub App settings.
 
 ## Required GitHub App permissions
 
@@ -40,11 +40,22 @@ When creating the GitHub App, grant only these permissions:
 5. Click **Create GitHub App**.
 6. Note the **App ID** shown at the top of the app settings page.
 7. Note the **Public link** — shown in the GitHub App settings as a full URL (`https://github.com/apps/{slug}`).
-8. *(Per-team mode)* Scroll to **Post installation** and set the **Setup URL** to `https://canette.example.com/api/v1/github-app/callback`. Optionally check **"Redirect on update"** so re-installations also redirect back. Do not use the **Callback URL** field — that is for OAuth user authorization and is not needed here.
+8. *(Per-team mode)* On the app's **General** tab, set both of these to the same URL, `https://canette.example.com/api/v1/github-app/callback`, then click **Save changes**:
+   - **Callback URL**, under **Identifying and authorizing users**.
+   - **Setup URL**, under **Post installation**. Check **"Redirect on update"** too, so that changing an existing installation also redirects back to canette.
+
+   Leave **"Request user authorization (OAuth) during installation"** unchecked: canette runs the authorization step itself after the installation.
+
+   Use your canette (UI) host, the same one users open in the browser. canette checks the user's canette session when GitHub redirects back, so the URL must be on the host where that session cookie lives.
+9. *(Per-team mode)* Open the app's **Credentials** tab. Note the **Client ID** (it starts with `Iv`) and click **Generate a new client secret**. Copy the secret now; GitHub shows it only once.
+
+<Callout type="info">
+  The **Client ID** is not the **App ID**. Both belong to the same GitHub App: the App ID (a number) lets canette act as the App, while the Client ID and secret let canette check, during the wizard, which installations the signed-in user can access. They are also unrelated to `api.githubClientId`, which configures **Sign in with GitHub** through a separate OAuth App.
+</Callout>
 
 ### Step 2 — Generate a private key
 
-On the GitHub App settings page, scroll to **Private keys** and click **Generate a private key**. A `.pem` file is downloaded. Keep it safe.
+In the GitHub App settings, find the **Private keys** section (on the **Credentials** tab, or further down the **General** tab on older GitHub layouts) and click **Generate a private key**. A `.pem` file is downloaded. Keep it safe.
 
 ### Step 3 — Helm configuration
 
@@ -52,10 +63,10 @@ Before filling in values, decide which mode fits your deployment — you can als
 
 **Choose system credential mode (set `installationId`)** if a small, trusted group of teams shares the same repos, or if you — the admin — want to control exactly which repositories canette can access. One installation, one place to manage access; teams don't do anything extra.
 
-**Choose per-team installation mode (leave `installationId` empty, set `publicLink`)** if teams belong to different GitHub orgs/accounts, or you don't want every team implicitly able to deploy from every repo the admin's installation can see. Each team connects their own GitHub account or org via the in-app wizard, so access stays scoped to what that team explicitly installed the App on.
+**Choose per-team installation mode (leave `installationId` empty, set `publicLink`, `clientId` and `clientSecret`)** if teams belong to different GitHub orgs/accounts, or you don't want every team implicitly able to deploy from every repo the admin's installation can see. Each team connects their own GitHub account or org via the in-app wizard, so access stays scoped to what that team explicitly installed the App on.
 
 <Callout type="info">
-  Not sure? Start with system credential mode — it's the fastest to set up. You can add the per-team wizard later by setting `publicLink` and configuring the Setup URL, without disrupting the existing system credential.
+  Not sure? Start with system credential mode — it's the fastest to set up. You can add the per-team wizard later by setting `publicLink`, `clientId` and `clientSecret` and configuring the Setup and Callback URLs, without disrupting the existing system credential.
 </Callout>
 
 #### System credential mode (admin installs once)
@@ -84,13 +95,17 @@ api:
   githubApp:
     appId: "123456"              # App ID from GitHub App settings
     publicLink: "https://github.com/apps/canette-yourorg"  # "Public link" from GitHub App settings
+    clientId: "Iv23liAbCdEf"     # Client ID from GitHub App settings
+    clientSecret: "..."          # Client secret generated in GitHub App settings
     privateKey: |
       -----BEGIN RSA PRIVATE KEY-----
       MIIEowIBAAKCAQEA...
       -----END RSA PRIVATE KEY-----
 ```
 
-No `installationId` is needed — users install the app themselves. Remember to set the **Setup URL** in your GitHub App settings (see Step 1 above).
+No `installationId` is needed — users install the app themselves. Remember to set the **Setup URL** and **Callback URL** in your GitHub App settings (see Step 1 above).
+
+The client ID and secret let canette check, after each installation, that the user who installed the App can access that installation on GitHub. Without them the wizard is turned off.
 
 #### Both modes together
 
@@ -100,19 +115,25 @@ api:
     appId: "123456"
     installationId: "12345678"
     publicLink: "https://github.com/apps/canette-yourorg"
+    clientId: "Iv23liAbCdEf"
+    clientSecret: "..."
     privateKey: |
       -----BEGIN RSA PRIVATE KEY-----
       ...
       -----END RSA PRIVATE KEY-----
 ```
 
-If you prefer to keep the private key in a separate Kubernetes Secret, use `privateKeySecretRef` instead of `privateKey`:
+If you prefer to keep the private key and client secret in a separate Kubernetes Secret, use `privateKeySecretRef` and `clientSecretRef` instead of `privateKey` and `clientSecret`:
 
 ```yaml
 api:
   githubApp:
     appId: "123456"
     publicLink: "https://github.com/apps/canette-yourorg"
+    clientId: "Iv23liAbCdEf"
+    clientSecretRef:
+      name: my-github-app-secret
+      key: client-secret
     privateKeySecretRef:
       name: my-github-app-secret
       key: private-key
@@ -136,10 +157,21 @@ When `publicLink` is configured, users see a **"Connect GitHub Account or Org"**
 
 1. Click **Connect GitHub Account or Org**.
 2. GitHub opens and asks which account or organisation to install on, and whether to grant access to all repositories or specific ones.
-3. After approval, canette stores the installation and it appears in the team's credential list.
-4. Team members can then select it when configuring an app.
+3. GitHub then asks the user to authorize the App (only the first time; afterwards it redirects straight back). canette uses this one-time authorization to check that the user can access the installation they just chose. It does not keep the user's GitHub token.
+4. canette stores the installation and it appears in the team's credential list.
+5. Team members can then select it when configuring an app.
 
-Installations are team-scoped and persist independently of who added them.
+Installations are team-scoped and persist independently of who added them. An installation link is valid for 10 minutes, can be used once, and only works in the browser of the canette user who started it.
+
+### Upgrading from an earlier canette version
+
+Earlier versions of the per-team wizard stored an installation as soon as GitHub redirected back, without checking that the user could access it. The wizard now requires the App's OAuth client. After upgrading:
+
+1. In the GitHub App settings, set the **Callback URL** to the same URL as the **Setup URL** and leave **"Request user authorization (OAuth) during installation"** unchecked (Step 1, item 8).
+2. Generate a client secret on the **Credentials** tab (Step 1, item 9).
+3. Set `api.githubApp.clientId` and `api.githubApp.clientSecret` (or `clientSecretRef`) and run `helm upgrade`.
+
+Until all three are done, **Connect GitHub Account or Org** reports that per-team support is not configured. Existing per-team credentials and the system credential keep working. Credentials connected before the upgrade are not re-verified; review the team credential lists if you want to check them.
 
 ## How tokens work
 
@@ -151,10 +183,31 @@ When a build is triggered or a webhook is registered, canette generates a fresh 
 2. Update your Helm values (or the referenced Kubernetes Secret) with the new key.
 3. Run `helm upgrade`. The old key can be deleted from the GitHub App settings afterwards.
 
+## Rotating the client secret
+
+1. On the GitHub App's **Credentials** tab, click **Generate a new client secret**. The old secret keeps working until you delete it.
+2. Update `api.githubApp.clientSecret` (or the Secret referenced by `clientSecretRef`) and run `helm upgrade`.
+3. Delete the old secret on the **Credentials** tab.
+
 ## Troubleshooting
 
-**"Connect GitHub Account or Org" button is not visible**
-`GITHUB_APP_PUBLIC_LINK` is not set in the API configuration. Set `api.githubApp.publicLink` in Helm values and run `helm upgrade`.
+**"Per-Team GitHub App support is not configured" when connecting an account**
+`api.githubApp.publicLink`, `api.githubApp.clientId` or the client secret is missing. Set all three in Helm values and run `helm upgrade`.
+
+**Connecting fails with "Your GitHub account can't access that GitHub App installation"**
+The GitHub user who authorized the App can't see that installation. Make sure you install and authorize with the same GitHub account, and that the account is an owner or member of the organisation the App was installed on.
+
+**GitHub shows "This GitHub App must be configured with a callback URL" or "The redirect_uri is not associated with this application"**
+The GitHub App's **Callback URL** is missing or doesn't match `https://<your canette host>/api/v1/github-app/callback`. Set it (Step 1, item 8) and save. The link from the failed attempt stays valid for 10 minutes, so you can reload the GitHub page instead of starting over.
+
+**Connecting does nothing: GitHub shows the installation settings and never returns to canette**
+The App is already installed on that account or organisation, so GitHub opens the existing installation instead of a new one. It only redirects back after you change something (for example the repository selection) and click **Save**, and only if **"Redirect on update"** is checked under the Setup URL. Alternatively, uninstall the App on GitHub and connect again.
+
+**After connecting, the dashboard opens with `error=github-app-invalid-state`**
+The installation link expired (after 10 minutes), was already used, or was opened in a browser where a different canette user (or nobody) is signed in. Start again from **Connect GitHub Account or Org** in the same browser. This also happens if **"Request user authorization (OAuth) during installation"** is checked in the GitHub App settings; uncheck it.
+
+**After connecting, the dashboard opens with `error=github-app-not-a-member`**
+The user who started the connection is no longer a member of the team.
 
 **System credential does not appear in the credentials list**
 Both `api.githubApp.appId` and `api.githubApp.installationId` must be set. If only `appId` is configured (per-team mode only), no system credential is created.

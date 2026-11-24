@@ -119,6 +119,8 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
     if (status === "installed") { setGithubAppNotice("GitHub App connected successfully."); load() }
     else if (status === "pending") setGithubAppNotice("GitHub App installation is pending admin approval on GitHub.")
     else if (error === "github-app-callback-failed") setGithubAppNotice("Failed to complete GitHub App installation. Please try again.")
+    else if (error === "github-app-not-authorized") setGithubAppNotice("Your GitHub account can't access that GitHub App installation, so it wasn't connected.")
+    else if (error === "github-app-no-installation") setGithubAppNotice("GitHub didn't report an installation. Please try again.")
   }, [searchParams, load])
 
   function resetDialog() {
@@ -504,7 +506,7 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
                 {!connectingGithubApp && (
                   <>
                     <p className="text-xs text-warning-text border-l-2 border-warning pl-2 leading-relaxed">
-                      GitHub App permissions apply to all teams — you cannot restrict access per team. For fine-grained per-team access control, use fine-grained PAT tokens instead.
+                      This team will be able to build from every repository the installation can access (the ones chosen when the App was installed on GitHub). If you link the same installation to other teams, they get those same repositories. To give a team only some of them, use a fine-grained personal access token instead.
                     </p>
                     {linkableInstallations.length > 0 && (
                       <>
