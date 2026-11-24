@@ -11,11 +11,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+
+	libk8s "canette.dev/lib/k8s"
 )
 
 func newFakeDynamic(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
 		gvrConfigMap: "ConfigMapList",
+		gvrPVC:       "PersistentVolumeClaimList",
 	}
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
 }
@@ -64,6 +67,74 @@ func TestTeardown_NoPDBIsFine(t *testing.T) {
 	}
 	if err := TeardownCronJob(context.Background(), dyn, testNamespace, testApp); err != nil {
 		t.Fatalf("TeardownCronJob without PDB: %v", err)
+	}
+}
+
+func labelledObj(apiVersion, kind, name, appSlug string) *unstructured.Unstructured {
+	obj := unstructuredObj(apiVersion, kind, name, map[string]interface{}{})
+	obj.SetLabels(map[string]string{libk8s.LabelApp: appSlug})
+	return obj
+}
+
+func TestDeleteApp_RemovesEverythingTheAppOwned(t *testing.T) {
+	dyn := newFakeDynamic(
+		unstructuredObj("apps/v1", "Deployment", testApp, map[string]interface{}{}),
+		unstructuredObj("v1", "Service", testApp, map[string]interface{}{}),
+		unstructuredObj("gateway.networking.k8s.io/v1", "HTTPRoute", testApp, map[string]interface{}{}),
+		unstructuredObj("batch/v1", "CronJob", testApp, map[string]interface{}{}),
+		pdbObj(),
+		labelledObj("v1", "Secret", secretName(testApp), testApp),
+		labelledObj("v1", "Secret", authgateSecretName(testApp), testApp),
+		labelledObj("v1", "ConfigMap", testApp+"-conf-cfg", testApp),
+		labelledObj("v1", "PersistentVolumeClaim", testApp+"-data", testApp),
+		// Removed from canette earlier, its own deletion never ran.
+		labelledObj("v1", "PersistentVolumeClaim", testApp+"-old", testApp),
+		// Shared by every app in the namespace, labelled by the last one to apply it.
+		labelledObj("v1", "Secret", "canette-registry-creds", testApp),
+		labelledObj("v1", "PersistentVolumeClaim", "other-app-data", "other-app"),
+	)
+	if err := DeleteApp(context.Background(), dyn, testNamespace, testApp); err != nil {
+		t.Fatalf("DeleteApp: %v", err)
+	}
+
+	gone := []struct {
+		gvr  schema.GroupVersionResource
+		name string
+	}{
+		{gvrDeployment, testApp},
+		{gvrService, testApp},
+		{gvrHTTPRoute, testApp},
+		{gvrCronJob, testApp},
+		{gvrPDB, testApp},
+		{gvrSecret, secretName(testApp)},
+		{gvrSecret, authgateSecretName(testApp)},
+		{gvrConfigMap, testApp + "-conf-cfg"},
+		{gvrPVC, testApp + "-data"},
+		{gvrPVC, testApp + "-old"},
+	}
+	for _, g := range gone {
+		if _, err := dyn.Resource(g.gvr).Namespace(testNamespace).Get(context.Background(), g.name, metav1.GetOptions{}); !errors.IsNotFound(err) {
+			t.Errorf("expected %s/%s to be deleted, got err=%v", g.gvr.Resource, g.name, err)
+		}
+	}
+
+	kept := []struct {
+		gvr  schema.GroupVersionResource
+		name string
+	}{
+		{gvrSecret, "canette-registry-creds"},
+		{gvrPVC, "other-app-data"},
+	}
+	for _, k := range kept {
+		if _, err := dyn.Resource(k.gvr).Namespace(testNamespace).Get(context.Background(), k.name, metav1.GetOptions{}); err != nil {
+			t.Errorf("expected %s/%s to be kept, got err=%v", k.gvr.Resource, k.name, err)
+		}
+	}
+}
+
+func TestDeleteApp_NothingLeftIsFine(t *testing.T) {
+	if err := DeleteApp(context.Background(), newFakeDynamic(), testNamespace, testApp); err != nil {
+		t.Fatalf("DeleteApp on an empty namespace: %v", err)
 	}
 }
 

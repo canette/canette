@@ -206,8 +206,25 @@ export async function deleteTeam(db: DB, teamId: string): Promise<void> {
     )
   }
 
-  await db.deleteFrom("projects").where("team_id", "=", teamId).execute()
-  await db.deleteFrom("teams").where("id", "=", teamId).execute()
+  await db.transaction().execute(async (tx) => {
+    // Same as deleteProject: queue each project's namespace for cleanup.
+    const projects = await tx
+      .selectFrom("projects")
+      .select(["id", "slug"])
+      .where("team_id", "=", teamId)
+      .execute()
+    const now = new Date().toISOString()
+    for (const project of projects) {
+      await tx
+        .insertInto("queued_namespace_cleanups")
+        .values({ id: crypto.randomUUID(), project_id: project.id, project_slug: project.slug, created_at: now })
+        .onConflict((oc) => oc.doNothing())
+        .execute()
+    }
+
+    await tx.deleteFrom("projects").where("team_id", "=", teamId).execute()
+    await tx.deleteFrom("teams").where("id", "=", teamId).execute()
+  })
 }
 
 export async function addMember(db: DB, teamId: string, targetUserId: string): Promise<void> {

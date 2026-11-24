@@ -238,7 +238,7 @@ export async function deleteProject(
   const project = await db
     .selectFrom("projects as p")
     .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
-    .select("p.id")
+    .select(["p.id", "p.slug"])
     .where("p.id", "=", projectId)
     .where("tm.user_id", "=", userId)
     .executeTakeFirst()
@@ -258,8 +258,18 @@ export async function deleteProject(
     )
   }
 
-  await db
-    .deleteFrom("projects")
-    .where("id", "=", projectId)
-    .execute()
+  // The namespace outlives the apps: it still holds the project's policies
+  // and anything left behind, so it is deleted together with the project.
+  await db.transaction().execute(async (tx) => {
+    await tx
+      .insertInto("queued_namespace_cleanups")
+      .values({ id: crypto.randomUUID(), project_id: project.id, project_slug: project.slug, created_at: new Date().toISOString() })
+      .onConflict((oc) => oc.doNothing())
+      .execute()
+
+    await tx
+      .deleteFrom("projects")
+      .where("id", "=", projectId)
+      .execute()
+  })
 }

@@ -67,6 +67,7 @@ The volume name used for the underlying Kubernetes resource is derived automatic
 - A Persistent Volume uses the StorageClass set by your admin (`controller.storageClassName`), or the cluster's default class. The class is fixed when the volume is created
 - **Persistent Volume** configuration (size) is immutable after creation — the underlying `PersistentVolumeClaim` already exists and cannot be resized through canette
 - Deleting a Persistent Volume or Config File volume permanently deletes the underlying Kubernetes resource and its data; deleting an Ephemeral volume has no separate cleanup since it never persisted anything
+- Deleting the app deletes all of its volumes and their data. Stopping the app keeps them, so a stopped app restarts with its data intact
 
 ## Not available at creation time
 

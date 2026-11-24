@@ -626,6 +626,61 @@ func (s *Store) MarkNamespaceDeleted(ctx context.Context, id string) error {
 	return nil
 }
 
+// PendingAppCleanup holds the domain identifiers of a deleted app whose K8s
+// resources still have to be removed. The controller resolves them to a
+// namespace and resource names via packages/golib/k8s.
+type PendingAppCleanup struct {
+	ID          string
+	ProjectID   string
+	ProjectSlug string
+	AppSlug     string
+}
+
+// ClaimAppCleanups claims up to limit queued app cleanups, with the same
+// claim/TTL semantics as ClaimVolumeDeletions. Call MarkAppCleanedUp once every
+// resource is gone; on failure the claim expires and a later poll retries.
+func (s *Store) ClaimAppCleanups(ctx context.Context, limit int) ([]PendingAppCleanup, error) {
+	now := time.Now().UTC()
+	staleBefore := now.Add(-volumeDeletionClaimTTL)
+	rows, err := s.db.QueryContext(ctx, `
+		UPDATE queued_app_cleanups
+		SET claimed_at = $1
+		WHERE id IN (
+			SELECT id FROM queued_app_cleanups
+			WHERE claimed_at IS NULL OR claimed_at < $2
+			ORDER BY created_at ASC
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id, project_id, project_slug, app_slug`,
+		now, staleBefore, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query app cleanups: %w", err)
+	}
+	defer rows.Close()
+
+	var cleanups []PendingAppCleanup
+	for rows.Next() {
+		var c PendingAppCleanup
+		if err := rows.Scan(&c.ID, &c.ProjectID, &c.ProjectSlug, &c.AppSlug); err != nil {
+			return nil, fmt.Errorf("scan app cleanup row: %w", err)
+		}
+		cleanups = append(cleanups, c)
+	}
+	return cleanups, rows.Err()
+}
+
+// MarkAppCleanedUp removes a queued app cleanup, which also frees the app slug
+// for reuse in the project.
+func (s *Store) MarkAppCleanedUp(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM queued_app_cleanups WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("mark app cleaned up: %w", err)
+	}
+	return nil
+}
+
 // PendingVolumeDeletion holds the domain identifiers of a volume whose K8s
 // resource is queued for deletion. The controller resolves them to a namespace
 // and resource name via packages/golib/k8s.
