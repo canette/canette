@@ -297,6 +297,22 @@ export async function createApp(
 
   if (!membership) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
+  // The controller cleans a deleted app up by slug, so a new app may not take
+  // the slug until that has finished, or the cleanup would remove its resources.
+  const pendingCleanup = await db
+    .selectFrom("queued_app_cleanups")
+    .select("id")
+    .where("project_id", "=", projectId)
+    .where("app_slug", "=", input.slug)
+    .executeTakeFirst()
+  if (pendingCleanup) {
+    throw new ServiceError(
+      "An app with that slug was just deleted and is still being cleaned up. Try again in a minute.",
+      "CONFLICT",
+      409
+    )
+  }
+
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
 
@@ -560,25 +576,50 @@ export async function deleteApp(
   const app = await getAppById(db, appId, userId)
   if (!app) return false
 
-  const latest = await db
-    .selectFrom("deployments")
-    .select("status")
-    .where("app_id", "=", appId)
-    .orderBy("created_at", "desc")
-    .limit(1)
-    .executeTakeFirst()
-  const latestStatus = latest?.status
-  if (latestStatus === "live" || latestStatus === "deploying" || latestStatus === "building") {
-    throw new ServiceError(
-      "Stop the app before deleting it",
-      "CONFLICT",
-      409
-    )
-  }
+  await db.transaction().execute(async (tx) => {
+    let lockQ = tx
+      .selectFrom("apps as a")
+      .innerJoin("projects as p", "p.id", "a.project_id")
+      .select(["a.slug", "p.id as project_id", "p.slug as project_slug"])
+      .where("a.id", "=", appId)
+    if (supportsForUpdate(tx)) lockQ = lockQ.forUpdate()
+    const row = await lockQ.executeTakeFirst()
+    if (!row) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
-  await db
-    .deleteFrom("apps")
-    .where("id", "=", appId)
-    .execute()
+    // Any deployment, not just the newest: an older live deployment keeps
+    // running when a newer one fails.
+    const active = await tx
+      .selectFrom("deployments")
+      .select("id")
+      .where("app_id", "=", appId)
+      .where("status", "not in", ["failed", "stopped"])
+      .executeTakeFirst()
+    if (active) {
+      throw new ServiceError(
+        "Stop the app before deleting it",
+        "CONFLICT",
+        409
+      )
+    }
+
+    // The delete cascades the deployments, so the controller tears the app's
+    // K8s resources down from this row instead (see migration 000020).
+    await tx
+      .insertInto("queued_app_cleanups")
+      .values({
+        id: crypto.randomUUID(),
+        project_id: row.project_id,
+        project_slug: row.project_slug,
+        app_slug: row.slug,
+        created_at: new Date().toISOString(),
+      })
+      .onConflict((oc) => oc.doNothing())
+      .execute()
+
+    await tx
+      .deleteFrom("apps")
+      .where("id", "=", appId)
+      .execute()
+  })
   return true
 }

@@ -197,6 +197,15 @@ export interface Database {
     created_at: string
   }
 
+  queued_app_cleanups: {
+    id: string
+    project_id: string
+    project_slug: string
+    app_slug: string
+    created_at: string
+    claimed_at: string | null
+  }
+
   github_app_install_states: {
     id: string
     team_id: string

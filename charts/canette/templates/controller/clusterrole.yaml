@@ -28,10 +28,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
-  # Mounted volumes — PVC and ConfigMap volume types
+  # Mounted volumes — PVC and ConfigMap volume types. "list" finds a deleted
+  # app's PVCs by label.
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["create", "get", "patch", "delete"]
+    verbs: ["create", "get", "list", "patch", "delete"]
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create", "get", "list", "patch", "delete"]

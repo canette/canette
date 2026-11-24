@@ -151,6 +151,30 @@ func (c *Controller) processPending(ctx context.Context) error {
 		}
 	}
 
+	// Delete every K8s resource of apps deleted from canette.
+	appCleanups, err := c.store.ClaimAppCleanups(ctx, c.cfg.MaxConcurrent)
+	if err != nil {
+		c.log.Error("claim app cleanups error", zap.Error(err))
+	} else {
+		for _, ac := range appCleanups {
+			go func(d store.PendingAppCleanup) {
+				ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
+				log := c.log.With(zap.String("namespace", ns), zap.String("app", d.AppSlug))
+				if err := k8sres.DeleteApp(ctx, c.dynClient, ns, d.AppSlug); err != nil {
+					log.Warn("app cleanup error", zap.Error(err))
+					return // claim expires, retried on a later poll
+				}
+				if err := k8sres.DeleteAllPodsForApp(ctx, c.client, ns, d.AppSlug); err != nil {
+					log.Warn("delete pods error", zap.Error(err))
+				}
+				if err := c.store.MarkAppCleanedUp(ctx, d.ID); err != nil {
+					log.Warn("mark app cleaned up error", zap.Error(err))
+				}
+				log.Info("deleted app resources")
+			}(ac)
+		}
+	}
+
 	// Delete K8s resources for volumes removed from canette.
 	volDels, err := c.store.ClaimVolumeDeletions(ctx, c.cfg.MaxConcurrent)
 	if err != nil {

@@ -477,7 +477,7 @@ func DeleteNamespace(ctx context.Context, dyn dynamic.Interface, namespace strin
 // TeardownApp deletes the app's Deployment, Service, HTTPRoute, PodDisruptionBudget, and ConfigMaps.
 // The Namespace, Secret, and PVCs are left in place. PVCs hold user data and
 // are preserved across Stop so the app can be restarted without data loss —
-// they are reclaimed only when the project (namespace) is deleted.
+// they are reclaimed when the app is deleted (DeleteApp) or with the project's namespace.
 func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
 	if err := DeleteResource(ctx, dyn, gvrDeployment, namespace, appSlug); err != nil {
 		return err
@@ -493,6 +493,46 @@ func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug 
 	}
 	if err := deleteConfigMapsForApp(ctx, dyn, namespace, appSlug); err != nil {
 		return fmt.Errorf("delete configmaps: %w", err)
+	}
+	return nil
+}
+
+// DeleteApp removes everything a deleted app owned in its namespace: the
+// workload of either deployment type, its routes, its own Secrets, and its
+// PVCs and ConfigMaps. Secrets are deleted by name, not by label, because the
+// namespace-wide registry pull Secret carries the label of whichever app last
+// applied it. The namespace itself stays, other apps may still use it.
+func DeleteApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
+	if err := TeardownApp(ctx, dyn, namespace, appSlug); err != nil {
+		return err
+	}
+	if err := TeardownCronJob(ctx, dyn, namespace, appSlug); err != nil {
+		return err
+	}
+	for _, name := range []string{secretName(appSlug), authgateSecretName(appSlug)} {
+		if err := DeleteResource(ctx, dyn, gvrSecret, namespace, name); err != nil {
+			return err
+		}
+	}
+	return deletePVCsForApp(ctx, dyn, namespace, appSlug)
+}
+
+// deletePVCsForApp deletes every PVC labelled with the app, including ones
+// whose volume was removed from canette but whose deletion never ran.
+func deletePVCsForApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
+	list, err := dyn.Resource(gvrPVC).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: libk8s.AppLabelSelector(appSlug),
+	})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("list pvcs: %w", err)
+	}
+	for _, pvc := range list.Items {
+		if err := DeleteResource(ctx, dyn, gvrPVC, namespace, pvc.GetName()); err != nil {
+			return err
+		}
 	}
 	return nil
 }
