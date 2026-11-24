@@ -506,7 +506,7 @@ export default function CredentialsPage({ params }: { params: Promise<{ id: stri
                 {!connectingGithubApp && (
                   <>
                     <p className="text-xs text-warning-text border-l-2 border-warning pl-2 leading-relaxed">
-                      GitHub App permissions apply to all teams — you cannot restrict access per team. For fine-grained per-team access control, use fine-grained PAT tokens instead.
+                      This team will be able to build from every repository the installation can access (the ones chosen when the App was installed on GitHub). If you link the same installation to other teams, they get those same repositories. To give a team only some of them, use a fine-grained personal access token instead.
                     </p>
                     {linkableInstallations.length > 0 && (
                       <>

@@ -532,7 +532,9 @@ api:
     # Accepts either the full URL (https://github.com/apps/my-app) or just the slug (my-app).
     # Required for the per-team installation wizard.
     publicLink: ""
-    # The GitHub App's OAuth "Client ID" and a generated "Client secret" (GitHub App settings → General).
+    # The GitHub App's OAuth "Client ID" (starts with "Iv", not the numeric App ID) and a generated
+    # "Client secret" (GitHub App settings → Credentials). Not the same as githubClientId above, which
+    # is for "Sign in with GitHub" through a separate OAuth App.
     # Required for the per-team installation wizard: canette uses them to check that the user who
     # installed the App can access the installation before storing it. Without them the wizard is off;
     # existing per-team credentials and system credential mode keep working.
