@@ -32,23 +32,25 @@ export async function authorizeAction(formData: FormData) {
   redirect(`/login?callbackURL=${encodeURIComponent(`/oauth/authorize?${qs}`)}`)
 }
 
+// The API validates redirect_uri (http(s), registered for the client) before
+// redirecting, the same as on Authorize. The consent page can be linked to
+// directly, so redirecting to the form's redirect_uri here would be an open
+// redirect. Anything the API rejects lands on the dashboard instead.
 export async function denyAction(formData: FormData) {
-  const redirectUri = formData.get("redirect_uri") as string
-  const state = formData.get("state") as string | null
+  const qs = formData.get("qs") as string
 
-  // Build the error URL before calling redirect() — redirect() throws a
-  // NEXT_REDIRECT internally, so it must never be inside a try/catch or the
-  // catch block intercepts it and swallows the redirect.
-  let callbackUrl: string
+  const apiUrl = process.env.API_URL ?? "http://localhost:3001"
+  let location: string | null = null
   try {
-    const url = new URL(redirectUri)
-    url.searchParams.set("error", "access_denied")
-    url.searchParams.set("error_description", "The user denied the authorization request")
-    if (state) url.searchParams.set("state", state)
-    callbackUrl = url.toString()
+    const res = await fetch(`${apiUrl}/oauth/deny?${qs}`, {
+      method: "POST",
+      redirect: "manual",
+    })
+    location = res.headers.get("location")
   } catch {
-    redirect("/dashboard")
+    // fall through
   }
 
-  redirect(callbackUrl)
+  // redirect() throws NEXT_REDIRECT, so it must stay outside the try/catch.
+  redirect(location ?? "/dashboard")
 }

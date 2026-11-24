@@ -3,6 +3,8 @@ import { auth } from "../auth/auth"
 import {
   registerClient,
   getClient,
+  parseClientMetadata,
+  checkRedirectUri,
   issueAuthCode,
   exchangeAuthCode,
   issueAccessToken,
@@ -46,15 +48,16 @@ wellKnownRouter.get("/oauth-authorization-server", (c) => {
 // an intercepted auth code is useless without the code_verifier held by the
 // legitimate client. redirect_uri is validated at token exchange against what
 // was stored with the auth code, which closes the main redirect attack vector.
+// The endpoint is unauthenticated, so the metadata and the store are bounded
+// (see parseClientMetadata and registerClient).
 oauthRouter.post("/register", async (c) => {
-  const body = await c.req.json().catch(() => ({})) as Record<string, unknown>
-  const redirectUris = Array.isArray(body.redirect_uris) ? (body.redirect_uris as string[]) : []
-  if (!redirectUris.length) {
-    return c.json({ error: "invalid_client_metadata", error_description: "redirect_uris is required" }, 400)
+  const body = await c.req.json().catch(() => null)
+  const metadata = parseClientMetadata(body && typeof body === "object" ? (body as Record<string, unknown>) : {})
+  if ("error" in metadata) {
+    return c.json({ error: "invalid_client_metadata", error_description: metadata.error }, 400)
   }
 
-  const clientName = typeof body.client_name === "string" ? body.client_name : undefined
-  const client = registerClient(redirectUris, clientName)
+  const client = registerClient(metadata.redirectUris, metadata.clientName)
 
   return c.json({
     client_id: client.clientId,
@@ -81,27 +84,11 @@ oauthRouter.get("/authorize", async (c) => {
     return c.json({ error: "invalid_request", error_description: "Only S256 PKCE is supported" }, 400)
   }
 
-  // Reject non-http(s) redirect_uris (blocks javascript:, data:, etc.).
   // A crafted callbackURL could otherwise inject a malicious redirect_uri and,
   // since the attacker also chooses code_challenge, exchange the resulting code.
-  try {
-    const uri = new URL(redirect_uri)
-    if (uri.protocol !== "http:" && uri.protocol !== "https:") {
-      return c.json({ error: "invalid_request", error_description: "redirect_uri must use http or https" }, 400)
-    }
-  } catch {
-    return c.json({ error: "invalid_request", error_description: "redirect_uri must be a valid URL" }, 400)
-  }
-
-  // Validate redirect_uri against the registered client if we still have the
-  // registration in memory. Registrations are in-memory only, so they are lost
-  // on restart — a missing registration is silently accepted (PKCE is the
-  // security mechanism, not client identity).
-  if (client_id) {
-    const client = getClient(client_id)
-    if (client && !client.redirectUris.includes(redirect_uri)) {
-      return c.json({ error: "invalid_request", error_description: "redirect_uri not registered for this client" }, 400)
-    }
+  const redirectError = checkRedirectUri(redirect_uri, client_id)
+  if (redirectError) {
+    return c.json({ error: "invalid_request", error_description: redirectError }, 400)
   }
 
   // Always send the browser to the UI consent page — code issuance happens
@@ -127,18 +114,7 @@ oauthRouter.post("/confirm", async (c) => {
   if (response_type !== "code") return c.json({ error: "unsupported_response_type" }, 400)
   if (!code_challenge || !redirect_uri) return c.json({ error: "invalid_request" }, 400)
   if (code_challenge_method !== "S256") return c.json({ error: "invalid_request" }, 400)
-
-  try {
-    const uri = new URL(redirect_uri)
-    if (uri.protocol !== "http:" && uri.protocol !== "https:") return c.json({ error: "invalid_request" }, 400)
-  } catch {
-    return c.json({ error: "invalid_request" }, 400)
-  }
-
-  if (client_id) {
-    const client = getClient(client_id)
-    if (client && !client.redirectUris.includes(redirect_uri)) return c.json({ error: "invalid_request" }, 400)
-  }
+  if (checkRedirectUri(redirect_uri, client_id)) return c.json({ error: "invalid_request" }, 400)
 
   const session = await auth.api.getSession({ headers: c.req.raw.headers })
   if (!session) return c.json({ error: "unauthorized" }, 401)
@@ -147,6 +123,25 @@ oauthRouter.post("/confirm", async (c) => {
 
   const redirectUrl = new URL(redirect_uri)
   redirectUrl.searchParams.set("code", code)
+  if (state) redirectUrl.searchParams.set("state", state)
+  return c.redirect(redirectUrl.toString())
+})
+
+// Called by the UI consent page server action after the user clicks Cancel.
+// The consent page can be opened directly, without going through
+// GET /oauth/authorize, so the redirect_uri is validated here too — otherwise
+// Cancel would be an open redirect from the canette origin.
+oauthRouter.post("/deny", (c) => {
+  if (isCrossOriginBrowserRequest(c.req.raw.headers, process.env.UI_URL ?? "http://localhost:3000")) {
+    return c.json({ error: "access_denied" }, 403)
+  }
+
+  const { client_id, redirect_uri, state } = c.req.query()
+  if (checkRedirectUri(redirect_uri, client_id)) return c.json({ error: "invalid_request" }, 400)
+
+  const redirectUrl = new URL(redirect_uri)
+  redirectUrl.searchParams.set("error", "access_denied")
+  redirectUrl.searchParams.set("error_description", "The user denied the authorization request")
   if (state) redirectUrl.searchParams.set("state", state)
   return c.redirect(redirectUrl.toString())
 })

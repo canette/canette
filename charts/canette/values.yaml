@@ -273,9 +273,11 @@ buildkit:
   # The in-cluster registry is added automatically when registry.enabled=true.
   # Format: "<host:port>": { http: true, insecure: true }
   registries: {}
-  # Restrict buildkit egress to internet-only by blocking RFC-1918 ranges.
+  # Restrict buildkit egress to internet-only by blocking RFC-1918, CGNAT,
+  # link-local (cloud metadata, 169.254.169.254) and loopback ranges.
   # This prevents a compromised build from reaching cluster-internal services
-  # while still allowing package fetches from npm, PyPI, Docker Hub, etc.
+  # or node credentials, while still allowing package fetches from npm, PyPI,
+  # Docker Hub, etc.
   # Set to false if builds need to reach private package mirrors or registries
   # in RFC-1918 address space (e.g. an internal Artifactory or Nexus instance).
   restrictEgress: true

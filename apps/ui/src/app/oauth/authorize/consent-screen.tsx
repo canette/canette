@@ -40,12 +40,10 @@ export function ConsentScreen({
   clientName,
   qs,
   redirectUri,
-  state,
 }: {
   clientName: string
   qs: string
   redirectUri: string
-  state: string
 }) {
   const [authorizing, startAuthorize] = useTransition()
   const [denying, startDeny] = useTransition()
@@ -121,8 +119,7 @@ export function ConsentScreen({
             onSubmit={() => startDeny(() => {})}
             className="contents"
           >
-            <input type="hidden" name="redirect_uri" value={redirectUri} />
-            <input type="hidden" name="state" value={state} />
+            <input type="hidden" name="qs" value={qs} />
             <Button
               type="submit"
               variant="outline"

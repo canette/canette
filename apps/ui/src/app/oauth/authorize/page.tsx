@@ -44,7 +44,6 @@ export default async function OAuthAuthorizePage({
       clientName={clientName}
       qs={qs}
       redirectUri={params.redirect_uri ?? ""}
-      state={params.state ?? ""}
     />
   )
 }

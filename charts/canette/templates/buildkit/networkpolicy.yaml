@@ -52,7 +52,9 @@ spec:
           port: 5000
     {{- end }}
     # Internet egress for base image pulls and package fetches (npm, PyPI, apt, etc.)
-    # RFC-1918 ranges are blocked to prevent builds from reaching cluster-internal services.
+    # RFC-1918 and CGNAT ranges are blocked to prevent builds from reaching cluster-internal services,
+    # link-local to keep RUN steps away from cloud metadata endpoints (169.254.169.254), and loopback.
+    # Keep this list in sync with the app-namespace policy in apps/controller/internal/k8s/resources.go.
     # Set buildkit.restrictEgress=false if builds need to reach private mirrors in RFC-1918 space.
     - to:
         - ipBlock:
@@ -62,6 +64,8 @@ spec:
               - 172.16.0.0/12
               - 192.168.0.0/16
               - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 127.0.0.0/8
     {{- else }}
     # Unrestricted egress — buildkit.restrictEgress is false
     - {}

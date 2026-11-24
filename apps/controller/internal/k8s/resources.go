@@ -438,7 +438,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 					},
 					// Internet egress minus reserved ranges. This also enforces
 					// inter-namespace/cluster-internal isolation for free, since pod
-					// and Service CIDRs fall inside these same ranges.
+					// and Service CIDRs fall inside these same ranges. Keep in sync
+					// with the BuildKit policy in
+					// charts/canette/templates/buildkit/networkpolicy.yaml.
 					map[string]interface{}{
 						"to": []interface{}{
 							map[string]interface{}{
