@@ -197,6 +197,16 @@ export interface Database {
     created_at: string
   }
 
+  github_app_install_states: {
+    id: string
+    team_id: string
+    user_id: string
+    installation_id: string | null
+    code_verifier: string | null
+    expires_at: string
+    created_at: string
+  }
+
   app_volumes: {
     id: string
     app_id: string

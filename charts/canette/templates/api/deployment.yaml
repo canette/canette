@@ -138,6 +138,23 @@ spec:
             {{- end }}
             - name: GITHUB_APP_PRIVATE_KEY_FILE
               value: /run/secrets/github-app-private-key
+            {{- if .Values.api.githubApp.clientId }}
+            - name: GITHUB_APP_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: canette-api-secrets
+                  key: github-app-client-id
+            - name: GITHUB_APP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if ((.Values.api.githubApp.clientSecretRef).name) }}
+                  name: {{ .Values.api.githubApp.clientSecretRef.name }}
+                  key: {{ .Values.api.githubApp.clientSecretRef.key }}
+                  {{- else }}
+                  name: canette-api-secrets
+                  key: github-app-client-secret
+                  {{- end }}
+            {{- end }}
             {{- end }}
             - name: UI_URL
               value: {{ include "canette.uiURL" . | quote }}
