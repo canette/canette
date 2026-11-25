@@ -105,6 +105,7 @@ The encryption key is auto-generated on first install and reused on every subseq
 | `controller.logTailInterval` | `10s` | How often to tail app logs |
 | `controller.maxConcurrent` | `3` | Maximum concurrent deployments |
 | `controller.networkPolicy.enabled` | `true` | Create a default per-app NetworkPolicy (`canette-default`): ingress only from the Gateway namespace, egress to DNS + non-private internet |
+| `controller.failpoints` | `[]` | Test only: points where the controller exits once per pod, for live-cluster crash tests (`after-claim`, `after-partial-apply`, `after-teardown-delete`, `after-app-delete`) |
 
 ## Registry authentication
 

@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	"canette.dev/lib/failpoint"
 	libk8s "canette.dev/lib/k8s"
 )
 
@@ -157,6 +158,8 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 	if err := ApplyResource(ctx, dyn, gvrDeployment, ns, res.Deployment); err != nil {
 		return fmt.Errorf("apply deployment: %w", err)
 	}
+	// The new Deployment is applied, its Service and HTTPRoute are not.
+	failpoint.Hit("after-partial-apply")
 	if res.PodDisruptionBudget != nil {
 		if err := ApplyResource(ctx, dyn, gvrPDB, ns, res.PodDisruptionBudget); err != nil {
 			return fmt.Errorf("apply poddisruptionbudget: %w", err)
