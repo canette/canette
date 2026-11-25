@@ -433,6 +433,10 @@ controller:
   # default StorageClass. Only affects new volumes: a PVC's class can't be
   # changed after it is created, so existing ones keep theirs.
   storageClassName: ""
+  # Test only: named points where the controller exits, once per pod, so
+  # live-cluster tests can check recovery after a crash. Leave empty.
+  # Points: after-claim, after-partial-apply, after-teardown-delete, after-app-delete.
+  failpoints: []
   resources:
     requests:
       cpu: 100m

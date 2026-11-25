@@ -7,6 +7,7 @@ import (
 
 	k8sres "canette.dev/controller/internal/k8s"
 	"canette.dev/controller/internal/store"
+	"canette.dev/lib/failpoint"
 )
 
 // runTeardown deletes the K8s resources for a stopped app (or a failed attempt
@@ -32,6 +33,8 @@ func (c *Controller) runTeardown(ctx context.Context, dep store.StoppedDeploymen
 			return
 		}
 	}
+
+	failpoint.Hit("after-teardown-delete")
 
 	if err := c.store.ClearAppLiveURL(ctx, dep.AppID); err != nil {
 		log.Warn("clear live url error", zap.Error(err))

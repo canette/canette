@@ -116,6 +116,12 @@ spec:
             - name: REGISTRY_AUTH_CONFIG_FILE
               value: /run/secrets/registry-auth/config.json
             {{- end }}
+            {{- with .Values.controller.failpoints }}
+            - name: CANETTE_FAILPOINTS
+              value: {{ join "," . | quote }}
+            - name: CANETTE_FAILPOINT_DIR
+              value: /run/failpoints
+            {{- end }}
           ports:
             - containerPort: 8082
               name: health
@@ -141,6 +147,10 @@ spec:
               mountPath: /run/secrets/registry-auth
               readOnly: true
             {{- end }}
+            {{- if .Values.controller.failpoints }}
+            - name: failpoints
+              mountPath: /run/failpoints
+            {{- end }}
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
       volumes:
@@ -157,4 +167,9 @@ spec:
             items:
               - key: .dockerconfigjson
                 path: config.json
+        {{- end }}
+        {{- if .Values.controller.failpoints }}
+        # Outlives container restarts, so each failpoint fires once per pod.
+        - name: failpoints
+          emptyDir: {}
         {{- end }}

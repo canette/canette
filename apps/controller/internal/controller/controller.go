@@ -16,6 +16,7 @@ import (
 	"canette.dev/controller/internal/config"
 	k8sres "canette.dev/controller/internal/k8s"
 	"canette.dev/controller/internal/store"
+	"canette.dev/lib/failpoint"
 	libk8s "canette.dev/lib/k8s"
 )
 
@@ -190,6 +191,9 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(deps) > 0 {
+		failpoint.Hit("after-claim")
+	}
 	for _, dep := range deps {
 		c.deploySlots <- struct{}{}
 		c.deploying.Store(dep.ID, struct{}{})
@@ -270,6 +274,7 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 					log.Warn("app cleanup error", zap.Error(err))
 					return // claim expires, retried on a later poll
 				}
+				failpoint.Hit("after-app-delete")
 				if err := c.store.MarkAppCleanedUp(workCtx, d.ID); err != nil {
 					log.Warn("mark app cleaned up error", zap.Error(err))
 				}

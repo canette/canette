@@ -28,6 +28,7 @@ import (
 	"canette.dev/controller/internal/store"
 	"canette.dev/lib/crypto"
 	"canette.dev/lib/env"
+	"canette.dev/lib/failpoint"
 	"canette.dev/lib/health"
 )
 
@@ -50,6 +51,14 @@ func run(log *zap.Logger) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// ── Failpoints (live-cluster tests only) ──────────────────────────────────
+	if err := failpoint.Validate(); err != nil {
+		return err
+	}
+	if armed := failpoint.Armed(); len(armed) > 0 {
+		log.Warn("failpoints armed: the controller exits when it reaches one", zap.Strings("failpoints", armed))
+	}
 
 	// ── Encryption key ────────────────────────────────────────────────────────
 	encKeyHex, err := env.RequireEnv("ENCRYPTION_KEY")
