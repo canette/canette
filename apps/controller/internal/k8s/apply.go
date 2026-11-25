@@ -463,7 +463,21 @@ func GetPodLogs(ctx context.Context, client kubernetes.Interface, namespace, app
 
 // DeleteResource deletes a namespaced K8s resource, ignoring not-found errors.
 func DeleteResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) error {
-	err := dyn.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	return deleteResource(ctx, dyn, gvr, namespace, name, metav1.DeleteOptions{})
+}
+
+// deleteWorkload deletes a Deployment or CronJob with Background propagation:
+// the object goes at once and the garbage collector then removes its
+// ReplicaSets/Jobs and their Pods, each Pod with its normal termination grace
+// period. Set explicitly because the default propagation differs between
+// resource types and API versions.
+func deleteWorkload(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) error {
+	background := metav1.DeletePropagationBackground
+	return deleteResource(ctx, dyn, gvr, namespace, name, metav1.DeleteOptions{PropagationPolicy: &background})
+}
+
+func deleteResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, opts metav1.DeleteOptions) error {
+	err := dyn.Resource(gvr).Namespace(namespace).Delete(ctx, name, opts)
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete %s/%s: %w", gvr.Resource, name, err)
 	}
@@ -501,7 +515,7 @@ func ListPVCNames(ctx context.Context, dyn dynamic.Interface, namespace string) 
 // are preserved across Stop so the app can be restarted without data loss —
 // they are reclaimed when the app is deleted (DeleteApp) or with the project's namespace.
 func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
-	if err := DeleteResource(ctx, dyn, gvrDeployment, namespace, appSlug); err != nil {
+	if err := deleteWorkload(ctx, dyn, gvrDeployment, namespace, appSlug); err != nil {
 		return err
 	}
 	if err := DeleteResource(ctx, dyn, gvrService, namespace, appSlug); err != nil {
@@ -584,70 +598,10 @@ func deleteConfigMapsForApp(ctx context.Context, dyn dynamic.Interface, namespac
 // over from when the app was a multi-replica web/private app.
 // The Namespace and Secret are left in place (cheap; reused on next deploy).
 func TeardownCronJob(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
-	if err := DeleteResource(ctx, dyn, gvrCronJob, namespace, appSlug); err != nil {
+	if err := deleteWorkload(ctx, dyn, gvrCronJob, namespace, appSlug); err != nil {
 		return err
 	}
 	return DeleteResource(ctx, dyn, gvrPDB, namespace, appSlug)
-}
-
-// DeleteAllPodsForApp force-deletes all pods for an app. Used by teardown to
-// clear pods immediately rather than waiting for Deployment cascading deletion.
-func DeleteAllPodsForApp(ctx context.Context, client kubernetes.Interface, namespace, appSlug string) error {
-	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: libk8s.AppLabelSelector(appSlug),
-	})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("list pods: %w", err)
-	}
-	grace := int64(0)
-	for _, pod := range pods.Items {
-		if err := client.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{
-			GracePeriodSeconds: &grace,
-		}); err != nil && !errors.IsNotFound(err) {
-			return fmt.Errorf("delete pod %s: %w", pod.Name, err)
-		}
-	}
-	return nil
-}
-
-// DeleteStuckPods force-deletes pods stuck in ImagePullBackOff, ErrImagePull, or
-// CrashLoopBackOff. Returns the number of pods deleted.
-func DeleteStuckPods(ctx context.Context, client kubernetes.Interface, namespace, appSlug string) (int, error) {
-	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: libk8s.AppLabelSelector(appSlug),
-	})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("list pods: %w", err)
-	}
-	grace := int64(0)
-	deleted := 0
-	for _, pod := range pods.Items {
-		stuck := false
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.State.Waiting != nil {
-				switch cs.State.Waiting.Reason {
-				case "ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff":
-					stuck = true
-				}
-			}
-		}
-		if !stuck {
-			continue
-		}
-		if err := client.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{
-			GracePeriodSeconds: &grace,
-		}); err != nil && !errors.IsNotFound(err) {
-			return deleted, fmt.Errorf("delete pod %s: %w", pod.Name, err)
-		}
-		deleted++
-	}
-	return deleted, nil
 }
 
 func objectName(obj map[string]interface{}) (string, bool) {

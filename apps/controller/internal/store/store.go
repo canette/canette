@@ -172,14 +172,16 @@ type StoppedDeployment struct {
 	DeploymentType string // "web" | "private" | "cronjob"
 }
 
-// ClaimTeardown returns up to limit deployments with status='stopped' that still have
-// an applied_manifest (meaning K8s resources were created and need to be deleted).
+// ClaimTeardown returns up to limit deployments whose K8s resources need to be
+// deleted: stopped rows that still have an applied_manifest, and failed attempts
+// that applied resources and were marked by Stop (teardown_requested_at).
 // App/project slugs are read from deployment_snapshot; no table joins needed.
 func (s *Store) ClaimTeardown(ctx context.Context, limit int) ([]StoppedDeployment, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, app_id, COALESCE(deployment_snapshot, '')
 		FROM deployments
-		WHERE status = 'stopped' AND applied_manifest IS NOT NULL
+		WHERE applied_manifest IS NOT NULL
+		  AND (status = 'stopped' OR (status = 'failed' AND teardown_requested_at IS NOT NULL))
 		ORDER BY updated_at ASC
 		LIMIT $1`, limit)
 	if err != nil {
@@ -220,11 +222,16 @@ func (s *Store) ClaimTeardown(ctx context.Context, limit int) ([]StoppedDeployme
 	return deps, rows.Err()
 }
 
-// MarkTornDown clears applied_manifest on a stopped deployment so ClaimTeardown
-// won't pick it up again on the next poll cycle.
+// MarkTornDown records that a deployment's teardown ran, so ClaimTeardown won't
+// pick it up again on the next poll cycle. A stopped row loses its
+// applied_manifest; a failed row keeps it (it's part of the failure's history)
+// and only loses its teardown_requested_at marker.
 func (s *Store) MarkTornDown(ctx context.Context, deploymentID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE deployments SET applied_manifest = NULL WHERE id = $1 AND status = 'stopped'`,
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE deployments
+		SET applied_manifest = CASE WHEN status = 'stopped' THEN NULL ELSE applied_manifest END,
+		    teardown_requested_at = NULL
+		WHERE id = $1 AND (status = 'stopped' OR teardown_requested_at IS NOT NULL)`,
 		deploymentID)
 	if err != nil {
 		return fmt.Errorf("mark torn down: %w", err)

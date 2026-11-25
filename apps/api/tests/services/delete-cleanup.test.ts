@@ -4,7 +4,7 @@ import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
 import { ServiceError } from "../../src/services/errors"
 import { createApp, deleteApp } from "../../src/services/apps"
-import { stopApp } from "../../src/services/deployments"
+import { createDeployment, stopApp } from "../../src/services/deployments"
 import { createProject, deleteProject } from "../../src/services/projects"
 import { deleteTeam } from "../../src/services/teams"
 
@@ -47,15 +47,20 @@ describe("delete cleanup", () => {
   }
 
   let deploymentSeq = 0
-  async function addDeployment(appId: string, status: string, opts: { appliedManifest?: string; createdAt?: string } = {}) {
+  async function addDeployment(
+    appId: string, status: string,
+    opts: { appliedManifest?: string; createdAt?: string; errorMessage?: string } = {},
+  ) {
     const ts = opts.createdAt ?? new Date(Date.now() + deploymentSeq * 1000).toISOString()
     deploymentSeq++
+    const id = crypto.randomUUID()
     await db.insertInto("deployments").values({
-      id: crypto.randomUUID(), app_id: appId, status, commit_sha: "abc1234",
-      commit_message: null, image_digest: null, triggered_by: "userId", error_message: null,
+      id, app_id: appId, status, commit_sha: "abc1234",
+      commit_message: null, image_digest: null, triggered_by: "userId", error_message: opts.errorMessage ?? null,
       scan_status: null, scan_summary: null, applied_manifest: opts.appliedManifest ?? null,
       canette_config: null, deployment_snapshot: null, created_at: ts, updated_at: ts,
     }).execute()
+    return id
   }
 
   async function cleanupsFor(appSlug: string) {
@@ -122,6 +127,72 @@ describe("delete cleanup", () => {
       await db.deleteFrom("queued_app_cleanups").where("app_slug", "=", "reused-slug").execute()
       const again = await makeApp("reused-slug")
       expect(again.slug).toBe("reused-slug")
+    })
+  })
+
+  describe("stopApp", () => {
+    async function deployment(id: string) {
+      return db.selectFrom("deployments")
+        .select(["status", "error_message", "applied_manifest", "teardown_requested_at"])
+        .where("id", "=", id).executeTakeFirstOrThrow()
+    }
+
+    it("marks a first deploy that failed after apply for teardown, keeping its failure", async () => {
+      const app = await makeApp("failed-first")
+      const id = await addDeployment(app.id, "failed", { appliedManifest: "{}", errorMessage: "CrashLoopBackOff" })
+
+      expect(await stopApp(db, app.id, "userId")).toBe(true)
+
+      const row = await deployment(id)
+      expect(row).toMatchObject({ status: "failed", error_message: "CrashLoopBackOff", applied_manifest: "{}" })
+      expect(row.teardown_requested_at).not.toBeNull()
+    })
+
+    it("only marks the latest attempt that applied resources", async () => {
+      const app = await makeApp("failed-twice")
+      const older = await addDeployment(app.id, "failed", { appliedManifest: "{}" })
+      const latest = await addDeployment(app.id, "failed", { appliedManifest: "{}" })
+      // Failed before apply: nothing of it runs in the cluster.
+      const unapplied = await addDeployment(app.id, "failed")
+
+      await stopApp(db, app.id, "userId")
+
+      expect((await deployment(older)).teardown_requested_at).toBeNull()
+      expect((await deployment(latest)).teardown_requested_at).not.toBeNull()
+      expect((await deployment(unapplied)).teardown_requested_at).toBeNull()
+    })
+
+    it("marks a failed redeploy too when an older deployment is live", async () => {
+      const app = await makeApp("failed-redeploy")
+      const live = await addDeployment(app.id, "live", { appliedManifest: "{}" })
+      const failed = await addDeployment(app.id, "failed", { appliedManifest: "{}" })
+
+      await stopApp(db, app.id, "userId")
+
+      // The stopped row's teardown removes the same resource names.
+      expect((await deployment(live)).status).toBe("stopped")
+      expect((await deployment(failed)).teardown_requested_at).not.toBeNull()
+    })
+
+    it("does not mark a failed attempt older than the live deployment", async () => {
+      const app = await makeApp("failed-then-live")
+      const failed = await addDeployment(app.id, "failed", { appliedManifest: "{}" })
+      const live = await addDeployment(app.id, "live", { appliedManifest: "{}" })
+
+      await stopApp(db, app.id, "userId")
+
+      expect((await deployment(live)).status).toBe("stopped")
+      expect((await deployment(failed)).teardown_requested_at).toBeNull()
+    })
+
+    it("a new deployment cancels the pending teardown", async () => {
+      const app = await makeApp("failed-then-deploy")
+      const failed = await addDeployment(app.id, "failed", { appliedManifest: "{}" })
+      await stopApp(db, app.id, "userId")
+
+      await createDeployment(db, app.id, "userId", { commitSha: "def5678" })
+
+      expect(await deployment(failed)).toMatchObject({ status: "failed", applied_manifest: "{}", teardown_requested_at: null })
     })
   })
 

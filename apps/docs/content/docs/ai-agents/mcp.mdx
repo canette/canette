@@ -136,7 +136,7 @@ Agents can turn on [push-to-deploy](/docs/getting-started/webhooks) for a Git ap
 
 `stop_app` takes an app offline, like **Stop** in the UI: its live deployment is marked stopped, the live URL is cleared, and canette removes the running containers. The app, its settings, environment variables, secrets and volumes, including the data on persistent volumes, are kept.
 
-Only the live deployment is stopped. A build or rollout that is still running is not cancelled and goes live when it finishes. To start the app again, the agent calls `redeploy_deployment` on the deployment that was live (`stop_app` returns its ID), which reuses the built image without a rebuild.
+Only the live deployment is stopped. If the latest deploy failed after creating its resources, for example because its pods crash on start, canette removes those too. That deployment keeps its `failed` status and error. A build or rollout that is still running is not cancelled and goes live when it finishes. To start the app again, the agent calls `redeploy_deployment` on the deployment that was live (`stop_app` returns its ID), which reuses the built image without a rebuild.
 
 ### Templates
 

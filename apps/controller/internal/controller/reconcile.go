@@ -133,16 +133,7 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	}
 
 	// 6. Apply all resources via server-side apply.
-	// Before applying, clear any pods stuck in ImagePullBackOff/ErrImagePull/CrashLoopBackOff
-	// so K8s recreates them without exponential backoff on the new spec.
 	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
-	if n, err := k8sres.DeleteStuckPods(ctx, c.client, appNS, dep.AppSlug); err != nil {
-		log.Warn("failed to delete stuck pods", zap.Error(err))
-	} else if n > 0 {
-		msg := fmt.Sprintf("Deleted %d stuck pod(s) before rollout", n)
-		log.Info(msg, zap.String("namespace", appNS))
-		c.appendLog(ctx, log, dep.ID, "controller", msg)
-	}
 	c.appendLog(ctx, log, dep.ID, "controller", "Applying Kubernetes resources...")
 	applyCtx, warnings := k8sres.WithWarningCollector(ctx)
 	if err := k8sres.ApplyAll(applyCtx, c.dynClient, res); err != nil {

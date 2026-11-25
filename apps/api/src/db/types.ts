@@ -137,6 +137,7 @@ export interface Database {
     canette_config: string | null
     deployment_snapshot: string | null
     claimed_at: string | null
+    teardown_requested_at: string | null
     created_at: string
     updated_at: string
   }
