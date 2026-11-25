@@ -233,6 +233,16 @@ export async function updateProject(
         db.selectFrom("apps").select("id").where("project_id", "=", projectId)
       )
       .execute()
+    await db
+      .updateTable("deployments")
+      .set({ teardown_requested_at: null })
+      .where("teardown_requested_at", "is not", null)
+      .where(
+        "app_id",
+        "in",
+        db.selectFrom("apps").select("id").where("project_id", "=", projectId)
+      )
+      .execute()
 
     await db
       .insertInto("queued_namespace_cleanups")

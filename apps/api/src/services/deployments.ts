@@ -251,13 +251,8 @@ export async function createDeployment(
 
   // Cancel any pending teardown from a previous stop. The new deployment is about to
   // (re)create the same named K8s resources, so a stale teardown claim for an older
-  // stopped deployment must not be left to delete them out from under it later.
-  await db
-    .updateTable("deployments")
-    .set({ applied_manifest: null })
-    .where("app_id", "=", appId)
-    .where("status", "=", "stopped")
-    .execute()
+  // deployment must not be left to delete them out from under it later.
+  await cancelPendingTeardowns(db, appId)
 
   const snapshot = await buildSnapshot(db, appId)
 
@@ -315,7 +310,28 @@ export async function createDeployment(
   return mapDeployment(row)
 }
 
+// cancelPendingTeardowns drops every teardown queued for the app's earlier
+// deployments: stopped rows that still hold a manifest, and failed attempts
+// that Stop marked with teardown_requested_at.
+async function cancelPendingTeardowns(db: DB, appId: string): Promise<void> {
+  await db
+    .updateTable("deployments")
+    .set({ applied_manifest: null })
+    .where("app_id", "=", appId)
+    .where("status", "=", "stopped")
+    .execute()
+  await db
+    .updateTable("deployments")
+    .set({ teardown_requested_at: null })
+    .where("app_id", "=", appId)
+    .where("teardown_requested_at", "is not", null)
+    .execute()
+}
+
 // stopApp gracefully stops a live deployment (→ 'stopped', triggers K8s teardown).
+// When the latest attempt that applied resources failed instead (e.g. a first
+// deploy whose pods crash-loop), it is marked for teardown and keeps its
+// 'failed' status and error.
 // Any in-progress build is left running — if it completes it will redeploy the app.
 // Verifies access itself via app → project → team membership.
 export async function stopApp(
@@ -342,6 +358,25 @@ export async function stopApp(
     .where("app_id", "=", appId)
     .where("status", "=", "live")
     .execute()
+
+  // A failed attempt that got as far as applying resources may have left a
+  // Deployment, Service and route running. Only the latest such attempt
+  // matters: every attempt of an app uses the same resource names.
+  const lastApplied = await db
+    .selectFrom("deployments")
+    .select(["id", "status"])
+    .where("app_id", "=", appId)
+    .where("applied_manifest", "is not", null)
+    .orderBy("created_at", "desc")
+    .limit(1)
+    .executeTakeFirst()
+  if (lastApplied?.status === "failed") {
+    await db
+      .updateTable("deployments")
+      .set({ teardown_requested_at: now })
+      .where("id", "=", lastApplied.id)
+      .execute()
+  }
 
   // Clear the live URL immediately so the UI reflects the stopped state
   await db
@@ -406,13 +441,8 @@ export async function redeployDeployment(
 
   // Cancel any pending teardown from a previous stop. The new deployment is about to
   // (re)create the same named K8s resources, so a stale teardown claim for an older
-  // stopped deployment must not be left to delete them out from under it later.
-  await db
-    .updateTable("deployments")
-    .set({ applied_manifest: null })
-    .where("app_id", "=", access.app_id)
-    .where("status", "=", "stopped")
-    .execute()
+  // deployment must not be left to delete them out from under it later.
+  await cancelPendingTeardowns(db, access.app_id)
 
   const id = crypto.randomUUID()
   const now = new Date().toISOString()

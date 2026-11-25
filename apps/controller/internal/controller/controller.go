@@ -270,9 +270,6 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 					log.Warn("app cleanup error", zap.Error(err))
 					return // claim expires, retried on a later poll
 				}
-				if err := k8sres.DeleteAllPodsForApp(workCtx, c.client, ns, d.AppSlug); err != nil {
-					log.Warn("delete pods error", zap.Error(err))
-				}
 				if err := c.store.MarkAppCleanedUp(workCtx, d.ID); err != nil {
 					log.Warn("mark app cleaned up error", zap.Error(err))
 				}

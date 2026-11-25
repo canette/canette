@@ -9,7 +9,8 @@ import (
 	"canette.dev/controller/internal/store"
 )
 
-// runTeardown deletes the K8s resources for a stopped app and clears its live URL.
+// runTeardown deletes the K8s resources for a stopped app (or a failed attempt
+// Stop marked for teardown) and clears its live URL. PVCs are kept.
 // Errors are logged but not fatal — the operation is idempotent and will retry next poll.
 func (c *Controller) runTeardown(ctx context.Context, dep store.StoppedDeployment) {
 	log := c.log.With(
@@ -30,16 +31,13 @@ func (c *Controller) runTeardown(ctx context.Context, dep store.StoppedDeploymen
 			// non-fatal: idempotent, will retry next poll
 			return
 		}
-		if err := k8sres.DeleteAllPodsForApp(ctx, c.client, appNS, dep.AppSlug); err != nil {
-			log.Warn("delete pods error", zap.Error(err))
-		}
 	}
 
 	if err := c.store.ClearAppLiveURL(ctx, dep.AppID); err != nil {
 		log.Warn("clear live url error", zap.Error(err))
 	}
 
-	// Clear applied_manifest so ClaimTeardown won't re-process this deployment.
+	// Mark the row so ClaimTeardown won't re-process this deployment.
 	if err := c.store.MarkTornDown(ctx, dep.ID); err != nil {
 		log.Warn("mark torn down error", zap.Error(err))
 	}

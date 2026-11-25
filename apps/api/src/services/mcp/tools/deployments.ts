@@ -127,7 +127,7 @@ export const deploymentTools = [
   defineTool({
     name: "stop_app",
     description:
-      "Take an app offline: its live deployment becomes 'stopped', its live URL is cleared and canette removes its running containers. Only the live deployment is stopped. A build or rollout that is still in progress is not cancelled and goes live when it finishes; check get_app's latestDeployment afterwards. The app, its settings, env vars, secrets and volumes (including persistent data) are kept. To bring it back, call redeploy_deployment on the deployment that was live (returned here as stoppedDeployment, or from list_deployments), which reuses the built image without a rebuild.",
+      "Take an app offline: its live deployment becomes 'stopped', its live URL is cleared and canette removes its running containers. Only the live deployment is stopped; if the latest deploy failed after creating its resources (e.g. crash-looping pods), those are removed too and the deployment stays 'failed'. A build or rollout that is still in progress is not cancelled and goes live when it finishes; check get_app's latestDeployment afterwards. The app, its settings, env vars, secrets and volumes (including persistent data) are kept. To bring it back, call redeploy_deployment on the deployment that was live (returned here as stoppedDeployment, or from list_deployments), which reuses the built image without a rebuild.",
     inputSchema: {
       type: "object",
       properties: {
@@ -147,7 +147,7 @@ export const deploymentTools = [
         stoppedDeployment: live?.id ?? null,
         note: live
           ? `The app is going offline. To bring it back, call redeploy_deployment with deployment_id ${live.id} (no rebuild needed).`
-          : "The app had no live deployment, so nothing was running. A build or rollout in progress still goes live when it finishes: check get_app's latestDeployment.",
+          : "The app had no live deployment. Anything a failed deploy left running is removed. A build or rollout in progress still goes live when it finishes: check get_app's latestDeployment.",
       })
     },
   }),

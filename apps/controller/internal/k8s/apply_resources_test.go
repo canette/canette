@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
 
 	libk8s "canette.dev/lib/k8s"
 )
@@ -321,5 +322,55 @@ func TestWaitForQuotaUsage_CancelledContextIsAnError(t *testing.T) {
 	cancel()
 	if err := waitForQuotaUsage(ctx, newFakeDynamic(quotaObj(nil)), testNamespace, resourceQuotaName); err == nil {
 		t.Error("expected an error when the context is cancelled")
+	}
+}
+
+// A first deploy that failed after apply leaves a crash-looping Deployment, its
+// Service and its route. Stop tears those down and keeps the app's PVCs.
+func TestTeardownApp_RemovesWorkloadAndRouteKeepsPVCs(t *testing.T) {
+	dyn := newFakeDynamic(
+		unstructuredObj("apps/v1", "Deployment", testApp, map[string]interface{}{}),
+		unstructuredObj("v1", "Service", testApp, map[string]interface{}{}),
+		unstructuredObj("gateway.networking.k8s.io/v1", "HTTPRoute", testApp, map[string]interface{}{}),
+		labelledObj("v1", "PersistentVolumeClaim", testApp+"-data", testApp),
+	)
+	if err := TeardownApp(context.Background(), dyn, testNamespace, testApp); err != nil {
+		t.Fatalf("TeardownApp: %v", err)
+	}
+	for _, gvr := range []schema.GroupVersionResource{gvrDeployment, gvrService, gvrHTTPRoute} {
+		if _, err := dyn.Resource(gvr).Namespace(testNamespace).Get(context.Background(), testApp, metav1.GetOptions{}); !errors.IsNotFound(err) {
+			t.Errorf("expected %s/%s to be deleted, got err=%v", gvr.Resource, testApp, err)
+		}
+	}
+	if _, err := dyn.Resource(gvrPVC).Namespace(testNamespace).Get(context.Background(), testApp+"-data", metav1.GetOptions{}); err != nil {
+		t.Errorf("expected PVC to be kept, got err=%v", err)
+	}
+}
+
+func TestTeardown_DeletesWorkloadsWithBackgroundPropagation(t *testing.T) {
+	dyn := newFakeDynamic()
+	if err := TeardownApp(context.Background(), dyn, testNamespace, testApp); err != nil {
+		t.Fatalf("TeardownApp: %v", err)
+	}
+	if err := TeardownCronJob(context.Background(), dyn, testNamespace, testApp); err != nil {
+		t.Fatalf("TeardownCronJob: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, a := range dyn.Actions() {
+		del, ok := a.(clienttesting.DeleteAction)
+		if !ok {
+			continue
+		}
+		res := del.GetResource().Resource
+		if res != gvrDeployment.Resource && res != gvrCronJob.Resource {
+			continue
+		}
+		seen[res] = true
+		if p := del.GetDeleteOptions().PropagationPolicy; p == nil || *p != metav1.DeletePropagationBackground {
+			t.Errorf("delete %s: propagationPolicy=%v, want Background", res, p)
+		}
+	}
+	if !seen[gvrDeployment.Resource] || !seen[gvrCronJob.Resource] {
+		t.Errorf("expected Deployment and CronJob deletes, saw %v", seen)
 	}
 }
