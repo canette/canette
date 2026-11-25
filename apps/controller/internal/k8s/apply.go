@@ -474,6 +474,23 @@ func DeleteNamespace(ctx context.Context, dyn dynamic.Interface, namespace strin
 	return nil
 }
 
+// ListPVCNames returns the names of every PVC in the namespace, canette-managed
+// or not. A missing namespace has none.
+func ListPVCNames(ctx context.Context, dyn dynamic.Interface, namespace string) ([]string, error) {
+	list, err := dyn.Resource(gvrPVC).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list pvcs: %w", err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, pvc := range list.Items {
+		names = append(names, pvc.GetName())
+	}
+	return names, nil
+}
+
 // TeardownApp deletes the app's Deployment, Service, HTTPRoute, PodDisruptionBudget, and ConfigMaps.
 // The Namespace, Secret, and PVCs are left in place. PVCs hold user data and
 // are preserved across Stop so the app can be restarted without data loss —
