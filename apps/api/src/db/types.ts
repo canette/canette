@@ -136,6 +136,7 @@ export interface Database {
     applied_manifest: string | null
     canette_config: string | null
     deployment_snapshot: string | null
+    claimed_at: string | null
     created_at: string
     updated_at: string
   }

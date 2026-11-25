@@ -49,6 +49,13 @@ type Controller struct {
 	log        *zap.Logger
 	inProgress sync.Map // deploymentID → struct{}{}
 
+	// deploySlots bounds the reconciles running at once to MaxConcurrent,
+	// across poll cycles. Only processPending acquires a slot, so the number
+	// of free slots it sees can only grow before it claims.
+	deploySlots chan struct{}
+	deploying   sync.Map // deploymentID → struct{}{}, reconciles running in this process
+	workers     sync.WaitGroup
+
 	// onDeployLive, if set, is called right after a deployment is marked
 	// live — lets the health watcher learn about it immediately instead of
 	// waiting for its own poll ticker. Nil-safe: never called if unset.
@@ -68,6 +75,7 @@ func New(
 	onDeployLive func(),
 ) *Controller {
 	return &Controller{
+		deploySlots:  make(chan struct{}, max(cfg.MaxConcurrent, 1)),
 		store:        s,
 		client:       client,
 		dynClient:    dynClient,
@@ -78,40 +86,120 @@ func New(
 	}
 }
 
-// Run starts the poll loop; blocks until ctx is cancelled.
+// shutdownDrainTimeout is how long Run lets running workers finish after ctx
+// is cancelled, before cancelling them. shutdownFailTimeout is how long it then
+// waits for them to record the failure. The chart's
+// terminationGracePeriodSeconds (charts/canette/templates/controller/deployment.yaml)
+// must be longer than both together.
+const (
+	shutdownDrainTimeout = 20 * time.Second
+	shutdownFailTimeout  = 5 * time.Second
+)
+
+// Run starts the poll loop; blocks until ctx is cancelled and the workers it
+// started have stopped (bounded by shutdownDrainTimeout + shutdownFailTimeout).
 func (c *Controller) Run(ctx context.Context) error {
 	c.log.Info("controller started",
 		zap.Duration("poll_interval", c.cfg.PollInterval),
 		zap.Int("max_concurrent", c.cfg.MaxConcurrent),
 	)
 
+	// Workers run on their own context, so a shutdown gives a rollout that is
+	// nearly done the chance to finish instead of failing it straight away.
+	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelWork()
+
 	ticker := time.NewTicker(c.cfg.PollInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			c.log.Info("controller shutting down")
+			c.log.Info("controller shutting down, waiting for running workers",
+				zap.Duration("timeout", shutdownDrainTimeout))
+			if !c.waitWorkers(shutdownDrainTimeout) {
+				c.log.Warn("workers still running, cancelling them")
+				cancelWork()
+				if !c.waitWorkers(shutdownFailTimeout) {
+					c.log.Warn("workers did not stop in time; their deployments are failed by the next controller")
+				}
+			}
 			return nil
 		case <-ticker.C:
-			if err := c.processPending(ctx); err != nil {
+			if err := c.processPending(ctx, workCtx); err != nil {
 				c.log.Error("poll cycle error", zap.Error(err))
 			}
 		}
 	}
 }
 
-func (c *Controller) processPending(ctx context.Context) error {
+// waitWorkers waits up to timeout for every worker to return, and reports
+// whether they all did.
+func (c *Controller) waitWorkers(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		c.workers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// goWorker runs fn in a goroutine that Run waits for on shutdown.
+func (c *Controller) goWorker(fn func()) {
+	c.workers.Add(1)
+	go func() {
+		defer c.workers.Done()
+		fn()
+	}()
+}
+
+// runningDeployments returns the IDs of the deployments this process is
+// reconciling.
+func (c *Controller) runningDeployments() []string {
+	var ids []string
+	c.deploying.Range(func(k, _ any) bool {
+		ids = append(ids, k.(string))
+		return true
+	})
+	return ids
+}
+
+// processPending claims queued work and starts a worker for each item. Claims
+// run on ctx, which stops on shutdown; workers run on workCtx (see Run).
+func (c *Controller) processPending(ctx, workCtx context.Context) error {
+	// Fail deployments a crashed or killed controller left in deploying, so
+	// the app can be deployed again.
+	recovered, err := c.store.RecoverAbandonedDeploying(ctx, c.runningDeployments())
+	if err != nil {
+		c.log.Error("recover abandoned deployments error", zap.Error(err))
+	}
+	for _, id := range recovered {
+		c.log.Warn("deployment abandoned by a stopped controller, marked failed", zap.String("deployment", id))
+	}
+
 	// ClaimDeploying atomically transitions pending_deployment → deploying
 	// (UPDATE ... FOR UPDATE SKIP LOCKED), so each row is claimed by exactly
-	// one controller instance even when multiple are running.
-	deps, err := c.store.ClaimDeploying(ctx, c.cfg.MaxConcurrent)
+	// one controller instance even when multiple are running. Only as many
+	// rows are claimed as there are free slots, so a claimed row never waits.
+	free := cap(c.deploySlots) - len(c.deploySlots)
+	deps, err := c.store.ClaimDeploying(ctx, free)
 	if err != nil {
 		return err
 	}
 	for _, dep := range deps {
-		go func(d store.DeployingDeployment) {
-			c.reconcile(ctx, d)
-		}(dep)
+		c.deploySlots <- struct{}{}
+		c.deploying.Store(dep.ID, struct{}{})
+		c.goWorker(func() {
+			defer func() {
+				c.deploying.Delete(dep.ID)
+				<-c.deploySlots
+			}()
+			c.reconcile(workCtx, dep)
+		})
 	}
 
 	// Tear down stopped deployments.
@@ -125,10 +213,10 @@ func (c *Controller) processPending(ctx context.Context) error {
 		if _, loaded := c.inProgress.LoadOrStore(key, struct{}{}); loaded {
 			continue
 		}
-		go func(d store.StoppedDeployment) {
-			defer c.inProgress.Delete("teardown:" + d.ID)
-			c.runTeardown(ctx, d)
-		}(dep)
+		c.goWorker(func() {
+			defer c.inProgress.Delete("teardown:" + dep.ID)
+			c.runTeardown(workCtx, dep)
+		})
 	}
 
 	// Delete namespaces left behind by project renames and deletes.
@@ -136,10 +224,10 @@ func (c *Controller) processPending(ctx context.Context) error {
 	if err != nil {
 		c.log.Error("claim namespace deletions error", zap.Error(err))
 	} else {
-		for _, nd := range nsDels {
-			go func(d store.PendingNamespaceDeletion) {
+		for _, d := range nsDels {
+			c.goWorker(func() {
 				ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
-				pvcs, err := cleanupQueuedNamespace(ctx, c.dynClient, d)
+				pvcs, err := cleanupQueuedNamespace(workCtx, c.dynClient, d)
 				if err != nil {
 					c.log.Warn("namespace deletion error",
 						zap.String("namespace", ns),
@@ -156,16 +244,16 @@ func (c *Controller) processPending(ctx context.Context) error {
 						zap.String("namespace", ns),
 						zap.Strings("pvcs", pvcs),
 						zap.Duration("retry_in", namespaceBlockedRetry))
-					if err := c.store.MarkNamespaceBlocked(ctx, d.ID, reason, time.Now().Add(namespaceBlockedRetry)); err != nil {
+					if err := c.store.MarkNamespaceBlocked(workCtx, d.ID, reason, time.Now().Add(namespaceBlockedRetry)); err != nil {
 						c.log.Warn("mark namespace blocked error", zap.Error(err))
 					}
 					return // row stays queued
 				}
-				if err := c.store.MarkNamespaceDeleted(ctx, d.ID); err != nil {
+				if err := c.store.MarkNamespaceDeleted(workCtx, d.ID); err != nil {
 					c.log.Warn("mark namespace deleted error", zap.Error(err))
 				}
 				c.log.Info("namespace deleted", zap.String("namespace", ns))
-			}(nd)
+			})
 		}
 	}
 
@@ -174,22 +262,22 @@ func (c *Controller) processPending(ctx context.Context) error {
 	if err != nil {
 		c.log.Error("claim app cleanups error", zap.Error(err))
 	} else {
-		for _, ac := range appCleanups {
-			go func(d store.PendingAppCleanup) {
+		for _, d := range appCleanups {
+			c.goWorker(func() {
 				ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
 				log := c.log.With(zap.String("namespace", ns), zap.String("app", d.AppSlug))
-				if err := k8sres.DeleteApp(ctx, c.dynClient, ns, d.AppSlug); err != nil {
+				if err := k8sres.DeleteApp(workCtx, c.dynClient, ns, d.AppSlug); err != nil {
 					log.Warn("app cleanup error", zap.Error(err))
 					return // claim expires, retried on a later poll
 				}
-				if err := k8sres.DeleteAllPodsForApp(ctx, c.client, ns, d.AppSlug); err != nil {
+				if err := k8sres.DeleteAllPodsForApp(workCtx, c.client, ns, d.AppSlug); err != nil {
 					log.Warn("delete pods error", zap.Error(err))
 				}
-				if err := c.store.MarkAppCleanedUp(ctx, d.ID); err != nil {
+				if err := c.store.MarkAppCleanedUp(workCtx, d.ID); err != nil {
 					log.Warn("mark app cleaned up error", zap.Error(err))
 				}
 				log.Info("deleted app resources")
-			}(ac)
+			})
 		}
 	}
 
@@ -198,8 +286,8 @@ func (c *Controller) processPending(ctx context.Context) error {
 	if err != nil {
 		c.log.Error("claim volume deletions error", zap.Error(err))
 	} else {
-		for _, vd := range volDels {
-			go func(d store.PendingVolumeDeletion) {
+		for _, d := range volDels {
+			c.goWorker(func() {
 				ns, kind, name, err := resolveVolumeDeletion(d)
 				if err != nil {
 					// Can't happen with the table's CHECK constraints; the claim
@@ -207,7 +295,7 @@ func (c *Controller) processPending(ctx context.Context) error {
 					c.log.Error("invalid volume deletion row", zap.String("id", d.ID), zap.Error(err))
 					return
 				}
-				if err := k8sres.DeleteVolumeResource(ctx, c.dynClient, kind, ns, name); err != nil {
+				if err := k8sres.DeleteVolumeResource(workCtx, c.dynClient, kind, ns, name); err != nil {
 					c.log.Warn("volume deletion error",
 						zap.String("resource_type", kind),
 						zap.String("namespace", ns),
@@ -215,14 +303,14 @@ func (c *Controller) processPending(ctx context.Context) error {
 						zap.Error(err))
 					return // will retry next poll
 				}
-				if err := c.store.MarkVolumeDeleted(ctx, d.ID); err != nil {
+				if err := c.store.MarkVolumeDeleted(workCtx, d.ID); err != nil {
 					c.log.Warn("mark volume deleted error", zap.Error(err))
 				}
 				c.log.Info("volume resource deleted",
 					zap.String("resource_type", kind),
 					zap.String("namespace", ns),
 					zap.String("name", name))
-			}(vd)
+			})
 		}
 	}
 

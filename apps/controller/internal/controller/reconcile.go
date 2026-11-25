@@ -23,11 +23,22 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		zap.String("project", dep.ProjectSlug),
 	)
 
+	stopHeartbeat := c.startHeartbeat(ctx, log, dep.ID)
+	defer stopHeartbeat()
+
 	var lastErr error
 	defer func() {
 		if lastErr != nil {
+			if ctx.Err() != nil {
+				// Whatever failed, it failed because the controller is
+				// shutting down (see Controller.Run).
+				lastErr = errors.New("controller shut down during this deployment; redeploy to retry")
+			}
 			log.Error("reconcile failed", zap.Error(lastErr))
-			if err := c.store.MarkFailed(ctx, dep.ID, lastErr.Error()); err != nil {
+			// ctx may be cancelled: write the failure on a context of its own.
+			failCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markFailedTimeout)
+			defer cancel()
+			if err := c.store.MarkFailed(failCtx, dep.ID, lastErr.Error()); err != nil {
 				log.Error("failed to mark deployment failed", zap.Error(err))
 			}
 		}
@@ -179,7 +190,10 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 					return
 				}
 			}
-			time.Sleep(3 * time.Second)
+			select {
+			case <-ctx.Done():
+			case <-time.After(3 * time.Second):
+			}
 		}
 
 		if time.Now().After(deadline) {
@@ -224,6 +238,41 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 		log.Info("deployment live", zap.String("url", liveURL), zap.String("pod", livePodName))
 	}
 	lastErr = nil
+}
+
+// heartbeatInterval is how often a running reconcile refreshes its
+// deployment's heartbeat. Well within store.DeployingHeartbeatTTL, so a few
+// failed writes in a row don't get the deployment failed as abandoned.
+const heartbeatInterval = 15 * time.Second
+
+// markFailedTimeout bounds the write of a deployment's failure status.
+const markFailedTimeout = 5 * time.Second
+
+// startHeartbeat refreshes the deployment's heartbeat every heartbeatInterval
+// until the returned stop function is called. It runs for the whole reconcile,
+// not just the rollout poll, so a slow apply is not mistaken for a crash.
+func (c *Controller) startHeartbeat(ctx context.Context, log *zap.Logger, deploymentID string) (stop func()) {
+	hbCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				if err := c.store.Heartbeat(hbCtx, deploymentID); err != nil && hbCtx.Err() == nil {
+					log.Warn("deployment heartbeat failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 func (c *Controller) appendLog(ctx context.Context, log *zap.Logger, deploymentID, stream, line string) {

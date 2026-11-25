@@ -242,13 +242,25 @@ func (s *Store) ClearAppLiveURL(ctx context.Context, appID string) error {
 	return nil
 }
 
+// DeployingHeartbeatTTL is how long a deploying row may go without a
+// heartbeat (see Heartbeat) before it counts as abandoned by a controller that
+// crashed or was killed. Much longer than the heartbeat interval, so a slow DB
+// write never trips it, and independent of the rollout timeout.
+const DeployingHeartbeatTTL = 2 * time.Minute
+
 // ClaimDeploying atomically transitions up to limit deployments from
-// pending_deployment → deploying and returns them. FOR UPDATE SKIP LOCKED
-// ensures multiple controller instances never claim the same row.
+// pending_deployment → deploying, sets their heartbeat and returns them.
+// FOR UPDATE SKIP LOCKED ensures multiple controller instances never claim the
+// same row. A claimed row whose snapshot is missing or unparseable can never be
+// reconciled, so it is marked failed here instead of being returned.
 func (s *Store) ClaimDeploying(ctx context.Context, limit int) ([]DeployingDeployment, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	now := time.Now().UTC()
 	rows, err := s.db.QueryContext(ctx, `
 		UPDATE deployments
-		SET status = 'deploying', updated_at = $1
+		SET status = 'deploying', claimed_at = $1, updated_at = $1
 		WHERE id IN (
 			SELECT id FROM deployments
 			WHERE status = 'pending_deployment'
@@ -259,13 +271,14 @@ func (s *Store) ClaimDeploying(ctx context.Context, limit int) ([]DeployingDeplo
 		RETURNING id, app_id, image_digest, commit_sha,
 		          COALESCE(deployment_snapshot, ''),
 		          COALESCE(canette_config, '')`,
-		time.Now().UTC(), limit)
+		now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query deploying: %w", err)
 	}
 	defer rows.Close()
 
 	var deps []DeployingDeployment
+	invalid := map[string]string{} // deploymentID → error message
 	for rows.Next() {
 		var d DeployingDeployment
 		var snapshotJSON string
@@ -274,16 +287,11 @@ func (s *Store) ClaimDeploying(ctx context.Context, limit int) ([]DeployingDeplo
 			return nil, fmt.Errorf("scan deploying row: %w", err)
 		}
 		if snapshotJSON == "" {
-			if _, alreadyWarned := s.warnedBadSnapshot.LoadOrStore(d.ID, struct{}{}); !alreadyWarned {
-				s.log.Warn("pending deployment has no snapshot, skipping", zap.String("deployment_id", d.ID))
-			}
+			invalid[d.ID] = "deployment has no snapshot; redeploy to retry"
 			continue
 		}
 		if err := json.Unmarshal([]byte(snapshotJSON), &d.snapshot); err != nil {
-			if _, alreadyWarned := s.warnedBadSnapshot.LoadOrStore(d.ID, struct{}{}); !alreadyWarned {
-				s.log.Warn("pending deployment has unparseable snapshot, skipping",
-					zap.String("deployment_id", d.ID), zap.Error(err))
-			}
+			invalid[d.ID] = fmt.Sprintf("deployment snapshot could not be parsed (%s); redeploy to retry", err)
 			continue
 		}
 		d.AppSlug = d.snapshot.App.Slug
@@ -297,7 +305,71 @@ func (s *Store) ClaimDeploying(ctx context.Context, limit int) ([]DeployingDeplo
 		}
 		deps = append(deps, d)
 	}
-	return deps, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	// The rows are already deploying; if marking one failed errors, its
+	// heartbeat is never refreshed and RecoverAbandonedDeploying fails it later.
+	for id, msg := range invalid {
+		s.log.Warn("claimed deployment has an invalid snapshot, marking failed",
+			zap.String("deployment_id", id), zap.String("error", msg))
+		if err := s.MarkFailed(ctx, id, msg); err != nil {
+			s.log.Error("failed to mark deployment failed", zap.String("deployment_id", id), zap.Error(err))
+		}
+	}
+	return deps, nil
+}
+
+// Heartbeat refreshes claimed_at on a deployment this controller is still
+// reconciling, so RecoverAbandonedDeploying leaves it alone.
+func (s *Store) Heartbeat(ctx context.Context, deploymentID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE deployments SET claimed_at = $1
+		WHERE id = $2 AND status = 'deploying'`, time.Now().UTC(), deploymentID)
+	if err != nil {
+		return fmt.Errorf("heartbeat: %w", err)
+	}
+	return nil
+}
+
+// AbandonedDeployingMessage is the error_message of a deployment failed by
+// RecoverAbandonedDeploying.
+const AbandonedDeployingMessage = "controller stopped during this deployment; redeploy to retry"
+
+// RecoverAbandonedDeploying marks failed every deploying row whose heartbeat
+// is older than DeployingHeartbeatTTL, except the ones in running (reconciles
+// of this process, which may only have missed heartbeats because the DB was
+// unreachable). Rows claimed before claimed_at existed fall back to
+// updated_at. Returns the IDs of the rows it failed.
+func (s *Store) RecoverAbandonedDeploying(ctx context.Context, running []string) ([]string, error) {
+	now := time.Now().UTC()
+	if running == nil {
+		running = []string{}
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		UPDATE deployments
+		SET status = 'failed', error_message = $1, updated_at = $2
+		WHERE status = 'deploying'
+		  AND COALESCE(claimed_at, updated_at) < $3
+		  AND NOT (id = ANY($4))
+		RETURNING id`,
+		AbandonedDeployingMessage, now, now.Add(-DeployingHeartbeatTTL), running)
+	if err != nil {
+		return nil, fmt.Errorf("recover abandoned deploying: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan abandoned deploying row: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // GetAppConfig builds the full app config for reconciliation.

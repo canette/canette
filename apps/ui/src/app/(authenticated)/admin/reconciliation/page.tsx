@@ -73,9 +73,12 @@ export default function AdminReconciliationPage() {
             <p className="text-sm font-medium mb-1">Reset stuck builds</p>
             <p className="text-sm text-muted-foreground">
               Marks any deployment stuck in <code className="text-xs">building</code> or{" "}
-              <code className="text-xs">scanning</code> as failed. Use this after a builder or cluster
-              crash where build jobs were lost but the database still shows deployments in progress.
-              Affected apps can be redeployed immediately.
+              <code className="text-xs">scanning</code> as failed, and any deployment in{" "}
+              <code className="text-xs">deploying</code> that the controller has not worked on for
+              2 minutes. Use this after a builder, controller or cluster crash where jobs were lost but
+              the database still shows deployments in progress. The controller also fails abandoned{" "}
+              <code className="text-xs">deploying</code> rows by itself. Affected apps can be
+              redeployed immediately.
             </p>
           </div>
           {resetError && <p className="text-sm text-destructive">{resetError}</p>}

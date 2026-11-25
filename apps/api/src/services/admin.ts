@@ -460,23 +460,40 @@ export async function setSignupMode(db: DB, mode: string): Promise<void> {
 
 // ── Reset stuck builds ────────────────────────────────────────────────────────
 
+// A deploying row whose heartbeat (claimed_at) is older than this was left
+// behind by a stopped controller. Matches DeployingHeartbeatTTL in
+// apps/controller/internal/store/store.go.
+export const DEPLOYING_HEARTBEAT_TTL_MS = 2 * 60 * 1000
+
 export async function resetStuckBuilds(db: DB): Promise<SyncResult> {
-  const now = new Date().toISOString()
+  const now = new Date()
+  const staleBefore = new Date(now.getTime() - DEPLOYING_HEARTBEAT_TTL_MS).toISOString()
   const result = await db
     .updateTable("deployments")
     .set({
       status: "failed",
       error_message: "Reset by admin: deployment was stuck in an intermediate state",
-      updated_at: now,
+      updated_at: now.toISOString(),
     })
-    .where("status", "in", ["building", "scanning"])
+    .where((eb) =>
+      eb.or([
+        eb("status", "in", ["building", "scanning"]),
+        // A deploying row the controller is still working on keeps its
+        // heartbeat fresh. Rows claimed before claimed_at existed fall back
+        // to updated_at, like the controller's own recovery.
+        eb.and([
+          eb("status", "=", "deploying"),
+          eb(eb.fn.coalesce("claimed_at", "updated_at"), "<", staleBefore),
+        ]),
+      ]),
+    )
     .executeTakeFirst()
   const synced = Number(result.numUpdatedRows ?? 0n)
   return {
     synced,
     message:
       synced === 0
-        ? "No stuck builds found."
+        ? "No stuck deployments found."
         : `${synced} deployment${synced === 1 ? "" : "s"} reset to failed.`,
   }
 }
