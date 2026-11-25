@@ -1,5 +1,7 @@
 # Shared fixture and assertions for the local Kubernetes smoke-test backends.
 # The caller provides kube, guest_registry_reachable, step, die, and the cluster settings.
+# Every project a run creates has a slug starting with $project_slug, so the
+# backends can clean up its namespaces and images by that prefix.
 
 images=(
     canette-api:apps/api/Dockerfile
@@ -65,6 +67,12 @@ retry() {
 }
 
 run_canette_smoke() {
+    install_canette
+    create_git_fixture
+    deploy_fixture_app
+}
+
+install_canette() {
     stage=install
     step "Installing Canette in $namespace"
     kube create namespace "$namespace" --dry-run=client -o json |
@@ -87,7 +95,9 @@ run_canette_smoke() {
     retry 90 registry_reachable || die 'The host did not reach the authenticated registry over HTTPS.'
     retry 30 guest_registry_reachable || die 'The Kubernetes node could not resolve or verify the registry HTTPS endpoint.'
     retry 60 api GET /api/v1/signup-settings >/dev/null || die 'The UI HTTPS route did not proxy requests to the API.'
+}
 
+create_git_fixture() {
     stage=git-fixture
     step 'Creating a local Git repository and SSH service'
     mkdir "$work/fixture"
@@ -178,7 +188,9 @@ spec:
             secretName: fixture-ssh
 YAML
     kube -n "$namespace" rollout status deployment/fixture-git --timeout=180s
+}
 
+deploy_fixture_app() {
     stage=canette-api
     step 'Signing in and triggering a Git deployment through the Canette API'
     email="e2e-$run_id@example.test"
@@ -195,7 +207,8 @@ YAML
     credential_id="$(jq -n --rawfile key "$work/ssh-client" --rawfile hosts "$work/known_hosts" \
         '{name:"Local fixture",provider:"generic",type:"ssh_key",value:$key,sshKnownHosts:$hosts}' |
         post_json "/api/v1/teams/$team_id/credentials" | jq -er .id)"
-    app_id="$(jq -n --arg slug "$app_slug" --arg gitUrl "ssh://git@$git_host:2222/home/git/fixture.git" --arg credential "$credential_id" \
+    git_url="ssh://git@$git_host:2222/home/git/fixture.git"
+    app_id="$(jq -n --arg slug "$app_slug" --arg gitUrl "$git_url" --arg credential "$credential_id" \
         '{name:"Hello",slug:$slug,sourceType:"git",deploymentType:"web",gitUrl:$gitUrl,gitBranch:"main",gitCredentialId:$credential,port:8080}' |
         post_json "/api/v1/projects/$project_id/apps" | jq -er .id)"
     deployment_id="$(printf '{}\n' | post_json "/api/v1/apps/$app_id/deployments" | jq -er .id)"
@@ -247,4 +260,23 @@ YAML
     }
     retry 60 fixture_responds || die "HTTPS response never matched the fixture at $live_url."
     printf '\nPASS %s deployed fixture %s at %s\n' "$sha" "$fixture_sha" "$live_url"
+}
+
+# run_lifecycle_tests runs the Go lifecycle scenarios (tests/lifecycle) against
+# the release the smoke test installed, using its account and Git fixture.
+run_lifecycle_tests() {
+    stage=lifecycle
+    step 'Running the lifecycle scenarios'
+    local run_env="$work/lifecycle-env.json"
+    jq -n \
+        --arg kubeconfig "$kubeconfig" --arg release "$release" --arg releaseNamespace "$namespace" \
+        --arg chartDir "$chart_dir" --arg domain "$domain" --arg uiHost "$ui_host" --arg nodeIP "$node_ip" \
+        --arg caFile "$ca" --arg email "$email" --arg password "$password" --arg teamID "$team_id" \
+        --arg credentialID "$credential_id" --arg gitURL "$git_url" --arg projectSlugPrefix "$project_slug" \
+        '$ARGS.named' >"$run_env"
+    local args=(test -tags lifecycle -count=1 -timeout "${LIFECYCLE_TIMEOUT:-60m}" -v)
+    [[ -z "${LIFECYCLE_RUN:-}" ]] || args+=(-run "$LIFECYCLE_RUN")
+    (cd "$repo/tests/lifecycle" && LIFECYCLE_ENV="$run_env" go "${args[@]}" ./...) 2>&1 |
+        tee "$work/lifecycle.log"
+    printf '\nPASS %s lifecycle scenarios\n' "$sha"
 }

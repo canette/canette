@@ -39,8 +39,28 @@ Run from the repository root with the desired commit checked out and tracked fil
 | `--check` | Checks the checkout, kubeconfig, and running VM without changing them. |
 | `--keep` | Keeps the test release, fixture, and images. If the test account was created, prints its dashboard login email and password. |
 | `--cleanup` | Removes the retained test release, its fixture and build namespaces, PVCs, and image references. Runs from any directory. |
+| `--lifecycle` | After the smoke test, runs the lifecycle scenarios. Combine with `--keep` to keep the release afterwards. See [Lifecycle scenarios](#lifecycle-scenarios). |
 
 The script finds the kubeconfig exported by Lima when `KUBECONFIG` is unset. If you use a different instance name, set `LIMA_INSTANCE`. If you set `KUBECONFIG` explicitly, point it at that instance’s exported file. The script checks that both refer to the same node.
+
+## Lifecycle scenarios
+
+`--lifecycle` runs the Go tests in [`tests/lifecycle`](../../tests/lifecycle) against the release the smoke test installed (issue #330). They crash the controller at set points, stop and redeploy apps, and rename projects, then check what the API and Kubernetes report. Lima only for now. The run needs Go and takes about 30 minutes on top of the smoke test, mostly waiting for claims to expire.
+
+```sh
+./scripts/e2e/macos-lima.sh --lifecycle
+LIFECYCLE_RUN='TestControllerCrash/after-claim' ./scripts/e2e/macos-lima.sh --lifecycle --keep
+```
+
+`LIFECYCLE_RUN` is passed to `go test -run`, and `LIFECYCLE_TIMEOUT` (default `60m`) to `-timeout`. The test output is saved with the failure diagnostics.
+
+| Test | Checks |
+| --- | --- |
+| `TestControllerCrash` | The controller exits at the `after-claim`, `after-partial-apply`, `after-teardown-delete` and `after-app-delete` failpoints. After the restart, the deployment is failed as abandoned and a redeploy goes live, or the teardown or cleanup is retried and finishes. The history is kept, and a pending app cleanup keeps its slug taken. |
+| `TestStopKeepsPVC` | Stop and redeploy keep the app's PVC (same UID). |
+| `TestSlugChangeKeepsPVC` | A rename is refused while an app has a PVC volume, and the old namespace is kept while a PVC is left in it. |
+
+The failpoints are set through the chart value `controller.failpoints`, with `helm upgrade --reuse-values`, which restarts the controller. Every project the tests create has a slug starting with the run's `smoke-<id>` project, so cleanup removes it with the run.
 
 ## Open a kept run in the browser
 

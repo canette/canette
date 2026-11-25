@@ -24,6 +24,7 @@
     "lint:builder": "cd apps/builder && golangci-lint run",
     "lint:controller": "cd apps/controller && golangci-lint run",
     "lint:logstreamer": "cd apps/logstreamer && golangci-lint run",
+    "lint:lifecycle": "cd tests/lifecycle && golangci-lint run --build-tags lifecycle",
     "test:builder": "cd apps/builder && go test ./...",
     "test:controller": "cd apps/controller && go test ./...",
     "test:logstreamer": "cd apps/logstreamer && go test ./...",

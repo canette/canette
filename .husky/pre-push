@@ -8,6 +8,7 @@ bun run test:api
 bun run lint:builder
 bun run lint:controller
 bun run lint:logstreamer
+bun run lint:lifecycle
 bun run test:builder
 bun run test:controller
 bun run test:logstreamer
