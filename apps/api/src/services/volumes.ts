@@ -6,6 +6,7 @@ import { ServiceError } from "./errors"
 import { getAppById } from "./apps"
 import { getReplicasFromCanetteConfig } from "./canette-config"
 import { supportsForUpdate } from "../db/dialect"
+import { isUniqueConstraintError } from "../db/errors"
 
 // ── Internal row type ─────────────────────────────────────────────────────────
 
@@ -143,11 +144,6 @@ function generateVolumeName(mountPath: string, appSlug: string): string | null {
     .slice(0, maxLen)
     .replace(/-+$/, "")
   return sanitised || "volume"
-}
-
-function isUniqueConstraintError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : ""
-  return msg.includes("UNIQUE constraint") || msg.includes("unique constraint") || msg.includes("duplicate key")
 }
 
 // ── Service functions ─────────────────────────────────────────────────────────

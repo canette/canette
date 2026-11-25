@@ -3,6 +3,7 @@ import type { AdminTeamOverview, Team, TeamMember, User } from "@canette/types"
 import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { ServiceError } from "./errors"
+import { isUniqueConstraintError } from "../db/errors"
 
 // ── Internal row types ────────────────────────────────────────────────────────
 
@@ -253,7 +254,7 @@ export async function addMember(db: DB, teamId: string, targetUserId: string): P
       })
       .execute()
   } catch (err: unknown) {
-    if (err instanceof Error && err.message.includes("UNIQUE")) {
+    if (isUniqueConstraintError(err)) {
       // Already a member — idempotent, no error
       return
     }

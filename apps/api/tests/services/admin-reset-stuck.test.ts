@@ -7,7 +7,7 @@ import { createApp } from "../../src/services/apps"
 import { createProject } from "../../src/services/projects"
 
 const db = createTestDb()
-let appId: string
+let projectId: string
 
 describe("resetStuckBuilds", () => {
   beforeAll(async () => {
@@ -27,18 +27,20 @@ describe("resetStuckBuilds", () => {
       id: "member-teamId", team_id: "teamId", user_id: "userId", created_at: now,
     }).execute()
     const project = await createProject(db, "userId", { name: "p", slug: "p", teamId: "teamId" })
-    const app = await createApp(db, project.id, "userId", {
-      name: "a", slug: "a", sourceType: "git", gitUrl: "https://github.com/example/repo",
-    })
-    appId = app.id
+    projectId = project.id
   })
 
   const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
   const expired = () => ago(DEPLOYING_HEARTBEAT_TTL_MS + 60_000)
 
+  // Each deployment gets an app of its own: an app can have only one
+  // deployment in progress.
   async function addDeployment(id: string, status: string, claimedAt: string | null, updatedAt: string) {
+    const app = await createApp(db, projectId, "userId", {
+      name: id, slug: id, sourceType: "git", gitUrl: "https://github.com/example/repo",
+    })
     await db.insertInto("deployments").values({
-      id, app_id: appId, status, commit_sha: "abc", claimed_at: claimedAt,
+      id, app_id: app.id, status, commit_sha: "abc", claimed_at: claimedAt,
       created_at: updatedAt, updated_at: updatedAt,
     }).execute()
   }

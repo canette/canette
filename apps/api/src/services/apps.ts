@@ -8,6 +8,7 @@ import { getReplicasFromCanetteConfig, validateCanetteConfigYaml } from "./canet
 import { supportsForUpdate } from "../db/dialect"
 import { AUTHGATE_SIDECAR_PORT } from "./reserved-ports"
 import { credentialDestinationError } from "./git-credential-destination"
+import { isUniqueConstraintError } from "../db/errors"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
@@ -380,7 +381,7 @@ export async function createApp(
       })
       .execute()
   } catch (err: unknown) {
-    if (err instanceof Error && err.message.includes("UNIQUE")) {
+    if (isUniqueConstraintError(err)) {
       throw new ServiceError("An app with that slug already exists in this project", "CONFLICT", 409)
     }
     throw err

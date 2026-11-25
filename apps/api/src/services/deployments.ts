@@ -1,8 +1,9 @@
 import type { DB } from "../db/db"
 import type { BuildLog, Deployment, DeploymentStatus, PaginatedResponse } from "@canette/types"
-import type { Selectable } from "kysely"
+import type { Insertable, Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
+import { isUniqueConstraintError } from "../db/errors"
 import { ServiceError } from "./errors"
 import { getAppById } from "./apps"
 
@@ -207,6 +208,27 @@ export async function getLiveDeployment(db: DB, appId: string): Promise<Deployme
 // Statuses of a deployment that is still being built or rolled out.
 export const ACTIVE_DEPLOYMENT_STATUSES = ["pending_build", "building", "scanning", "pending_deployment", "deploying"] as const
 
+const IN_PROGRESS_MESSAGE = "A deployment is already in progress. Stop or wait for it to finish first."
+
+// insertDeployment inserts a new in-progress deployment. The database allows
+// only one per app (idx_deployments_one_active_per_app), which also rejects
+// the second of two requests that both passed hasActiveDeployment at the same
+// moment, so that case gets the same DEPLOYMENT_IN_PROGRESS error.
+async function insertDeployment(
+  db: DB,
+  values: Insertable<Database["deployments"]>,
+  inProgressMessage: string
+): Promise<void> {
+  try {
+    await db.insertInto("deployments").values(values).execute()
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      throw new ServiceError(inProgressMessage, "DEPLOYMENT_IN_PROGRESS", 409)
+    }
+    throw err
+  }
+}
+
 // hasActiveDeployment returns true if the app already has an in-progress deployment.
 async function hasActiveDeployment(db: DB, appId: string): Promise<boolean> {
   const row = await db
@@ -237,7 +259,7 @@ export async function createDeployment(
 
   if (await hasActiveDeployment(db, appId)) {
     throw new ServiceError(
-      "A deployment is already in progress. Stop or wait for it to finish first.",
+      IN_PROGRESS_MESSAGE,
       "DEPLOYMENT_IN_PROGRESS",
       409
     )
@@ -266,40 +288,34 @@ export async function createDeployment(
     const imageRef = `${appRow.image_url}:${tag}`
     const commitSha = input?.commitSha ?? tag
     // No build stage, insert directly as pending_deployment
-    await db
-      .insertInto("deployments")
-      .values({
-        id,
-        app_id: appId,
-        status: "pending_deployment",
-        commit_sha: commitSha,
-        commit_message: commitMessage,
-        image_digest: imageRef,
-        triggered_by: triggeredBy,
-        canette_config: canetteConfig,
-        deployment_snapshot: snapshot,
-        created_at: now,
-        updated_at: now,
-      })
-      .execute()
+    await insertDeployment(db, {
+      id,
+      app_id: appId,
+      status: "pending_deployment",
+      commit_sha: commitSha,
+      commit_message: commitMessage,
+      image_digest: imageRef,
+      triggered_by: triggeredBy,
+      canette_config: canetteConfig,
+      deployment_snapshot: snapshot,
+      created_at: now,
+      updated_at: now,
+    }, IN_PROGRESS_MESSAGE)
   } else {
     const commitSha = input?.commitSha ?? (appRow?.git_branch || "main")
     // Build stage, image_digest is set once build is complete
-    await db
-      .insertInto("deployments")
-      .values({
-        id,
-        app_id: appId,
-        status: "pending_build",
-        commit_sha: commitSha,
-        commit_message: commitMessage,
-        triggered_by: triggeredBy,
-        canette_config: canetteConfig,
-        deployment_snapshot: snapshot,
-        created_at: now,
-        updated_at: now,
-      })
-      .execute()
+    await insertDeployment(db, {
+      id,
+      app_id: appId,
+      status: "pending_build",
+      commit_sha: commitSha,
+      commit_message: commitMessage,
+      triggered_by: triggeredBy,
+      canette_config: canetteConfig,
+      deployment_snapshot: snapshot,
+      created_at: now,
+      updated_at: now,
+    }, IN_PROGRESS_MESSAGE)
   }
 
   const row = await db
@@ -446,22 +462,19 @@ export async function redeployDeployment(
 
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
-  await db
-    .insertInto("deployments")
-    .values({
-      id,
-      app_id: access.app_id,
-      status: "pending_deployment",
-      commit_sha: access.commit_sha,
-      commit_message: access.commit_message ?? null,
-      image_digest: access.image_digest,
-      triggered_by: userId,
-      canette_config: canetteConfig,
-      deployment_snapshot: snapshot,
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
+  await insertDeployment(db, {
+    id,
+    app_id: access.app_id,
+    status: "pending_deployment",
+    commit_sha: access.commit_sha,
+    commit_message: access.commit_message ?? null,
+    image_digest: access.image_digest,
+    triggered_by: userId,
+    canette_config: canetteConfig,
+    deployment_snapshot: snapshot,
+    created_at: now,
+    updated_at: now,
+  }, "A deployment is already in progress. Stop it first.")
 
   const row = await db
     .selectFrom("deployments")

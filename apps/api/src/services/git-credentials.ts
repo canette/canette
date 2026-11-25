@@ -5,6 +5,7 @@ import type { Database } from "../db/types"
 import { encrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
 import { isTeamMember } from "./membership"
+import { isUniqueConstraintError } from "../db/errors"
 
 // ── Internal row type ─────────────────────────────────────────────────────────
 
@@ -148,7 +149,7 @@ export async function createCredential(
       })
       .execute()
   } catch (err: unknown) {
-    if (err instanceof Error && err.message.includes("UNIQUE")) {
+    if (isUniqueConstraintError(err)) {
       throw new ServiceError("A credential with that name already exists", "CONFLICT", 409)
     }
     throw err

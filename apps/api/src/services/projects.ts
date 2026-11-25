@@ -5,6 +5,7 @@ import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
 import { isTeamMember } from "./membership"
+import { isUniqueConstraintError } from "../db/errors"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
@@ -120,7 +121,7 @@ export async function createProject(
       })
       .execute()
   } catch (err: unknown) {
-    if (err instanceof Error && err.message.includes("UNIQUE")) {
+    if (isUniqueConstraintError(err)) {
       throw new ServiceError("A project with that slug already exists", "CONFLICT", 409)
     }
     throw err
@@ -209,42 +210,38 @@ export async function updateProject(
   if (!Object.keys(updates).length) throw new ServiceError("Nothing to update", "VALIDATION_ERROR", 400)
   updates.updated_at = new Date().toISOString()
 
-  try {
-    await db
-      .updateTable("projects")
-      .set(updates)
-      .where("id", "=", projectId)
-      .execute()
-  } catch (err: unknown) {
-    if (err instanceof Error && err.message.includes("UNIQUE")) {
-      throw new ServiceError("A project with that slug already exists", "CONFLICT", 409)
+  // One transaction, so an interrupted rename can't leave the old namespace
+  // without a queued cleanup (orphaned) or a teardown pointing at it.
+  await db.transaction().execute(async (tx) => {
+    try {
+      await tx
+        .updateTable("projects")
+        .set(updates)
+        .where("id", "=", projectId)
+        .execute()
+    } catch (err: unknown) {
+      if (isUniqueConstraintError(err)) {
+        throw new ServiceError("A project with that slug already exists", "CONFLICT", 409)
+      }
+      throw err
     }
-    throw err
-  }
 
-  if (slugChanging) {
-    await db
+    if (!slugChanging) return
+    const projectApps = tx.selectFrom("apps").select("id").where("project_id", "=", projectId)
+    await tx
       .updateTable("deployments")
       .set({ applied_manifest: null })
       .where("status", "=", "stopped")
-      .where(
-        "app_id",
-        "in",
-        db.selectFrom("apps").select("id").where("project_id", "=", projectId)
-      )
+      .where("app_id", "in", projectApps)
       .execute()
-    await db
+    await tx
       .updateTable("deployments")
       .set({ teardown_requested_at: null })
       .where("teardown_requested_at", "is not", null)
-      .where(
-        "app_id",
-        "in",
-        db.selectFrom("apps").select("id").where("project_id", "=", projectId)
-      )
+      .where("app_id", "in", projectApps)
       .execute()
 
-    await db
+    await tx
       .insertInto("queued_namespace_cleanups")
       .values({ id: crypto.randomUUID(), project_id: projectId, project_slug: project.slug, created_at: new Date().toISOString() })
       .onConflict((oc) => oc.doNothing())
@@ -252,12 +249,12 @@ export async function updateProject(
 
     // Renaming back to a slug whose namespace is still queued makes that
     // namespace the live one again, so it must not be deleted.
-    await db
+    await tx
       .deleteFrom("queued_namespace_cleanups")
       .where("project_id", "=", projectId)
       .where("project_slug", "=", newSlug)
       .execute()
-  }
+  })
 
   const row = await db
     .selectFrom("projects")

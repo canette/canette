@@ -195,6 +195,14 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 
 	// 8. Mark live and set URL.
 	if err := c.store.MarkLive(ctx, dep.ID); err != nil {
+		if errors.Is(err, store.ErrNotDeploying) {
+			// Already failed (its heartbeat expired) or otherwise moved on: leave
+			// its status alone and don't publish a URL for it.
+			log.Warn("rollout finished, but the deployment is no longer deploying; not marking it live")
+			c.appendLog(ctx, log, dep.ID, "controller",
+				"Rollout finished, but this deployment was no longer in progress, so it was not marked live")
+			return
+		}
 		lastErr = fmt.Errorf("mark live: %w", err)
 		return
 	}

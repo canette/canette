@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -102,16 +103,24 @@ func testStore(t *testing.T) (*Store, *sql.DB) {
 
 const validSnapshot = `{"app":{"id":"a1","slug":"a"},"project":{"id":"p1","slug":"p"}}`
 
+// insertDeployment adds a deployment on an app of its own (an app can have
+// only one deployment in progress), so tests can freely mix statuses.
 func insertDeployment(t *testing.T, db *sql.DB, id, status, snapshot string, claimedAt *time.Time, updatedAt time.Time) {
 	t.Helper()
 	var snap any
 	if snapshot != "" {
 		snap = snapshot
 	}
+	appID := "app-" + id
+	if _, err := db.Exec(`
+		INSERT INTO apps (id, project_id, name, slug, created_at, updated_at)
+		VALUES ($1, 'p1', $2, $2, $3, $3)`, appID, id, updatedAt); err != nil {
+		t.Fatalf("insert app for deployment %s: %v", id, err)
+	}
 	_, err := db.Exec(`
 		INSERT INTO deployments (id, app_id, status, commit_sha, image_digest, deployment_snapshot, claimed_at, created_at, updated_at)
-		VALUES ($1, 'a1', $2, 'abc', 'sha256:abc', $3, $4, $5, $5)`,
-		id, status, snap, claimedAt, updatedAt)
+		VALUES ($1, $2, $3, 'abc', 'sha256:abc', $4, $5, $6, $6)`,
+		id, appID, status, snap, claimedAt, updatedAt)
 	if err != nil {
 		t.Fatalf("insert deployment %s: %v", id, err)
 	}
@@ -234,5 +243,27 @@ func TestHeartbeat_KeepsRowFromRecovery(t *testing.T) {
 	}
 	if len(ids) != 0 {
 		t.Fatalf("recovered %v after a heartbeat, want none", ids)
+	}
+}
+
+func TestMarkLive_OnlyFromDeploying(t *testing.T) {
+	s, db := testStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	insertDeployment(t, db, "deploying", "deploying", validSnapshot, &now, now)
+	if err := s.MarkLive(ctx, "deploying"); err != nil {
+		t.Fatalf("MarkLive on a deploying row: %v", err)
+	}
+	if status, _, _ := deploymentState(t, db, "deploying"); status != "live" {
+		t.Errorf("status=%s, want live", status)
+	}
+
+	// Failed after its heartbeat expired, while the rollout was still running.
+	insertDeployment(t, db, "recovered", "failed", validSnapshot, &now, now)
+	if err := s.MarkLive(ctx, "recovered"); !errors.Is(err, ErrNotDeploying) {
+		t.Fatalf("MarkLive on a failed row: err=%v, want ErrNotDeploying", err)
+	}
+	if status, _, _ := deploymentState(t, db, "recovered"); status != "failed" {
+		t.Errorf("status=%s, want it to stay failed", status)
 	}
 }

@@ -552,14 +552,26 @@ func (s *Store) GetSecrets(ctx context.Context, appID string) ([]Secret, error) 
 	return secrets, rows.Err()
 }
 
-// MarkLive transitions a deployment to status='live'.
+// ErrNotDeploying is returned by MarkLive when the deployment is no longer
+// 'deploying', e.g. because it was marked failed after its heartbeat expired.
+var ErrNotDeploying = errors.New("deployment is no longer deploying")
+
+// MarkLive transitions a deployment from 'deploying' to 'live'. It returns
+// ErrNotDeploying, and changes nothing, when the row has a different status.
 func (s *Store) MarkLive(ctx context.Context, deploymentID string) error {
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE deployments SET status = 'live', updated_at = $1
 		WHERE id = $2 AND status = 'deploying'`, now, deploymentID)
 	if err != nil {
 		return fmt.Errorf("mark live: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("mark live: %w", err)
+	}
+	if n == 0 {
+		return ErrNotDeploying
 	}
 	return nil
 }
