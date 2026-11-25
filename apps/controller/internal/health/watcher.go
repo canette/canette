@@ -30,12 +30,29 @@ const (
 	// cache; the primary detection mechanism is the live event stream, not
 	// this timer.
 	resyncPeriod = 5 * time.Minute
+
+	// healthRewriteInterval is how often an unchanged verdict is written
+	// again, so runtime_health_updated_at says when health was last
+	// confirmed, not just when it last changed. The API treats a verdict
+	// older than twice this as unknown (RUNTIME_HEALTH_STALE_AFTER_MS in
+	// apps/api/src/services/apps.ts).
+	healthRewriteInterval = 5 * time.Minute
+
+	// reachabilityTimeout bounds the Pod list that proves Kubernetes is
+	// still reachable before unchanged verdicts are rewritten.
+	reachabilityTimeout = 10 * time.Second
 )
 
 // appKey identifies an app by the labels every canette-managed pod carries.
 type appKey struct {
 	projectID string
 	appSlug   string
+}
+
+// writtenVerdict is the last verdict written for an app, and when.
+type writtenVerdict struct {
+	verdict string // "health|reason"
+	at      time.Time
 }
 
 type liveDeployment struct {
@@ -60,12 +77,21 @@ type Watcher struct {
 	store  healthStore
 	log    *zap.Logger
 
+	// evalMu serializes evaluateApp, which is called from both the informer
+	// handlers and the refresh loop: without it, two evaluations of one app
+	// could write their verdicts out of order and leave the older one stored.
+	evalMu sync.Mutex
+
 	mu          sync.Mutex
 	current     map[appKey]liveDeployment
 	podsByApp   map[appKey]map[types.UID]*corev1.Pod
 	tracking    map[types.UID]*restartTracking
 	noPodsSince map[appKey]time.Time
-	lastWritten map[string]string // appID → "health|reason", debounces DB writes
+	lastWritten map[string]writtenVerdict // appID → last write, debounces DB writes
+
+	// unreachable is true while the last reachability check failed. Only
+	// used from Run's goroutine, to log the transitions once.
+	unreachable bool
 
 	// refresh lets callers outside the watcher (the reconcile loop, right
 	// after it marks a deployment live) ask for an immediate
@@ -86,7 +112,7 @@ func New(client kubernetes.Interface, s *store.Store, log *zap.Logger) *Watcher 
 		podsByApp:   make(map[appKey]map[types.UID]*corev1.Pod),
 		tracking:    make(map[types.UID]*restartTracking),
 		noPodsSince: make(map[appKey]time.Time),
-		lastWritten: make(map[string]string),
+		lastWritten: make(map[string]writtenVerdict),
 		refresh:     make(chan struct{}, 1),
 	}
 }
@@ -173,6 +199,11 @@ func (w *Watcher) refreshCurrentDeployments(ctx context.Context) error {
 	}
 	w.mu.Unlock()
 
+	// The informer's cache keeps its last contents when the watch connection
+	// is lost, so an unchanged verdict computed from it is only rewritten
+	// (and so kept fresh) when Kubernetes was just shown to be reachable.
+	confirmed := w.kubernetesReachable(ctx)
+
 	// Re-evaluate every currently-known app: a redeploy may have changed
 	// which deployment ID is current without any pod event firing in the
 	// interim (e.g. the new pod was already observed before this refresh
@@ -185,9 +216,32 @@ func (w *Watcher) refreshCurrentDeployments(ctx context.Context) error {
 	}
 	w.mu.Unlock()
 	for _, k := range keys {
-		w.evaluateApp(ctx, k)
+		w.evaluateApp(ctx, k, confirmed)
 	}
 	return nil
+}
+
+// kubernetesReachable reports whether a bounded list of canette-managed Pods
+// succeeds, as evidence that the informer's view of the cluster is current.
+func (w *Watcher) kubernetesReachable(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, reachabilityTimeout)
+	defer cancel()
+	_, err := w.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		LabelSelector: libk8s.LabelManagedBy + "=" + libk8s.LabelManagedByVal,
+		Limit:         1,
+	})
+	if err != nil {
+		if !w.unreachable {
+			w.log.Warn("kubernetes unreachable, runtime health will go stale", zap.Error(err))
+		}
+		w.unreachable = true
+		return false
+	}
+	if w.unreachable {
+		w.log.Info("kubernetes reachable again, runtime health refreshing")
+	}
+	w.unreachable = false
+	return true
 }
 
 func appKeyFromPod(pod *corev1.Pod) (appKey, bool) {
@@ -214,7 +268,7 @@ func (w *Watcher) onPodChanged(ctx context.Context, obj interface{}) {
 	}
 	w.podsByApp[key][pod.UID] = pod
 	w.mu.Unlock()
-	w.evaluateApp(ctx, key)
+	w.evaluateApp(ctx, key, false)
 }
 
 func (w *Watcher) onPodDeleted(ctx context.Context, obj interface{}) {
@@ -237,12 +291,16 @@ func (w *Watcher) onPodDeleted(ctx context.Context, obj interface{}) {
 	delete(w.podsByApp[key], pod.UID)
 	delete(w.tracking, pod.UID)
 	w.mu.Unlock()
-	w.evaluateApp(ctx, key)
+	w.evaluateApp(ctx, key, false)
 }
 
 // evaluateApp recomputes the aggregate runtime-health verdict for one app
-// from its currently-tracked pods and writes it if it changed.
-func (w *Watcher) evaluateApp(ctx context.Context, key appKey) {
+// from its currently-tracked pods and writes it if it changed. When confirmed
+// (Kubernetes was just shown to be reachable), an unchanged verdict is also
+// written again once it is healthRewriteInterval old.
+func (w *Watcher) evaluateApp(ctx context.Context, key appKey, confirmed bool) {
+	w.evalMu.Lock()
+	defer w.evalMu.Unlock()
 	now := time.Now()
 
 	w.mu.Lock()
@@ -279,10 +337,12 @@ func (w *Watcher) evaluateApp(ctx context.Context, key appKey) {
 	healthVal, reason := aggregateAppHealth(evals, w.noPodsSince[key], now)
 	verdict := healthVal + "|" + reason
 	appID := cur.appID
-	changed := w.lastWritten[appID] != verdict
+	last, written := w.lastWritten[appID]
+	changed := !written || last.verdict != verdict
+	due := confirmed && now.Sub(last.at) >= healthRewriteInterval
 	w.mu.Unlock()
 
-	if !changed {
+	if !changed && !due {
 		return
 	}
 	if err := w.store.UpdateRuntimeHealth(ctx, appID, healthVal, reason); err != nil {
@@ -290,6 +350,6 @@ func (w *Watcher) evaluateApp(ctx context.Context, key appKey) {
 		return
 	}
 	w.mu.Lock()
-	w.lastWritten[appID] = verdict
+	w.lastWritten[appID] = writtenVerdict{verdict: verdict, at: now}
 	w.mu.Unlock()
 }

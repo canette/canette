@@ -16,6 +16,24 @@ type AppRow = Selectable<Database["apps"]> & { latest_deployment_status?: string
 
 // ── Mapper ────────────────────────────────────────────────────────────────────
 
+// The controller's health watcher rewrites an unchanged verdict every 5 minutes
+// while it can reach Kubernetes (healthRewriteInterval in
+// apps/controller/internal/health/watcher.go). A verdict that hasn't been
+// confirmed in twice that long means the watcher has stopped observing the
+// app (controller down, or cut off from Kubernetes), so it reads as unknown.
+const RUNTIME_HEALTH_STALE_AFTER_MS = 10 * 60 * 1000
+
+function effectiveRuntimeHealth(row: AppRow): Pick<App, "runtimeHealth" | "runtimeHealthReason"> {
+  const updatedAt = row.runtime_health_updated_at
+  if (updatedAt && Date.now() - new Date(updatedAt).getTime() > RUNTIME_HEALTH_STALE_AFTER_MS) {
+    return { runtimeHealth: "unknown", runtimeHealthReason: undefined }
+  }
+  return {
+    runtimeHealth: row.runtime_health as App["runtimeHealth"],
+    runtimeHealthReason: row.runtime_health_reason ?? undefined,
+  }
+}
+
 function mapApp(row: AppRow): App {
   return {
     id: row.id,
@@ -36,8 +54,7 @@ function mapApp(row: AppRow): App {
     latestDeploymentStatus: (row.latest_deployment_status as App["latestDeploymentStatus"]) ?? undefined,
     canetteConfig: row.canette_config ?? undefined,
     position: row.position,
-    runtimeHealth: row.runtime_health as App["runtimeHealth"],
-    runtimeHealthReason: row.runtime_health_reason ?? undefined,
+    ...effectiveRuntimeHealth(row),
     runtimeHealthUpdatedAt: row.runtime_health_updated_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

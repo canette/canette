@@ -116,7 +116,6 @@ export default function ProjectPage() {
                       <RuntimeHealthIndicator
                         runtimeHealth={app.runtimeHealth}
                         runtimeHealthReason={app.runtimeHealthReason}
-                        runtimeHealthUpdatedAt={app.runtimeHealthUpdatedAt}
                         className="shrink-0"
                       />
                     )}

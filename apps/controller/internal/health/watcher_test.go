@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +10,10 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
 
 	"canette.dev/controller/internal/store"
 	libk8s "canette.dev/lib/k8s"
@@ -40,13 +44,14 @@ func (f *fakeHealthStore) UpdateRuntimeHealth(_ context.Context, appID, health, 
 
 func newTestWatcher(fs *fakeHealthStore) *Watcher {
 	return &Watcher{
+		client:      fake.NewSimpleClientset(),
 		store:       fs,
 		log:         zap.NewNop(),
 		current:     make(map[appKey]liveDeployment),
 		podsByApp:   make(map[appKey]map[types.UID]*corev1.Pod),
 		tracking:    make(map[types.UID]*restartTracking),
 		noPodsSince: make(map[appKey]time.Time),
-		lastWritten: make(map[string]string),
+		lastWritten: make(map[string]writtenVerdict),
 	}
 }
 
@@ -182,7 +187,7 @@ func TestWatcher_RefreshCurrentDeploymentsCleansUpStaleApps(t *testing.T) {
 	w.current[staleKey] = liveDeployment{appID: "old-app-id", deploymentID: "dep-1", deploymentType: "web"}
 	w.podsByApp[staleKey] = map[types.UID]*corev1.Pod{"pod-1": testPod("pod-1", "old-app-x", "proj-1", "old-app", "dep-1")}
 	w.noPodsSince[staleKey] = time.Now()
-	w.lastWritten["old-app-id"] = "healthy|"
+	w.lastWritten["old-app-id"] = writtenVerdict{verdict: "healthy|", at: time.Now()}
 
 	// The app no longer appears in the DB's current-deployments list (e.g. stopped).
 	fs.current = nil
@@ -198,5 +203,87 @@ func TestWatcher_RefreshCurrentDeploymentsCleansUpStaleApps(t *testing.T) {
 	}
 	if _, ok := w.lastWritten["old-app-id"]; ok {
 		t.Error("expected stale app's lastWritten debounce entry to be cleaned up")
+	}
+}
+
+// liveHealthyApp sets up one live app whose pod is healthy and whose verdict
+// was last written writtenAgo ago.
+func liveHealthyApp(t *testing.T, writtenAgo time.Duration) (*Watcher, *fakeHealthStore) {
+	t.Helper()
+	fs := &fakeHealthStore{current: []store.CurrentDeployment{
+		{AppID: "app-id-1", AppSlug: "app-1", ProjectID: "proj-1", DeploymentID: "dep-new", DeploymentType: "web"},
+	}}
+	w := newTestWatcher(fs)
+	if err := w.refreshCurrentDeployments(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w.onPodChanged(context.Background(), testPod("pod-1", "app-1-abc", "proj-1", "app-1", "dep-new"))
+	if len(fs.updates) == 0 || fs.updates[len(fs.updates)-1].health != "healthy" {
+		t.Fatalf("expected a healthy verdict to be written, got %+v", fs.updates)
+	}
+	last := w.lastWritten["app-id-1"]
+	last.at = time.Now().Add(-writtenAgo)
+	w.lastWritten["app-id-1"] = last
+	fs.updates = nil
+	return w, fs
+}
+
+func TestWatcher_RewritesUnchangedVerdictWhenDue(t *testing.T) {
+	w, fs := liveHealthyApp(t, healthRewriteInterval+time.Second)
+	if err := w.refreshCurrentDeployments(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.updates) != 1 || fs.updates[0].health != "healthy" {
+		t.Fatalf("expected the unchanged verdict to be rewritten once, got %+v", fs.updates)
+	}
+	// Just written: the next refresh leaves it alone.
+	if err := w.refreshCurrentDeployments(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.updates) != 1 {
+		t.Errorf("expected no second rewrite, got %+v", fs.updates)
+	}
+}
+
+func TestWatcher_DoesNotRewriteBeforeInterval(t *testing.T) {
+	w, fs := liveHealthyApp(t, healthRewriteInterval-time.Minute)
+	if err := w.refreshCurrentDeployments(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.updates) != 0 {
+		t.Errorf("expected no rewrite before the interval, got %+v", fs.updates)
+	}
+}
+
+func TestWatcher_DoesNotRewriteWhenKubernetesUnreachable(t *testing.T) {
+	w, fs := liveHealthyApp(t, healthRewriteInterval+time.Second)
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "pods", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("connection refused")
+	})
+	w.client = client
+
+	if err := w.refreshCurrentDeployments(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.updates) != 0 {
+		t.Fatalf("expected no rewrite while Kubernetes is unreachable, got %+v", fs.updates)
+	}
+
+	// Reachable again: the overdue verdict is rewritten without any pod change.
+	w.client = fake.NewSimpleClientset()
+	if err := w.refreshCurrentDeployments(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.updates) != 1 || fs.updates[0].health != "healthy" {
+		t.Errorf("expected the verdict to be rewritten once reachable, got %+v", fs.updates)
+	}
+}
+
+func TestWatcher_PodEventsDoNotRewriteUnchangedVerdict(t *testing.T) {
+	w, fs := liveHealthyApp(t, healthRewriteInterval+time.Second)
+	w.onPodChanged(context.Background(), testPod("pod-1", "app-1-abc", "proj-1", "app-1", "dep-new"))
+	if len(fs.updates) != 0 {
+		t.Errorf("expected a pod event with an unchanged verdict not to write, got %+v", fs.updates)
 	}
 }

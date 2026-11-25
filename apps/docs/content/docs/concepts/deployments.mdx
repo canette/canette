@@ -22,6 +22,8 @@ A **deployment** is a single attempt to build and ship a commit of an app.
 
 Separate from deployment status, the app page also shows an **Unhealthy** indicator when the last deploy succeeded but the running pod is currently misbehaving. This can appear at any time after a deploy — for example if the app crashes hours after going live — and clears automatically once the pod recovers.
 
+canette confirms each app's health every few minutes. If it can't confirm it for 10 minutes, for example because the controller is down or can't reach Kubernetes, the health is reported as unknown: the app page shows no indicator, and the MCP `get_app` tool returns `unknown`.
+
 | Reason | Meaning |
 |---|---|
 | `CrashLoopBackOff` | The app keeps crashing right after it starts, so Kubernetes is repeatedly restarting it with a growing delay between attempts |

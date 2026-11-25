@@ -620,6 +620,8 @@ func (s *Store) GetCurrentDeployments(ctx context.Context) ([]CurrentDeployment,
 // UpdateRuntimeHealth records the health watcher's current verdict for an
 // app's live pod(s) — independent of deployments.status, which only ever
 // records whether the deploy operation itself succeeded.
+// runtime_health_updated_at is when the verdict was last confirmed: the
+// watcher also rewrites an unchanged verdict periodically.
 func (s *Store) UpdateRuntimeHealth(ctx context.Context, appID, health, reason string) error {
 	var reasonArg interface{}
 	if reason != "" {
