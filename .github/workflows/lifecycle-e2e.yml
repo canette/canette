@@ -31,10 +31,15 @@ jobs:
     # the macOS backends.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 150
-    env:
-      TMPDIR: ${{ runner.temp }}/e2e
     steps:
     - uses: actions/checkout@v7
+
+    # The scripts' scratch and diagnostics directories, uploaded on failure.
+    # (The runner context isn't available in a job's env.)
+    - name: Set TMPDIR
+      run: |
+        mkdir -p "$RUNNER_TEMP/e2e"
+        echo "TMPDIR=$RUNNER_TEMP/e2e" >>"$GITHUB_ENV"
 
     - name: Set up Go
       uses: actions/setup-go@v7
@@ -46,9 +51,7 @@ jobs:
       uses: azure/setup-helm@v5
 
     - name: Install K3s
-      run: |
-        mkdir -p "$TMPDIR"
-        ./scripts/e2e/linux-k3s.sh --setup
+      run: ./scripts/e2e/linux-k3s.sh --setup
 
     - name: Smoke test and lifecycle scenarios
       env:
