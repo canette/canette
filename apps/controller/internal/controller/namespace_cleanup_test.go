@@ -86,3 +86,13 @@ func TestCleanupQueuedNamespace(t *testing.T) {
 		}
 	})
 }
+
+func TestNamespaceBlockedReason(t *testing.T) {
+	// The reason decides whether a repeat check warns again, so it must not
+	// depend on the order the API lists the PVCs in.
+	a := namespaceBlockedReason([]string{"web-data", "db-data"})
+	b := namespaceBlockedReason([]string{"db-data", "web-data"})
+	if a != b || a != "holds PVCs: db-data, web-data" {
+		t.Errorf("got %q and %q", a, b)
+	}
+}

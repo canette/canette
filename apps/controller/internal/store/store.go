@@ -597,15 +597,21 @@ type PendingNamespaceDeletion struct {
 	// ProjectExists is true when the project row is still there, i.e. the
 	// namespace was queued by a slug rename rather than a project/team delete.
 	ProjectExists bool
+	// BlockedReason is why the last attempt kept the namespace, empty if it
+	// was never blocked.
+	BlockedReason string
 }
 
-// ClaimNamespaceDeletions returns up to limit entries queued for namespace cleanup.
+// ClaimNamespaceDeletions returns up to limit entries queued for namespace
+// cleanup, skipping blocked ones that are not due for another attempt yet.
 func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]PendingNamespaceDeletion, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT q.id, q.project_id, q.project_slug,
-		        EXISTS (SELECT 1 FROM projects p WHERE p.id = q.project_id)
+		        EXISTS (SELECT 1 FROM projects p WHERE p.id = q.project_id),
+		        COALESCE(q.blocked_reason, '')
 		   FROM queued_namespace_cleanups q
-		  ORDER BY q.created_at ASC LIMIT $1`, limit)
+		  WHERE q.next_attempt_at IS NULL OR q.next_attempt_at <= $1
+		  ORDER BY q.created_at ASC LIMIT $2`, time.Now().UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("query namespace deletions: %w", err)
 	}
@@ -614,12 +620,24 @@ func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]Pendi
 	var dels []PendingNamespaceDeletion
 	for rows.Next() {
 		var d PendingNamespaceDeletion
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ProjectSlug, &d.ProjectExists); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ProjectSlug, &d.ProjectExists, &d.BlockedReason); err != nil {
 			return nil, fmt.Errorf("scan namespace deletion row: %w", err)
 		}
 		dels = append(dels, d)
 	}
 	return dels, rows.Err()
+}
+
+// MarkNamespaceBlocked keeps a queued namespace cleanup and defers its next
+// attempt until retryAt.
+func (s *Store) MarkNamespaceBlocked(ctx context.Context, id, reason string, retryAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE queued_namespace_cleanups SET blocked_reason = $1, next_attempt_at = $2 WHERE id = $3`,
+		reason, retryAt.UTC(), id)
+	if err != nil {
+		return fmt.Errorf("mark namespace blocked: %w", err)
+	}
+	return nil
 }
 
 // MarkNamespaceDeleted removes a queued namespace cleanup record.

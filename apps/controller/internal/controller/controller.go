@@ -4,6 +4,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -145,10 +147,19 @@ func (c *Controller) processPending(ctx context.Context) error {
 					return // will retry next poll
 				}
 				if len(pvcs) > 0 {
-					c.log.Warn("not deleting renamed project's old namespace: it still holds PVCs; move or delete them by hand",
+					reason := namespaceBlockedReason(pvcs)
+					log := c.log.Debug
+					if reason != d.BlockedReason {
+						log = c.log.Warn // first block, or the PVCs changed
+					}
+					log("not deleting renamed project's old namespace: it still holds PVCs; move or delete them by hand",
 						zap.String("namespace", ns),
-						zap.Strings("pvcs", pvcs))
-					return // row stays queued, re-checked every poll
+						zap.Strings("pvcs", pvcs),
+						zap.Duration("retry_in", namespaceBlockedRetry))
+					if err := c.store.MarkNamespaceBlocked(ctx, d.ID, reason, time.Now().Add(namespaceBlockedRetry)); err != nil {
+						c.log.Warn("mark namespace blocked error", zap.Error(err))
+					}
+					return // row stays queued
 				}
 				if err := c.store.MarkNamespaceDeleted(ctx, d.ID); err != nil {
 					c.log.Warn("mark namespace deleted error", zap.Error(err))
@@ -327,6 +338,18 @@ func healthcheckSpec(hc *store.Healthcheck) *k8sres.HealthcheckSpec {
 		InitialDelaySeconds: hc.InitialDelaySeconds,
 		PeriodSeconds:       hc.PeriodSeconds,
 	}
+}
+
+// namespaceBlockedRetry is how long a namespace kept for its PVCs waits before
+// it is checked again. Long enough not to flood the logs or the K8s API,
+// short enough that the cleanup finishes soon after the PVCs are removed.
+const namespaceBlockedRetry = 10 * time.Minute
+
+// namespaceBlockedReason is stored on a blocked queue row, so the controller
+// can tell a repeat check from a new block.
+func namespaceBlockedReason(pvcs []string) string {
+	sorted := slices.Sorted(slices.Values(pvcs))
+	return "holds PVCs: " + strings.Join(sorted, ", ")
 }
 
 // cleanupQueuedNamespace deletes a namespace from queued_namespace_cleanups.

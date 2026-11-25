@@ -195,6 +195,8 @@ export interface Database {
     project_id: string
     project_slug: string
     created_at: string
+    next_attempt_at: string | null
+    blocked_reason: string | null
   }
 
   queued_app_cleanups: {
