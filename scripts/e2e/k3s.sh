@@ -317,7 +317,9 @@ guest_work="$(vm mktemp -d /var/tmp/canette-e2e.XXXXXXXX)"
 mkdir -p "$work/chart"
 git archive "$sha" charts/canette | tar -xf - -C "$work/chart"
 chart_dir="$work/chart/charts/canette"
-git archive "$sha" | vm tar -xf - -C "$guest_work"
+# -p keeps the archive's 644/755 modes: under this script's umask the images
+# would get files their non-root users can't read.
+git archive "$sha" | vm tar -xpf - -C "$guest_work"
 images_started=true
 vm sudo bash -s -- "$guest_work" "$image_repo" "$tag" "${images[@]}" <<'GUEST' 2>&1 | tee "$work/platform-build.log"
 set -euo pipefail
