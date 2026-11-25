@@ -7,13 +7,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/smoke.sh"
 
 usage() {
     cat <<'USAGE'
-Usage: scripts/e2e/macos-lima.sh [--setup | --check | --keep | --cleanup]
+Usage: scripts/e2e/macos-lima.sh [--setup | --check | --cleanup | [--lifecycle] [--keep]]
 
 Requires macOS on Apple Silicon. Run tests from a Canette checkout to build
 committed HEAD for linux/arm64.
   --setup    Create or start the dedicated Lima K3s VM. Runs from any directory.
   --check    Check the checkout and running cluster without changing either.
   --keep     Keep the test release and print its dashboard login.
+  --lifecycle
+             After the smoke test, run the lifecycle scenarios in tests/lifecycle
+             (Go). Set LIFECYCLE_RUN to a go test -run pattern to run some of them.
   --cleanup  Delete retained test releases, fixture namespaces, PVCs, and images.
              Run from any directory.
 
@@ -35,16 +38,20 @@ check_only=false
 keep=false
 cleanup_only=false
 setup_only=false
-case "${1:-}" in
-    --help|-h) usage; exit 0 ;;
-    --setup) setup_only=true ;;
-    --check) check_only=true ;;
-    --keep) keep=true ;;
-    --cleanup) cleanup_only=true ;;
-    '') ;;
-    *) usage >&2; exit 2 ;;
-esac
-(( $# <= 1 )) || die 'Expected at most one option.'
+lifecycle=false
+for arg in "$@"; do
+    case "$arg" in
+        --help|-h) usage; exit 0 ;;
+        --setup) setup_only=true ;;
+        --check) check_only=true ;;
+        --keep) keep=true ;;
+        --lifecycle) lifecycle=true ;;
+        --cleanup) cleanup_only=true ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+(( $# <= 1 )) || { (( $# == 2 )) && "$keep" && "$lifecycle"; } ||
+    die 'Expected at most one option, or --lifecycle with --keep.'
 
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] ||
     die 'Run this script on an Apple Silicon Mac using a native shell.'
@@ -118,7 +125,7 @@ run_id="$3"
 refs="$(k3s ctr -n k8s.io images ls -q)"
 while IFS= read -r ref; do
     if [[ "$ref" == "$platform_repo/"* && "${ref##*:}" =~ ^git-[a-f0-9]{12}-$run_id$ ]] ||
-        [[ "$ref" == "$registry_host/smoke-$run_id/"* ]]; then
+        [[ "$ref" == "$registry_host/smoke-$run_id/"* || "$ref" == "$registry_host/smoke-$run_id-"* ]]; then
         k3s ctr -n k8s.io images rm "$ref"
     fi
 done <<<"$refs"
@@ -131,8 +138,17 @@ remove_run() {
         { printf 'Invalid test namespace: %s\n' "$target" >&2; return 1; }
     target_id="${BASH_REMATCH[1]}"
 
-    kube delete namespace -l "app.kubernetes.io/managed-by=canette,canette.dev/project=smoke-$target_id" \
-        --ignore-not-found --timeout=90s || return
+    # The smoke project and the lifecycle projects (smoke-<id>-*), including
+    # the old namespaces of renamed ones.
+    local app_namespaces
+    app_namespaces="$(kube --request-timeout=10s get namespace -l app.kubernetes.io/managed-by=canette -o json |
+        jq -r --arg slug "smoke-$target_id" '.items[]
+            | select(.metadata.labels["canette.dev/project"] as $p | $p == $slug or ($p | startswith($slug + "-")))
+            | .metadata.name')" || return
+    if [[ -n "$app_namespaces" ]]; then
+        # shellcheck disable=SC2086 # one namespace name per line
+        kube delete namespace $app_namespaces --ignore-not-found --timeout=90s || return
+    fi
     helm --kubeconfig "$kubeconfig" uninstall "$release" -n "$target" --ignore-not-found --timeout 90s || return
     # Keep the run label available for a retry until image removal succeeds.
     remove_run_images "$target_id" || return
@@ -170,6 +186,7 @@ fi
 for command in git mkcert curl ssh-keygen openssl tar; do
     command -v "$command" >/dev/null || die "Missing command: $command"
 done
+! "$lifecycle" || command -v go >/dev/null || die 'Missing command: go (needed for --lifecycle)'
 
 repo="$(git rev-parse --show-toplevel)" || die 'Run from a cloned Canette repository.'
 cd "$repo"
@@ -210,7 +227,7 @@ images_started=false
 diagnostics() {
     local logs
     logs="$(mktemp -d "${TMPDIR:-/tmp}/canette-e2e-logs.XXXXXXXX")" || return
-    for file in platform-build.log helm.log deployment.json; do
+    for file in platform-build.log helm.log deployment.json lifecycle.log; do
         [[ ! -f "$work/$file" ]] || cp "$work/$file" "$logs/"
     done
     {
@@ -450,3 +467,6 @@ guest_registry_reachable() {
 }
 
 run_canette_smoke
+if "$lifecycle"; then
+    run_lifecycle_tests
+fi
