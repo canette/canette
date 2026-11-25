@@ -47,8 +47,7 @@ func TestKubernetesOutage(t *testing.T) {
 	a := newApp(t, p, "web")
 	ns := p.namespace()
 	deployLive(t, a)
-	token := mcpToken(t)
-	requireHealth(t, a, token, "healthy", recoverTimeout)
+	requireHealth(t, a, "healthy", recoverTimeout)
 	pods := appPodUIDs(t, ns, a.Slug)
 	liveAt := time.Now()
 
@@ -58,7 +57,7 @@ func TestKubernetesOutage(t *testing.T) {
 		}
 		first := getApp(t, a.ID).RuntimeHealthUpdatedAt
 		time.Sleep(time.Until(liveAt.Add(healthStaleAfter + time.Minute)))
-		got := requireHealth(t, a, token, "healthy", 0)
+		got := requireHealth(t, a, "healthy", 0)
 		if got.RuntimeHealthUpdatedAt == first {
 			t.Errorf("runtimeHealthUpdatedAt still %s after %s: the verdict was not confirmed again", first, healthStaleAfter)
 		}
@@ -68,16 +67,16 @@ func TestKubernetesOutage(t *testing.T) {
 		revokeControllerRBAC(t)
 		waitControllerLog(t, time.Minute, "kubernetes unreachable, runtime health will go stale")
 		if long() {
-			requireHealth(t, a, token, "unknown", staleTimeout)
+			requireHealth(t, a, "unknown", staleTimeout)
 		} else {
-			requireHealth(t, a, token, "healthy", 0)
+			requireHealth(t, a, "healthy", 0)
 		}
 	})
 
 	t.Run("restored", func(t *testing.T) {
 		restoreControllerRBAC(t)
 		waitControllerLog(t, time.Minute, "kubernetes reachable again, runtime health refreshing")
-		requireHealth(t, a, token, "healthy", recoverTimeout)
+		requireHealth(t, a, "healthy", recoverTimeout)
 		if got := appPodUIDs(t, ns, a.Slug); !slices.Equal(got, pods) {
 			t.Errorf("app pods changed during the outage: %v, were %v", got, pods)
 		}
@@ -87,8 +86,10 @@ func TestKubernetesOutage(t *testing.T) {
 // requireHealth waits until the REST API and MCP both report want as the
 // app's runtime health, and fails the test unless they do within timeout (a
 // zero timeout checks once). It returns the REST API's app.
-func requireHealth(t *testing.T, a app, token, want string, timeout time.Duration) app {
+func requireHealth(t *testing.T, a app, want string, timeout time.Duration) app {
 	t.Helper()
+	// A fresh token each time: one lasts an hour, about as long as the test.
+	token := mcpToken(t)
 	var rest app
 	eventually(t, timeout, pollInterval, "runtime health "+want+" in the REST API and MCP", func() (bool, error) {
 		rest = getApp(t, a.ID)
