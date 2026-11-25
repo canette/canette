@@ -12,12 +12,9 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 
 	"canette.dev/builder/internal/gitdest"
@@ -320,7 +317,7 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	}()
 
 	// 6. Watch the Job until it succeeds or fails.
-	succeeded, err := b.watchJob(ctx, log, jobName)
+	succeeded, err := k8sjobs.WaitForJob(ctx, b.k8s, b.cfg.Namespace, jobName, log)
 	<-logDone // wait for log goroutine to finish before transitioning status
 	if err != nil {
 		lastErr = fmt.Errorf("watch job: %w", err)
@@ -523,80 +520,6 @@ func (b *Builder) streamContainerLogs(ctx context.Context, log *zap.Logger, depl
 				return nil
 			}
 			return fmt.Errorf("read log stream: %w", err)
-		}
-	}
-}
-
-// watchJob watches the Job until it terminates, returning true on success.
-// If the watch channel closes before the job reaches a terminal state (transient
-// apiserver restart or informer timeout), the watch is re-established from the
-// last seen resourceVersion so no events are missed.
-func (b *Builder) watchJob(ctx context.Context, log *zap.Logger, jobName string) (bool, error) {
-	fieldSel := fields.OneTermEqualSelector("metadata.name", jobName).String()
-	var resourceVersion string
-	for {
-		watcher, err := b.k8s.BatchV1().Jobs(b.cfg.Namespace).Watch(ctx, metav1.ListOptions{
-			FieldSelector:   fieldSel,
-			ResourceVersion: resourceVersion,
-		})
-		if err != nil {
-			return false, fmt.Errorf("watch job: %w", err)
-		}
-		terminal, succeeded, rv, err := b.drainJobWatch(ctx, log, jobName, watcher)
-		watcher.Stop()
-		if rv != "" {
-			resourceVersion = rv
-		}
-		if err != nil {
-			return false, err
-		}
-		if terminal {
-			return succeeded, nil
-		}
-		// Channel closed without a terminal event — transient (apiserver restart,
-		// informer timeout). Re-establish from the last seen resourceVersion.
-		log.Warn("job watch channel closed, re-establishing", zap.String("job", jobName))
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		default:
-		}
-	}
-}
-
-// drainJobWatch reads events from watcher until the job reaches a terminal state
-// or the channel closes. Returns (terminal, succeeded, lastResourceVersion, error).
-// terminal=false with nil error means the channel closed — caller should retry.
-func (b *Builder) drainJobWatch(ctx context.Context, log *zap.Logger, jobName string, watcher watch.Interface) (terminal, succeeded bool, resourceVersion string, err error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return false, false, resourceVersion, ctx.Err()
-		case event, ok := <-watcher.ResultChan():
-			if !ok {
-				return false, false, resourceVersion, nil
-			}
-			if event.Type == watch.Error {
-				return true, false, resourceVersion, fmt.Errorf("watch error event")
-			}
-			job, ok := event.Object.(*batchv1.Job)
-			if !ok {
-				continue
-			}
-			if job.ResourceVersion != "" {
-				resourceVersion = job.ResourceVersion
-			}
-			if job.Status.Succeeded > 0 {
-				log.Info("job succeeded", zap.String("job", jobName))
-				return true, true, resourceVersion, nil
-			}
-			for _, cond := range job.Status.Conditions {
-				if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-					log.Warn("job failed", zap.String("job", jobName),
-						zap.String("reason", cond.Reason), zap.String("message", cond.Message))
-					return true, false, resourceVersion, nil
-				}
-			}
 		}
 	}
 }

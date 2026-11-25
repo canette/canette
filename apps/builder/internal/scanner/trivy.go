@@ -15,11 +15,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 
+	k8sjobs "canette.dev/builder/internal/k8s"
 	libk8s "canette.dev/lib/k8s"
 )
 
@@ -85,7 +84,7 @@ func (p *TrivyProvider) Scan(ctx context.Context, deploymentID, imageRef string)
 		p.streamLogs(ctx, log, deploymentID, podName, &summary, &sbomB64)
 	}()
 
-	succeeded, err := p.watchJob(ctx, log, jobName)
+	succeeded, err := k8sjobs.WaitForJob(ctx, p.k8s, p.namespace, jobName, log)
 	<-logDone
 	if err != nil {
 		return &ScanResult{Status: "error"}, fmt.Errorf("watch trivy job: %w", err)
@@ -357,70 +356,6 @@ func (p *TrivyProvider) waitForPod(ctx context.Context, log *zap.Logger, jobName
 		time.Sleep(2 * time.Second)
 	}
 	return "", fmt.Errorf("scan pod for job %s did not appear within 2 minutes", jobName)
-}
-
-func (p *TrivyProvider) watchJob(ctx context.Context, log *zap.Logger, jobName string) (bool, error) {
-	fieldSel := fields.OneTermEqualSelector("metadata.name", jobName).String()
-	var resourceVersion string
-	for {
-		watcher, err := p.k8s.BatchV1().Jobs(p.namespace).Watch(ctx, metav1.ListOptions{
-			FieldSelector:   fieldSel,
-			ResourceVersion: resourceVersion,
-		})
-		if err != nil {
-			return false, fmt.Errorf("watch scan job: %w", err)
-		}
-		terminal, succeeded, rv, err := p.drainWatch(ctx, log, jobName, watcher)
-		watcher.Stop()
-		if rv != "" {
-			resourceVersion = rv
-		}
-		if err != nil {
-			return false, err
-		}
-		if terminal {
-			return succeeded, nil
-		}
-		log.Warn("scan job watch closed, re-establishing", zap.String("job", jobName))
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		default:
-		}
-	}
-}
-
-func (p *TrivyProvider) drainWatch(ctx context.Context, log *zap.Logger, jobName string, watcher watch.Interface) (terminal, succeeded bool, resourceVersion string, err error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return false, false, resourceVersion, ctx.Err()
-		case event, ok := <-watcher.ResultChan():
-			if !ok {
-				return false, false, resourceVersion, nil
-			}
-			if event.Type == watch.Error {
-				return true, false, resourceVersion, fmt.Errorf("watch error event")
-			}
-			job, ok := event.Object.(*batchv1.Job)
-			if !ok {
-				continue
-			}
-			if job.ResourceVersion != "" {
-				resourceVersion = job.ResourceVersion
-			}
-			if job.Status.Succeeded > 0 {
-				log.Info("scan job succeeded", zap.String("job", jobName))
-				return true, true, resourceVersion, nil
-			}
-			for _, cond := range job.Status.Conditions {
-				if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-					log.Warn("scan job failed", zap.String("job", jobName))
-					return true, false, resourceVersion, nil
-				}
-			}
-		}
-	}
 }
 
 func (p *TrivyProvider) scanPassed(log *zap.Logger, summaryJSON string) bool {
