@@ -1,8 +1,9 @@
 # Local Canette end-to-end test
 
-This smoke test currently runs **only on macOS on Apple Silicon**. Both backends install the Helm chart from committed `HEAD`, build a small app from an in-cluster Git fixture, and check the node’s HTTPS registry pull and the app response through Traefik.
+This smoke test runs on macOS on Apple Silicon, and on ARM64 Linux in CI. Every backend installs the Helm chart from committed `HEAD`, builds a small app from an in-cluster Git fixture, and checks the node’s HTTPS registry pull and the app response through Traefik.
 
 - [Lima](#set-up-the-lima-vm) runs single-node K3s in a reusable VM.
+- [Linux K3s](#linux-k3s-and-ci) installs K3s on a disposable ARM64 Linux host. The on-demand CI workflow uses it.
 - [Apple Container](#apple-container-experimental) runs Kubernetes in Apple’s container runtime and shares its local image store.
 
 ## Set up the Lima VM
@@ -45,7 +46,7 @@ The script finds the kubeconfig exported by Lima when `KUBECONFIG` is unset. If 
 
 ## Lifecycle scenarios
 
-`--lifecycle` runs the Go tests in [`tests/lifecycle`](../../tests/lifecycle) against the release the smoke test installed (issue #330). They crash the controller at set points, stop and redeploy apps, rename projects and cut the controller off from Kubernetes, then check what the API, MCP and Kubernetes report. Lima only for now. The run needs Go and takes about 30 minutes on top of the smoke test, mostly waiting for claims to expire.
+`--lifecycle` runs the Go tests in [`tests/lifecycle`](../../tests/lifecycle) against the release the smoke test installed (issue #330). They crash the controller at set points, stop and redeploy apps, rename projects and cut the controller off from Kubernetes, then check what the API, MCP and Kubernetes report. Lima and Linux K3s only. The run needs Go and takes about 30 minutes on top of the smoke test, mostly waiting for claims to expire.
 
 ```sh
 ./scripts/e2e/macos-lima.sh --lifecycle
@@ -66,6 +67,22 @@ LIFECYCLE_RUN='TestControllerCrash/after-claim' ./scripts/e2e/macos-lima.sh --li
 | `TestStatus` | Skipped until [#332](https://github.com/canette/canette/issues/332) and [#334](https://github.com/canette/canette/issues/334). |
 
 The failpoints are set through the chart value `controller.failpoints`, with `helm upgrade --reuse-values`, which restarts the controller. Every project the tests create has a slug starting with the run's `smoke-<id>` project, so cleanup removes it with the run.
+
+## Linux K3s and CI
+
+`scripts/e2e/linux-k3s.sh` runs the same steps as `macos-lima.sh` (both source [`k3s.sh`](k3s.sh)), with K3s installed on the host itself. It takes the same options. The host must be ARM64 Linux and disposable: the test changes `/etc/hosts`, the K3s registry configuration, the unprivileged user namespace sysctl and systemd units, and restarts K3s. It refuses to run unless `CI=true` or `CANETTE_E2E_DISPOSABLE_HOST=1`.
+
+```sh
+CANETTE_E2E_DISPOSABLE_HOST=1 ./scripts/e2e/linux-k3s.sh --setup   # K3s (K3S_VERSION) and apt packages
+CANETTE_E2E_DISPOSABLE_HOST=1 ./scripts/e2e/linux-k3s.sh --lifecycle
+```
+
+The [Lifecycle e2e](../../.github/workflows/lifecycle-e2e.yml) workflow runs `linux-k3s.sh --lifecycle` on an `ubuntu-24.04-arm` runner. It takes about an hour, so it only runs on demand:
+
+- From the Actions tab (**Run workflow**), optionally with a `go test -run` pattern and the long health checks.
+- By adding the `e2e` label to a pull request. Remove and add it again to rerun.
+
+On failure, the diagnostics are uploaded as the `e2e-diagnostics` artifact.
 
 ## Open a kept run in the browser
 
