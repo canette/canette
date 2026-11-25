@@ -1,7 +1,8 @@
 # Shared steps of the K3s smoke-test backends (macos-lima.sh, linux-k3s.sh),
 # sourced after the backend has parsed its options and found its cluster.
 # The backend provides die, step, the options (check_only, keep, cleanup_only,
-# lifecycle), instance (names the lock and CA directories), kubeconfig, and:
+# lifecycle), instance (names the CA directory), kubeconfig, acquire_lock and
+# release_lock (one run per cluster at a time), and:
 #   vm              runs a command on the K3s node
 #   find_node_ip    prints the node IP that serves the Gateway on port 443
 #   node_ip_hint    the error shown when find_node_ip prints no IPv4 address

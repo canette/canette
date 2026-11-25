@@ -56,6 +56,20 @@ done
 
 instance=linux-k3s
 k3s_kubeconfig=/etc/rancher/k3s/k3s.yaml
+host_lock="${TMPDIR:-/tmp}/canette-e2e-$instance.lock"
+lock_acquired=false
+
+acquire_lock() {
+    mkdir "$host_lock" 2>/dev/null ||
+        die "Another run is active on this host. If it was killed abruptly, remove $host_lock."
+    lock_acquired=true
+}
+
+release_lock() {
+    if "$lock_acquired"; then
+        rmdir "$host_lock"
+    fi
+}
 
 if "$setup_only"; then
     version="${K3S_VERSION:-v1.37.2+k3s1}"
