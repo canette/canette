@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { SkeletonText } from "@/components/ui/skeleton"
-import { effectiveRuntimeHealth, RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
+import { RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
 import { StatusBadge, StatusLabel } from "@/components/ui/status-badge"
 import * as api from "@/lib/api"
 import { useSelectedTeam } from "@/lib/team-context"
@@ -33,9 +33,7 @@ function projectAggregate(apps: App[]): { status: string; label: string } | null
   const building = count((s) => !!s && ["pending_build", "building", "scanning", "pending_deployment", "deploying"].includes(s))
   if (building > 0) return { status: "building", label: `${building} building` }
   const liveApps = apps.filter((a) => a.latestDeploymentStatus === "live")
-  const unhealthy = liveApps.filter(
-    (a) => effectiveRuntimeHealth(a.runtimeHealth, a.runtimeHealthUpdatedAt) === "unhealthy",
-  ).length
+  const unhealthy = liveApps.filter((a) => a.runtimeHealth === "unhealthy").length
   if (unhealthy > 0) return { status: "unhealthy", label: `${unhealthy} unhealthy` }
   if (liveApps.length > 0) return { status: "live", label: `${liveApps.length} live` }
   return null
@@ -152,7 +150,6 @@ export function ProjectList() {
                                     <RuntimeHealthIndicator
                                       runtimeHealth={a.runtimeHealth}
                                       runtimeHealthReason={a.runtimeHealthReason}
-                                      runtimeHealthUpdatedAt={a.runtimeHealthUpdatedAt}
                                     />
                                   )}
                                   <StatusLabel status={a.latestDeploymentStatus} className="text-[11.5px]" />

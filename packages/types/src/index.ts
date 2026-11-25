@@ -90,8 +90,11 @@ export interface App {
   canetteConfig?: string
   // Manual sort order within the project, shared across the team — lower sorts first.
   position: number
+  // Already "unknown" when the verdict is stale (not confirmed by the
+  // controller in the last 10 minutes), so clients use it as is.
   runtimeHealth: RuntimeHealth
   runtimeHealthReason?: string
+  // When the controller last confirmed the verdict.
   runtimeHealthUpdatedAt?: string
   createdAt: string
   updatedAt: string

@@ -6,7 +6,7 @@ import { createTestDb } from "../utils/sqlite"
 
 const db = createTestDb()
 
-import { createApp, listApps, moveApp, updateApp } from "../../src/services/apps";
+import { createApp, getAppById, listApps, moveApp, updateApp } from "../../src/services/apps";
 
 describe("services/apps", () => {
 
@@ -194,6 +194,34 @@ describe("services/apps", () => {
         gitCredentialId: "teamCredentialId",
       })
     ).rejects.toThrow("GIT_CREDENTIAL_ALLOWED_ORIGINS")
+  })
+
+  describe("runtime health", () => {
+    async function appWithHealth(id: string, minutesAgo: number) {
+      const now = new Date().toISOString()
+      await db.insertInto("apps").values({
+        id, project_id: "projectId", name: id, slug: id, source_type: "git", deployment_type: "web",
+        git_url: "https://github.com/canette/canette", git_branch: "main", git_credential_id: null,
+        app_path: "", image_url: "", image_tag: "", port: 3000, password_gate_enabled: false,
+        live_url: null, canette_config: null, position: 0,
+        runtime_health: "unhealthy", runtime_health_reason: "CrashLoopBackOff",
+        runtime_health_updated_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+        created_at: now, updated_at: now,
+      }).execute()
+      return getAppById(db, id, "userId")
+    }
+
+    it("returns a verdict the controller confirmed recently", async () => {
+      const app = await appWithHealth("health-fresh", 9)
+      expect(app).toMatchObject({ runtimeHealth: "unhealthy", runtimeHealthReason: "CrashLoopBackOff" })
+    })
+
+    it("reports a verdict not confirmed in 10 minutes as unknown", async () => {
+      const app = await appWithHealth("health-stale", 11)
+      expect(app?.runtimeHealth).toBe("unknown")
+      expect(app?.runtimeHealthReason).toBeUndefined()
+      expect(app?.runtimeHealthUpdatedAt).toBeDefined()
+    })
   })
 
   describe("deploymentType", () => {

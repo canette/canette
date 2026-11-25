@@ -20,7 +20,6 @@ import {
   Sun,
 } from "lucide-react"
 import { CanetteLogo } from "@/components/canette-logo"
-import { effectiveRuntimeHealth } from "@/components/runtime-health-indicator"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -209,15 +208,12 @@ function FleetHealth({ apps }: { apps: App[] }) {
   // passing checks) rather than just "the last deploy succeeded" — a
   // deploy can succeed and the pod can crash-loop later without that ever
   // showing here otherwise. "unknown" runtime health (no data yet, or a
-  // stale verdict the watcher hasn't refreshed in a while — see
-  // effectiveRuntimeHealth) falls back to counting as healthy, since the
-  // deploy did succeed.
+  // stale verdict, which the API reports as unknown) falls back to counting
+  // as healthy, since the deploy did succeed.
   const building = apps.filter((a) => BUILDING_STATUSES.has(a.latestDeploymentStatus ?? "")).length
   const failed = apps.filter((a) => a.latestDeploymentStatus === "failed").length
   const liveApps = apps.filter((a) => a.latestDeploymentStatus === "live")
-  const unhealthy = liveApps.filter(
-    (a) => effectiveRuntimeHealth(a.runtimeHealth, a.runtimeHealthUpdatedAt) === "unhealthy",
-  ).length
+  const unhealthy = liveApps.filter((a) => a.runtimeHealth === "unhealthy").length
   const healthy = liveApps.length - unhealthy
   const total = healthy + unhealthy + building + failed
   if (total === 0) return null
