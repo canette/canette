@@ -40,8 +40,14 @@ func setFailpoints(t *testing.T, names ...string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("helm upgrade with controller.failpoints=%s: %v\n%s", value, err, out)
 	}
-	waitControllerReady(t, 0)
+	baseRestarts = waitControllerReady(t, -1)
 }
+
+// baseRestarts is the controller container's restart count once the pod
+// setFailpoints rolled out is ready. A new pod can restart once before any
+// failpoint: its first database connection may be refused until the
+// NetworkPolicy allowing its IP is in place.
+var baseRestarts int32
 
 // armFailpoint arms one failpoint for the rest of the test and disarms it,
 // with a fresh controller, when the test ends.
@@ -81,9 +87,11 @@ func controllerStatus(p *corev1.Pod) (corev1.ContainerStatus, bool) {
 }
 
 // waitControllerReady waits until the controller container is ready and has
-// restarted exactly restarts times.
-func waitControllerReady(t *testing.T, restarts int32) {
+// restarted exactly restarts times (any number when restarts is negative),
+// and returns its restart count.
+func waitControllerReady(t *testing.T, restarts int32) int32 {
 	t.Helper()
+	var count int32
 	eventually(t, 3*time.Minute, 2*time.Second, "the controller to be ready", func() (bool, error) {
 		p, err := controllerPod(t)
 		if err != nil {
@@ -93,15 +101,20 @@ func waitControllerReady(t *testing.T, restarts int32) {
 		if !ok {
 			return false, nil
 		}
+		count = s.RestartCount
+		if restarts < 0 {
+			return s.Ready, nil
+		}
 		if s.RestartCount > restarts {
 			return false, fmt.Errorf("controller restarted %d times, want %d", s.RestartCount, restarts)
 		}
 		return s.Ready && s.RestartCount == restarts, nil
 	})
+	return count
 }
 
 // waitFailpointFired waits until the controller exited at the named
-// failpoint, once, and is ready again.
+// failpoint, once since setFailpoints, and is ready again.
 func waitFailpointFired(t *testing.T, name string, timeout time.Duration) {
 	t.Helper()
 	eventually(t, timeout, 2*time.Second, "failpoint "+name+" to fire", func() (bool, error) {
@@ -110,7 +123,7 @@ func waitFailpointFired(t *testing.T, name string, timeout time.Duration) {
 			return false, err
 		}
 		s, ok := controllerStatus(p)
-		if !ok || s.RestartCount == 0 {
+		if !ok || s.RestartCount <= baseRestarts {
 			return false, nil
 		}
 		if term := s.LastTerminationState.Terminated; term == nil || term.ExitCode != failpoint.ExitCode {
@@ -126,7 +139,7 @@ func waitFailpointFired(t *testing.T, name string, timeout time.Duration) {
 	if want := "failpoint " + name + ": exiting"; !strings.Contains(logs, want) {
 		t.Fatalf("the controller exited with status %d, but its log lacks %q:\n%s", failpoint.ExitCode, want, tail(logs, 20))
 	}
-	waitControllerReady(t, 1)
+	waitControllerReady(t, baseRestarts+1)
 }
 
 func controllerLogs(t *testing.T, p *corev1.Pod, previous bool) string {
