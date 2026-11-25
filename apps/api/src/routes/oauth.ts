@@ -119,6 +119,19 @@ oauthRouter.post("/confirm", async (c) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers })
   if (!session) return c.json({ error: "unauthorized" }, 401)
 
+  // A token minted while an admin impersonates a user would act as that user
+  // for up to an hour, with no trace of the admin. Refuse, like a denial.
+  // The admin plugin adds impersonatedBy to the session, but its type isn't
+  // inferred through coreAuthOptions' conditional plugin list.
+  const { impersonatedBy } = session.session as { impersonatedBy?: string | null }
+  if (impersonatedBy) {
+    const redirectUrl = new URL(redirect_uri)
+    redirectUrl.searchParams.set("error", "access_denied")
+    redirectUrl.searchParams.set("error_description", "MCP clients can't be authorized while impersonating a user")
+    if (state) redirectUrl.searchParams.set("state", state)
+    return c.redirect(redirectUrl.toString())
+  }
+
   const code = issueAuthCode(session.user.id, session.session.id, code_challenge, redirect_uri)
 
   const redirectUrl = new URL(redirect_uri)
