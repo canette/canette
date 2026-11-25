@@ -3,6 +3,7 @@ import type { AppHostname } from "@canette/types"
 import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { ServiceError } from "./errors"
+import { isUniqueConstraintError } from "../db/errors"
 
 // ── Internal row type ─────────────────────────────────────────────────────────
 
@@ -33,11 +34,6 @@ function validateHostname(raw: string): string {
     )
   }
   return hostname
-}
-
-function isUniqueConstraintError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : ""
-  return msg.includes("UNIQUE constraint") || msg.includes("unique constraint") || msg.includes("duplicate key")
 }
 
 // Plain, non-team-scoped app lookup, used by the mutating (add/delete) paths only —
