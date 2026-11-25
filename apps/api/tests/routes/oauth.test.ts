@@ -1,8 +1,9 @@
 import { describe, expect, it, mock } from "bun:test"
 
-// /deny and /register never need a session; keep the real better-auth
-// instance (and its database) out of this suite.
-mock.module("../../src/auth/auth", () => ({ auth: { api: { getSession: async () => null } } }))
+// Keep the real better-auth instance (and its database) out of this suite:
+// /confirm gets whatever session a test sets here.
+let session: { user: { id: string }; session: { id: string; impersonatedBy?: string | null } } | null = null
+mock.module("../../src/auth/auth", () => ({ auth: { api: { getSession: async () => session } } }))
 const { oauthRouter } = await import("../../src/routes/oauth")
 
 function register(body: unknown) {
@@ -11,6 +12,23 @@ function register(body: unknown) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
+}
+
+function confirm(params: Record<string, string>) {
+  return oauthRouter.request(`/confirm?${new URLSearchParams(params)}`, { method: "POST" })
+}
+
+async function confirmParams() {
+  const res = await register({ redirect_uris: ["http://localhost:1234/callback"] })
+  const { client_id } = (await res.json()) as { client_id: string }
+  return {
+    client_id,
+    response_type: "code",
+    code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+    code_challenge_method: "S256",
+    redirect_uri: "http://localhost:1234/callback",
+    state: "xyz",
+  }
 }
 
 function deny(params: Record<string, string>, headers: Record<string, string> = {}) {
@@ -39,6 +57,28 @@ describe("routes/oauth", () => {
         expect(res.status).toBe(400)
         expect(((await res.json()) as { error: string }).error).toBe("invalid_client_metadata")
       }
+    })
+  })
+
+  describe("POST /confirm", () => {
+    it("redirects with a code for the signed-in user", async () => {
+      session = { user: { id: "u1" }, session: { id: "s1", impersonatedBy: null } }
+      const res = await confirm(await confirmParams())
+      expect(res.status).toBe(302)
+      const location = new URL(res.headers.get("location")!)
+      expect(location.searchParams.get("code")).toBeString()
+      expect(location.searchParams.get("state")).toBe("xyz")
+    })
+
+    it("refuses an impersonated session without issuing a code", async () => {
+      session = { user: { id: "u1" }, session: { id: "s1", impersonatedBy: "admin1" } }
+      const res = await confirm(await confirmParams())
+      expect(res.status).toBe(302)
+      const location = new URL(res.headers.get("location")!)
+      expect(location.origin + location.pathname).toBe("http://localhost:1234/callback")
+      expect(location.searchParams.get("error")).toBe("access_denied")
+      expect(location.searchParams.get("code")).toBeNull()
+      expect(location.searchParams.get("state")).toBe("xyz")
     })
   })
 
