@@ -45,20 +45,25 @@ The script finds the kubeconfig exported by Lima when `KUBECONFIG` is unset. If 
 
 ## Lifecycle scenarios
 
-`--lifecycle` runs the Go tests in [`tests/lifecycle`](../../tests/lifecycle) against the release the smoke test installed (issue #330). They crash the controller at set points, stop and redeploy apps, and rename projects, then check what the API and Kubernetes report. Lima only for now. The run needs Go and takes about 30 minutes on top of the smoke test, mostly waiting for claims to expire.
+`--lifecycle` runs the Go tests in [`tests/lifecycle`](../../tests/lifecycle) against the release the smoke test installed (issue #330). They crash the controller at set points, stop and redeploy apps, rename projects and cut the controller off from Kubernetes, then check what the API, MCP and Kubernetes report. Lima only for now. The run needs Go and takes about 30 minutes on top of the smoke test, mostly waiting for claims to expire.
 
 ```sh
 ./scripts/e2e/macos-lima.sh --lifecycle
 LIFECYCLE_RUN='TestControllerCrash/after-claim' ./scripts/e2e/macos-lima.sh --lifecycle --keep
 ```
 
-`LIFECYCLE_RUN` is passed to `go test -run`, and `LIFECYCLE_TIMEOUT` (default `60m`) to `-timeout`. The test output is saved with the failure diagnostics.
+`LIFECYCLE_RUN` is passed to `go test -run`, and `LIFECYCLE_TIMEOUT` (default `60m`) to `-timeout`. `LIFECYCLE_LONG=1` adds the checks that wait out the API's 10-minute stale window, about 25 minutes more. The test output is saved with the failure diagnostics.
 
 | Test | Checks |
 | --- | --- |
 | `TestControllerCrash` | The controller exits at the `after-claim`, `after-partial-apply`, `after-teardown-delete` and `after-app-delete` failpoints. After the restart, the deployment is failed as abandoned and a redeploy goes live, or the teardown or cleanup is retried and finishes. The history is kept, and a pending app cleanup keeps its slug taken. |
 | `TestStopKeepsPVC` | Stop and redeploy keep the app's PVC (same UID). |
 | `TestSlugChangeKeepsPVC` | A rename is refused while an app has a PVC volume, and the old namespace is kept while a PVC is left in it. |
+| `TestStopThenRedeploy` | A redeploy right after Stop goes live, and the stopped deployment's teardown doesn't touch the new Deployment (same UID and deployment for 3 polls). |
+| `TestKubernetesOutage` | With the controller's ClusterRoleBinding emptied, it logs that Kubernetes is unreachable, and once restored that it is reachable again. The REST API and MCP agree on the app's health throughout, and its pods don't change. With `LIFECYCLE_LONG=1`, the app also stays healthy past the stale window, reads unknown during the outage and healthy again after it. |
+| `TestStopDuringBuildThenRedeploy`, `TestStopDuringDeployThenRedeploy` | Skipped until [#331](https://github.com/canette/canette/issues/331). |
+| `TestSlugReuseAfterDelete`, `TestVolumeRecreateSameName` | Skipped until [#333](https://github.com/canette/canette/issues/333). |
+| `TestStatus` | Skipped until [#332](https://github.com/canette/canette/issues/332) and [#334](https://github.com/canette/canette/issues/334). |
 
 The failpoints are set through the chart value `controller.failpoints`, with `helm upgrade --reuse-values`, which restarts the controller. Every project the tests create has a slug starting with the run's `smoke-<id>` project, so cleanup removes it with the run.
 

@@ -23,9 +23,12 @@ type project struct {
 func (p project) namespace() string { return libk8s.AppNamespace(p.ID, p.Slug) }
 
 type app struct {
-	ID      string `json:"id"`
-	Slug    string `json:"slug"`
-	LiveURL string `json:"liveUrl"`
+	ID                     string `json:"id"`
+	Slug                   string `json:"slug"`
+	LiveURL                string `json:"liveUrl"`
+	RuntimeHealth          string `json:"runtimeHealth"`
+	RuntimeHealthReason    string `json:"runtimeHealthReason"`
+	RuntimeHealthUpdatedAt string `json:"runtimeHealthUpdatedAt"`
 }
 
 type deployment struct {
