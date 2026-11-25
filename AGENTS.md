@@ -138,6 +138,7 @@ Auth is handled by `better-auth` embedded in the API server. Supported methods i
 - Creates and updates Kubernetes resources: `Namespace`, `Deployment`, `Service`, `HTTPRoute`, `Secret` — references a pre-existing `Gateway` (configured via Helm values `controller.gateway.name` / `controller.gateway.namespace`)
 - Uses server-side apply for all resource writes
 - Writes deployment status back to the database
+- A `deploying` row is never left behind: the reconcile refreshes `deployments.claimed_at` (a heartbeat) while it runs, every poll fails `deploying` rows whose heartbeat is older than `store.DeployingHeartbeatTTL`, and on SIGTERM the controller waits a bounded time for running reconciles before cancelling them and writing their failure. The chart uses `strategy: Recreate` for the controller, so two controllers never run side by side.
 - Never handles HTTP requests from external clients
 
 ### `apps/builder` (Go)

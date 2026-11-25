@@ -8,6 +8,11 @@ metadata:
     {{- include "canette.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  # RollingUpdate would run the old and new controller side by side during an
+  # upgrade, each reconciling its own deployments and failing the other's as
+  # abandoned. Recreate stops the old one first.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: canette-controller
@@ -17,6 +22,10 @@ spec:
         app.kubernetes.io/name: canette-controller
     spec:
       serviceAccountName: canette-controller
+      # Longer than the controller's shutdown wait (shutdownDrainTimeout +
+      # shutdownFailTimeout in apps/controller/internal/controller/controller.go),
+      # so running deployments are finished or failed before the pod is killed.
+      terminationGracePeriodSeconds: 40
       containers:
         - name: controller
           {{- $image := include "canette.serviceImage" (list . "canette-controller" .Values.controller.image) }}

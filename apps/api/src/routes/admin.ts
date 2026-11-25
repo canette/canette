@@ -216,7 +216,8 @@ adminRouter.post("/sync", async (c) => {
   return c.json(result)
 })
 
-// Reset stuck builds: mark building/scanning deployments as failed
+// Reset stuck builds: mark building/scanning deployments, and deploying ones
+// whose controller heartbeat has expired, as failed
 // POST /api/v1/admin/reset-stuck
 adminRouter.post("/reset-stuck", async (c) => {
   const result = await resetStuckBuilds(db)
