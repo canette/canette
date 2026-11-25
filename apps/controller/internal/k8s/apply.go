@@ -320,8 +320,13 @@ type RolloutStatus struct {
 // Pod failures are checked before the availability success condition below,
 // not after: a pod can pass its readiness check and crash moments later, and
 // checking failures first means a crash observed on the very poll that would
-// otherwise satisfy AvailableReplicas>=1 is still caught instead of the
+// otherwise satisfy the completion check is still caught instead of the
 // rollout being declared successful.
+//
+// Completion mirrors kubectl rollout status: every desired replica is updated,
+// no old-ReplicaSet pods remain, and every updated pod is available. Checking
+// only AvailableReplicas>=1 is wrong mid-rollout — the old pod is still ready
+// and keeps AvailableReplicas at 1 while the new pod is still starting.
 func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, name, deploymentID string) (RolloutStatus, error) {
 	dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -350,10 +355,10 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 		}
 	}
 
-	// Check if all replicas are available and the generation matches
 	if dep.Status.ObservedGeneration >= dep.Generation &&
 		dep.Status.UpdatedReplicas >= *replicaCount(dep) &&
-		dep.Status.AvailableReplicas >= 1 {
+		dep.Status.Replicas <= dep.Status.UpdatedReplicas &&
+		dep.Status.AvailableReplicas >= dep.Status.UpdatedReplicas {
 		podName := firstRunningPodName(pods)
 		msg := "deployment available"
 		if podName != "" {
@@ -362,8 +367,8 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 		return RolloutStatus{Done: true, Succeeded: true, Message: msg, PodName: podName}, nil
 	}
 
-	return RolloutStatus{Message: fmt.Sprintf("waiting: updated=%d available=%d",
-		dep.Status.UpdatedReplicas, dep.Status.AvailableReplicas)}, nil
+	return RolloutStatus{Message: fmt.Sprintf("waiting: desired=%d total=%d updated=%d available=%d",
+		*replicaCount(dep), dep.Status.Replicas, dep.Status.UpdatedReplicas, dep.Status.AvailableReplicas)}, nil
 }
 
 // listDeploymentPods lists pods for an app, scoped to a specific deployment ID
