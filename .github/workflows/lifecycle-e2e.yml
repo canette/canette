@@ -1,0 +1,68 @@
+name: Lifecycle e2e
+
+# Installs K3s on the runner and runs scripts/e2e/linux-k3s.sh: the smoke test
+# and the lifecycle scenarios in tests/lifecycle. It takes about an hour, so it
+# only runs on demand: from the Actions tab, or by adding the e2e label to a PR.
+on:
+  workflow_dispatch:
+    inputs:
+      lifecycle_run:
+        description: go test -run pattern for the lifecycle scenarios (empty runs all)
+        required: false
+        default: ''
+      long:
+        description: Also wait out the 10-minute health stale window (about 25 minutes more)
+        type: boolean
+        default: false
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lifecycle-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'e2e'
+    # The platform images and the fixture are built for linux/arm64, like on
+    # the macOS backends.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    steps:
+    - uses: actions/checkout@v7
+
+    # The scripts' scratch and diagnostics directories, uploaded on failure.
+    # (The runner context isn't available in a job's env.)
+    - name: Set TMPDIR
+      run: |
+        mkdir -p "$RUNNER_TEMP/e2e"
+        echo "TMPDIR=$RUNNER_TEMP/e2e" >>"$GITHUB_ENV"
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: tests/lifecycle/go.mod
+        cache-dependency-path: tests/lifecycle/go.sum
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v5
+
+    - name: Install K3s
+      run: ./scripts/e2e/linux-k3s.sh --setup
+
+    - name: Smoke test and lifecycle scenarios
+      env:
+        LIFECYCLE_RUN: ${{ inputs.lifecycle_run }}
+        LIFECYCLE_LONG: ${{ inputs.long && '1' || '' }}
+      run: ./scripts/e2e/linux-k3s.sh --lifecycle
+
+    - name: Upload failure diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-diagnostics
+        path: ${{ runner.temp }}/e2e/canette-e2e-logs.*
+        if-no-files-found: ignore
