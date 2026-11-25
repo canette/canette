@@ -162,7 +162,8 @@ export async function updateProject(
     )
   }
 
-  const slugChanging = patch.slug !== undefined && patch.slug !== project.slug
+  const newSlug = patch.slug !== undefined && patch.slug !== project.slug ? patch.slug : null
+  const slugChanging = newSlug !== null
 
   if (slugChanging) {
     // Block rename if any app still has an active (non-stopped) deployment.
@@ -176,6 +177,24 @@ export async function updateProject(
     if (activeCount > 0) {
       throw new ServiceError(
         "Stop all apps before renaming the project",
+        "CONFLICT",
+        409
+      )
+    }
+
+    // A rename deletes the old namespace, and every PVC in it with it. Stop
+    // keeps PVCs, so a stopped app would silently come back with an empty
+    // volume.
+    const pvcResult = await db
+      .selectFrom("app_volumes as v")
+      .innerJoin("apps as a", "a.id", "v.app_id")
+      .select(db.fn.countAll<number>().as("count"))
+      .where("a.project_id", "=", projectId)
+      .where("v.type", "=", "pvc")
+      .executeTakeFirstOrThrow()
+    if (Number(pvcResult.count) > 0) {
+      throw new ServiceError(
+        "Remove the persistent volumes from every app before renaming the project: renaming deletes the volumes and their data",
         "CONFLICT",
         409
       )
@@ -219,6 +238,14 @@ export async function updateProject(
       .insertInto("queued_namespace_cleanups")
       .values({ id: crypto.randomUUID(), project_id: projectId, project_slug: project.slug, created_at: new Date().toISOString() })
       .onConflict((oc) => oc.doNothing())
+      .execute()
+
+    // Renaming back to a slug whose namespace is still queued makes that
+    // namespace the live one again, so it must not be deleted.
+    await db
+      .deleteFrom("queued_namespace_cleanups")
+      .where("project_id", "=", projectId)
+      .where("project_slug", "=", newSlug)
       .execute()
   }
 

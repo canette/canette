@@ -594,12 +594,18 @@ type PendingNamespaceDeletion struct {
 	ID          string
 	ProjectID   string
 	ProjectSlug string
+	// ProjectExists is true when the project row is still there, i.e. the
+	// namespace was queued by a slug rename rather than a project/team delete.
+	ProjectExists bool
 }
 
 // ClaimNamespaceDeletions returns up to limit entries queued for namespace cleanup.
 func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]PendingNamespaceDeletion, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, project_id, project_slug FROM queued_namespace_cleanups ORDER BY created_at ASC LIMIT $1`, limit)
+		`SELECT q.id, q.project_id, q.project_slug,
+		        EXISTS (SELECT 1 FROM projects p WHERE p.id = q.project_id)
+		   FROM queued_namespace_cleanups q
+		  ORDER BY q.created_at ASC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query namespace deletions: %w", err)
 	}
@@ -608,7 +614,7 @@ func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]Pendi
 	var dels []PendingNamespaceDeletion
 	for rows.Next() {
 		var d PendingNamespaceDeletion
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ProjectSlug); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ProjectSlug, &d.ProjectExists); err != nil {
 			return nil, fmt.Errorf("scan namespace deletion row: %w", err)
 		}
 		dels = append(dels, d)

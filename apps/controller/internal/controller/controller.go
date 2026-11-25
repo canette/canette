@@ -129,7 +129,7 @@ func (c *Controller) processPending(ctx context.Context) error {
 		}(dep)
 	}
 
-	// Delete orphaned namespaces from project renames.
+	// Delete namespaces left behind by project renames and deletes.
 	nsDels, err := c.store.ClaimNamespaceDeletions(ctx, c.cfg.MaxConcurrent)
 	if err != nil {
 		c.log.Error("claim namespace deletions error", zap.Error(err))
@@ -137,11 +137,18 @@ func (c *Controller) processPending(ctx context.Context) error {
 		for _, nd := range nsDels {
 			go func(d store.PendingNamespaceDeletion) {
 				ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
-				if err := k8sres.DeleteNamespace(ctx, c.dynClient, ns); err != nil {
+				pvcs, err := cleanupQueuedNamespace(ctx, c.dynClient, d)
+				if err != nil {
 					c.log.Warn("namespace deletion error",
 						zap.String("namespace", ns),
 						zap.Error(err))
 					return // will retry next poll
+				}
+				if len(pvcs) > 0 {
+					c.log.Warn("not deleting renamed project's old namespace: it still holds PVCs; move or delete them by hand",
+						zap.String("namespace", ns),
+						zap.Strings("pvcs", pvcs))
+					return // row stays queued, re-checked every poll
 				}
 				if err := c.store.MarkNamespaceDeleted(ctx, d.ID); err != nil {
 					c.log.Warn("mark namespace deleted error", zap.Error(err))
@@ -320,4 +327,23 @@ func healthcheckSpec(hc *store.Healthcheck) *k8sres.HealthcheckSpec {
 		InitialDelaySeconds: hc.InitialDelaySeconds,
 		PeriodSeconds:       hc.PeriodSeconds,
 	}
+}
+
+// cleanupQueuedNamespace deletes a namespace from queued_namespace_cleanups.
+// A namespace queued by a slug rename (the project still exists) is kept while
+// it holds any PVC, since deleting it would take the volume data with it; the
+// PVC names are returned and the row must stay queued. A deleted project's
+// namespace is always deleted.
+func cleanupQueuedNamespace(ctx context.Context, dyn dynamic.Interface, d store.PendingNamespaceDeletion) ([]string, error) {
+	ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
+	if d.ProjectExists {
+		pvcs, err := k8sres.ListPVCNames(ctx, dyn, ns)
+		if err != nil {
+			return nil, err
+		}
+		if len(pvcs) > 0 {
+			return pvcs, nil
+		}
+	}
+	return nil, k8sres.DeleteNamespace(ctx, dyn, ns)
 }
