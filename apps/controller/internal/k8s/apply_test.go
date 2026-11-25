@@ -29,6 +29,7 @@ func availableDeployment(name string, replicas int32) *appsv1.Deployment {
 		Spec:       appsv1.DeploymentSpec{Replicas: &r},
 		Status: appsv1.DeploymentStatus{
 			ObservedGeneration: 1,
+			Replicas:           r,
 			UpdatedReplicas:    r,
 			AvailableReplicas:  r,
 		},
@@ -103,6 +104,112 @@ func TestCheckRollout_IgnoresStaleDeploymentPod(t *testing.T) {
 	}
 	if status.PodName != "my-app-new-222" {
 		t.Errorf("expected PodName to be the current deployment's pod, got %q", status.PodName)
+	}
+}
+
+// Rollout completion must follow kubectl rollout status: a ready pod from the
+// old ReplicaSet must not count towards the new rollout (issue #324).
+func TestCheckRollout_Completion(t *testing.T) {
+	cases := []struct {
+		name     string
+		strategy appsv1.DeploymentStrategyType
+		desired  int32
+		status   appsv1.DeploymentStatus
+		done     bool
+	}{
+		{
+			// The regression: maxSurge=1 creates the new pod while the old
+			// one is still ready, so AvailableReplicas is already 1.
+			name:     "rolling update, old pod ready, new pod not ready",
+			strategy: appsv1.RollingUpdateDeploymentStrategyType,
+			desired:  1,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 2, UpdatedReplicas: 1, AvailableReplicas: 1},
+		},
+		{
+			name:     "rolling update, old pod gone, new pod not ready",
+			strategy: appsv1.RollingUpdateDeploymentStrategyType,
+			desired:  1,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 0},
+		},
+		{
+			name:     "rolling update, new pod available",
+			strategy: appsv1.RollingUpdateDeploymentStrategyType,
+			desired:  1,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1},
+			done:     true,
+		},
+		{
+			name:     "new spec not yet observed",
+			strategy: appsv1.RollingUpdateDeploymentStrategyType,
+			desired:  1,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1},
+		},
+		{
+			name:     "recreate, old pod scaled down, new pod not created",
+			strategy: appsv1.RecreateDeploymentStrategyType,
+			desired:  1,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2},
+		},
+		{
+			name:     "recreate, new pod not ready",
+			strategy: appsv1.RecreateDeploymentStrategyType,
+			desired:  1,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 0},
+		},
+		{
+			name:     "recreate, new pod available",
+			strategy: appsv1.RecreateDeploymentStrategyType,
+			desired:  1,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1},
+			done:     true,
+		},
+		{
+			name:     "3 replicas, not all updated",
+			strategy: appsv1.RollingUpdateDeploymentStrategyType,
+			desired:  3,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 4, UpdatedReplicas: 2, AvailableReplicas: 3},
+		},
+		{
+			name:     "3 replicas, all updated, old pod still terminating",
+			strategy: appsv1.RollingUpdateDeploymentStrategyType,
+			desired:  3,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 4, UpdatedReplicas: 3, AvailableReplicas: 3},
+		},
+		{
+			name:     "3 replicas, all updated, one not available",
+			strategy: appsv1.RollingUpdateDeploymentStrategyType,
+			desired:  3,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 3, UpdatedReplicas: 3, AvailableReplicas: 2},
+		},
+		{
+			name:     "3 replicas, all updated and available",
+			strategy: appsv1.RollingUpdateDeploymentStrategyType,
+			desired:  3,
+			status:   appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 3, UpdatedReplicas: 3, AvailableReplicas: 3},
+			done:     true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dep := availableDeployment(testApp, c.desired)
+			dep.Generation = 2
+			dep.Spec.Strategy.Type = c.strategy
+			dep.Status = c.status
+			oldPod := podWithLabels("my-app-old-111", "dep-old", corev1.PodRunning)
+			newPod := podWithLabels("my-app-new-222", "dep-new", corev1.PodPending)
+			client := fake.NewSimpleClientset(dep, oldPod, newPod)
+
+			status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-new")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if status.Done != c.done {
+				t.Fatalf("expected done=%v, got done=%v message=%q", c.done, status.Done, status.Message)
+			}
+			if c.done && !status.Succeeded {
+				t.Errorf("expected rollout to succeed, got %q", status.Message)
+			}
+		})
 	}
 }
 
