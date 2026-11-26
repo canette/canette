@@ -24,7 +24,7 @@ export default function DeploymentsPage() {
     deploymentList,
     loading,
     loadError,
-    hasActiveDeployment,
+    activeDeployment,
     liveDeployment,
     currentDeployment,
     canRedeploy,
@@ -58,7 +58,7 @@ export default function DeploymentsPage() {
           sourceType={app.sourceType}
           canRedeploy={canRedeploy}
           currentDeployment={currentDeployment}
-          hasActiveDeployment={hasActiveDeployment}
+          activeDeployment={activeDeployment}
           deploying={deploying}
           redeployingId={redeployingId}
           stopping={stopping}
