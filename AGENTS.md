@@ -306,7 +306,7 @@ The UI wizard lives at the project's `/from-template` route: paste or load a tem
 - **API service tests**: unit tests using an in-memory SQLite database via Kysely. Test files live in `apps/api/tests/` mirroring the `src/` structure (e.g. `tests/services/apps.test.ts`). Use `createTestDb()` from `tests/utils/sqlite.ts` which wraps `bun:sqlite` with a shim that adds the `reader` boolean Kysely's `SqliteDialect` requires. Call `runMigrations(db, ...)` in `beforeAll` to apply the full schema before inserting fixtures. Run with `bun test` from `apps/api/`. Type-check test files with `bun run typecheck:test` (uses `tsconfig.test.json` which includes `bun-types`).
 - **Go suites**: standard Go tests, including fake Kubernetes clients and in-process HTTP servers; no envtest setup or live cluster is required. From the repository root, run `go test ./apps/authgate/... ./apps/builder/... ./apps/controller/... ./apps/logstreamer/... ./packages/golib/... ./tools/canette-schema/...` to cover all workspace modules.
 - **UI and docs**: no browser/Playwright test suite is currently configured. Validate relevant changes with linting, type checking, and builds; manually check affected user flows.
-- **CI coverage**: `build-go.yml` builds, lints, and tests the service/tool modules and checks generated schemas. `build-ts.yaml` lints and builds UI/API but currently does not run API tests. Run `bun run test:api` locally for API changes; do not assume a green PR build covers those tests.
+- **CI coverage**: `build-go.yml` builds, lints, and tests the service/tool modules and checks generated schemas. `build-ts.yaml` lints and builds UI/API, and for the API also type-checks the tests and runs `bun run test:api`. The UI has no test suite.
 
 ---
 

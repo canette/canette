@@ -40,6 +40,11 @@ jobs:
     - name: Build ${{ matrix.app }}
       run: bun run build:${{ matrix.app }}
 
-# We should have tests
-#    - name: Test ${{ matrix.app }}
-#      run: bun run test:${{ matrix.app }}
+    # The UI has no test suite yet.
+    - name: Type-check api tests
+      if: matrix.app == 'api'
+      run: bun run --cwd apps/api typecheck:test
+
+    - name: Test api
+      if: matrix.app == 'api'
+      run: bun run test:api
