@@ -14,3 +14,10 @@ type DbLike = { getExecutor(): ExecutorLike }
 export function supportsForUpdate(db: DB | DbLike): boolean {
   return db.getExecutor().adapter.supportsMultipleConnections === true
 }
+
+// isSqlite returns true for the SQLite test database, with the same adapter
+// check as supportsForUpdate. runMigrations uses it to pick a migration's
+// SQLite version.
+export function isSqlite(db: DB | DbLike): boolean {
+  return !supportsForUpdate(db)
+}

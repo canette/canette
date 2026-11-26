@@ -5,6 +5,7 @@ import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
 import { ACTIVE_DEPLOYMENT_STATUSES } from "./deployments"
+import { lockIntents, setIntent } from "./intents"
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
@@ -514,22 +515,39 @@ export async function forceSyncLiveApps(db: DB): Promise<SyncResult> {
   // skipped: only one may be in progress per app
   // (idx_deployments_one_active_per_app), and a single conflicting row would
   // fail the whole statement.
-  const result = await sql<{ count: string }>`
-    UPDATE deployments
-    SET status = 'pending_deployment', error_message = NULL, updated_at = ${now}
-    WHERE status = 'live'
-      AND id IN (
-        SELECT id FROM deployments d2
-        WHERE d2.app_id = deployments.app_id
-        ORDER BY created_at DESC LIMIT 1
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM deployments d3
-        WHERE d3.app_id = deployments.app_id
-          AND d3.status IN (${sql.join([...ACTIVE_DEPLOYMENT_STATUSES])})
-      )
-  `.execute(db)
-  const synced = result.numAffectedRows !== undefined ? Number(result.numAffectedRows) : 0
+  const synced = await db.transaction().execute(async (tx) => {
+    // A re-queue is a lifecycle action, so it takes the intent locks first
+    // (services/intents.ts): those of every app with a live deployment, a
+    // superset of the apps re-queued below.
+    const candidates = await tx
+      .selectFrom("deployments")
+      .select("app_id")
+      .distinct()
+      .where("status", "=", "live")
+      .execute()
+    await lockIntents(tx, candidates.map((r) => r.app_id))
+
+    const result = await sql<{ id: string; app_id: string }>`
+      UPDATE deployments
+      SET status = 'pending_deployment', error_message = NULL, updated_at = ${now}
+      WHERE status = 'live'
+        AND id IN (
+          SELECT id FROM deployments d2
+          WHERE d2.app_id = deployments.app_id
+          ORDER BY created_at DESC LIMIT 1
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM deployments d3
+          WHERE d3.app_id = deployments.app_id
+            AND d3.status IN (${sql.join([...ACTIVE_DEPLOYMENT_STATUSES])})
+        )
+      RETURNING id, app_id
+    `.execute(tx)
+    for (const row of result.rows) {
+      await setIntent(tx, row.app_id, { desiredState: "running", targetDeploymentId: row.id, updatedBy: null })
+    }
+    return result.rows.length
+  })
   return {
     synced,
     message:

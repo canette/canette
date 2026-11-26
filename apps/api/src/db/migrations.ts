@@ -2,6 +2,7 @@ import { sql } from 'kysely'
 import { readdir, readFile } from "fs/promises"
 import { join } from "path"
 import { DB } from "./db"
+import { isSqlite } from "./dialect"
 
 export async function runMigrations(db: DB, migrationsDir: string): Promise<void> {
 
@@ -18,9 +19,14 @@ export async function runMigrations(db: DB, migrationsDir: string): Promise<void
 
   const applied = new Set(rows.map((r) => r.version))
 
-  const files = (await readdir(migrationsDir))
-    .filter((f) => f.endsWith(".up.sql"))
-    .sort()
+  const allFiles = await readdir(migrationsDir)
+  const files = allFiles.filter((f) => f.endsWith(".up.sql")).sort()
+  // A migration that SQLite can't run as written (e.g. one that alters a
+  // CHECK constraint) has a {version}.up.sqlite.sql next to it, which the
+  // SQLite test database runs instead. Postgres always runs the .up.sql.
+  const sqliteVersions = isSqlite(db)
+    ? new Set(allFiles.filter((f) => f.endsWith(".up.sqlite.sql")))
+    : new Set<string>()
 
   let count = 0
   for (const file of files) {
@@ -31,7 +37,9 @@ export async function runMigrations(db: DB, migrationsDir: string): Promise<void
     }
 
     console.log(`  applying ${version}...`)
-    const sqlFile = await readFile(join(migrationsDir, file), "utf8")
+    const sqliteFile = file.replace(/\.up\.sql$/, ".up.sqlite.sql")
+    const source = sqliteVersions.has(sqliteFile) ? sqliteFile : file
+    const sqlFile = await readFile(join(migrationsDir, source), "utf8")
     const statements = sqlFile.split(";").map((s) => s.trim()).filter((s) => s.length > 0)
     for (const stmt of statements) {
       await sql.raw(stmt).execute(db)

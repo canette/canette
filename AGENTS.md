@@ -55,9 +55,9 @@ Namespaces and K8s resource names are a Kubernetes concern and are computed only
 ### Database
 PostgreSQL via the `pg` npm package (TypeScript) and `jackc/pgx/v5` (Go). Never modify the schema without a migration file.
 
-**Migration files** live in `apps/api/migrations/` as plain SQL — one `{version}_{description}.up.sql` and one `.down.sql` per migration. The version prefix is a zero-padded number (e.g. `000001`). Always use `CURRENT_TIMESTAMP` instead of `NOW()` — it works on both PostgreSQL and SQLite (used in tests).
+**Migration files** live in `apps/api/migrations/` as plain SQL — one `{version}_{description}.up.sql` and one `.down.sql` per migration. The version prefix is a zero-padded number (e.g. `000001`). Always use `CURRENT_TIMESTAMP` instead of `NOW()` — it works on both PostgreSQL and SQLite (used in tests). A migration SQLite can't run as written (e.g. altering a CHECK constraint, which SQLite can only do by rebuilding the table) gets a `{version}_{description}.up.sqlite.sql` next to its `.up.sql`. The SQLite test database runs that file instead, and Postgres always runs the `.up.sql` (see `000027_app_intents`). Keep the two in step.
 
-**Migration runner** (`apps/api/src/db/migrations.ts`) accepts any Kysely `DB` instance, reads the `.up.sql` files in order, splits each file on `;` and executes statements one at a time, and tracks applied versions in a `schema_migrations` table. The runner is invoked directly by `apps/api/src/index.ts` at startup unless `RUN_MIGRATIONS=false`. The standalone `apps/api/scripts/migrate.ts` entry point also reads `MIGRATIONS_DIR` from the environment (defaults to `./migrations` relative to cwd — matches the directory next to the compiled binary).
+**Migration runner** (`apps/api/src/db/migrations.ts`) accepts any Kysely `DB` instance, reads the `.up.sql` files in order (on SQLite, a migration's `.up.sqlite.sql` in its place when there is one), splits each file on `;` and executes statements one at a time, and tracks applied versions in a `schema_migrations` table. The runner is invoked directly by `apps/api/src/index.ts` at startup unless `RUN_MIGRATIONS=false`. The standalone `apps/api/scripts/migrate.ts` entry point also reads `MIGRATIONS_DIR` from the environment (defaults to `./migrations` relative to cwd — matches the directory next to the compiled binary).
 
 Local dev: provide a PostgreSQL database and set `DATABASE_URL` in `apps/api/.env`. Run `bun run --cwd apps/api db:migrate` to apply pending migrations. See `CONTRIBUTING.md` and the self-hosting documentation for setup requirements.
 
@@ -169,13 +169,15 @@ Auth is handled by `better-auth` embedded in the API server. Supported methods i
 
 ## Database schema (current)
 
-Tables: `teams`, `team_members`, `projects`, `apps`, `deployments`, `build_logs`, `secrets`, `env_vars`, `app_volumes`, `pending_volume_deletions`, `app_hostnames`, `git_credentials`, `webhook_secrets`, `admin_settings`, `scan_sboms`, `queued_namespace_cleanups`, `queued_app_cleanups`, `app_observed_status`. Better-auth owns `user`, `session`, `account`, `verification` (note: `user` not `users`).
+Tables: `teams`, `team_members`, `projects`, `apps`, `deployments`, `build_logs`, `secrets`, `env_vars`, `app_volumes`, `pending_volume_deletions`, `app_hostnames`, `git_credentials`, `webhook_secrets`, `admin_settings`, `scan_sboms`, `queued_namespace_cleanups`, `queued_app_cleanups`, `app_observed_status`, `app_intents`. Better-auth owns `user`, `session`, `account`, `verification` (note: `user` not `users`).
 
 Ownership is team-based: every user gets a personal team at registration, projects/apps hang off a team, and `git_credentials` are scoped to a team (`teamId`, nullable for system-wide credentials) rather than an individual user. `git_credentials` columns: `id`, `team_id` (FK → teams, null for system credentials), `name`, `provider` enum(`github|gitlab|gitea|generic`), `type` enum(`pat|ssh_key|github_app`), `encrypted_value` (AES-256-GCM — stores the PAT token, SSH private key, or GitHub App private key), `installation_id`/`connected_by_user_id` (github_app type only), `created_at`. The `known_hosts` value for SSH credentials is not secret and is stored as plain text in a separate `ssh_known_hosts` column. Apps reference credentials via `apps.git_credential_id`.
 
 `app_volumes` columns: `id`, `app_id`, `name`, `type` enum(`pvc|emptyDir|configmap`), `mount_path`, `config` (JSON, shape depends on `type`), `created_at`, `updated_at` — unique on `(app_id, name)` and `(app_id, mount_path)`. Async PVC/ConfigMap cleanup goes through `pending_volume_deletions` (controller claims rows via `FOR UPDATE SKIP LOCKED`). Rows carry domain identifiers; the nullable `namespace`/`resource_type`/`resource_name` columns only exist for rows queued before migration `000018` and can be dropped in a later release.
 
 `app_observed_status` holds what the controller has observed in Kubernetes for an app (`kubernetes_status` JSON + `kubernetes_status_observed_at`, and the health watcher's `runtime_health` verdict + `runtime_health_reason` + `runtime_health_updated_at`; a missing row reads as `unknown`), keyed by `app_id` with `ON DELETE CASCADE`. Only the controller writes it, creating the row on first observation with an upsert, so the API reads it with a LEFT JOIN (`selectApps` in `apps/api/src/services/apps.ts`) and never writes it. Put new controller observations here, not on `apps`, which holds the user's intent.
+
+`app_intents` holds what the user wants each app to run (#354): `desired_state` (`running | stopped`), the `target_deployment_id` it should run, and a `generation` bumped by every lifecycle action. Only the API writes it. Every lifecycle action (deploy, redeploy, stop, admin force sync) locks the app's row first (`lockIntent` in `apps/api/src/services/intents.ts`), so every lifecycle transaction takes its locks in the same order, then records the action with `setIntent` in the same transaction as its other writes. Config edits don't bump the generation. `createApp` creates the row (`stopped`, generation 0). The Go services don't read it yet.
 
 Deleting an app cascades its deployments, so `deleteApp` writes a `queued_app_cleanups` row (`project_id`/`project_slug`/`app_slug`) in the same transaction, and the controller removes everything the app owned (`k8s.DeleteApp`: workload, routes, its Secrets, PVCs, ConfigMaps) before deleting the row. `createApp` refuses a slug that still has a pending row. Deleting a project or team queues its namespaces in `queued_namespace_cleanups`.
 
@@ -184,7 +186,7 @@ Key invariants:
 - `apps.slug` — unique within the project, lowercase alphanumeric + hyphens, max 63 chars. Used as the K8s container/resource name.
 - `apps.project_id` references `projects.id` — deleting a project cascades to apps
 - `apps.deployment_type` is an enum: `web | private | cronjob` — controls what K8s resources the controller generates (see Component responsibilities → controller); `cronjob` requires `apps.schedule` (cron expression)
-- `deployments.status` is an enum: `pending_build | building | scanning | pending_deployment | deploying | live | failed | stopped`
+- `deployments.status` is an enum: `pending_build | building | scanning | pending_deployment | deploying | live | failed | stopped | superseded` (`superseded` is allowed since `000027` but not written yet, see #354)
 - `secrets.encrypted_value` is never null — empty string is stored encrypted
 - `user.role` is `admin | developer`
 
