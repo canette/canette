@@ -1,0 +1,31 @@
+---
+title: Install & Upgrade Issues
+description: Troubleshoot errors from helm install and helm upgrade.
+---
+
+## Upgrade fails — "spec.strategy.rollingUpdate: Forbidden"
+
+### Symptoms
+
+`helm upgrade` fails with:
+
+```
+Error: UPGRADE FAILED: server-side apply failed for object canette-system/canette-controller apps/v1, Kind=Deployment: Deployment.apps "canette-controller" is invalid: spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy `type` is 'Recreate'
+```
+
+### Cause
+
+The `canette-controller` Deployment uses the `Recreate` strategy, so two controllers never run side by side during an upgrade. Older chart versions used the default rolling update, and Kubernetes filled in `spec.strategy.rollingUpdate` on the live Deployment when it was created.
+
+Helm's server-side apply only removes fields Helm owns, and Helm never owned these defaults. So the upgrade sets `type: Recreate` but leaves `rollingUpdate` in place, and Kubernetes rejects the combination. Fresh installs are not affected.
+
+### Fix
+
+Remove `rollingUpdate` from the live Deployment once, then run `helm upgrade` again:
+
+```bash
+kubectl -n canette-system patch deployment canette-controller --type=json \
+  -p '[{"op":"remove","path":"/spec/strategy/rollingUpdate"},{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]'
+```
+
+Replace `canette-system` with your release namespace. The controller restarts once. Later upgrades apply cleanly.
