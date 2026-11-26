@@ -434,7 +434,8 @@ func (s *Store) StartDeploying(ctx context.Context, deploymentID string) (bool, 
 }
 
 // FinishDeploy records a successful rollout: the attempt is live, any other
-// live attempt of the app is superseded, and the app's runtime row names it
+// live or rolling-out attempt of the app is superseded (see retireOthers), and
+// the app's runtime row names it
 // as the applied deployment, with its URL (NULL for private and cron apps).
 // The app counts as reconciled up to generation, the generation the rollout
 // was started for. ErrNotDeploying means the attempt moved on meanwhile, and
@@ -453,8 +454,7 @@ func (s *Store) FinishDeploy(ctx context.Context, l Lease, generation int64, dep
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE deployments SET status = 'superseded', updated_at = $1
-			WHERE app_id = (SELECT app_id FROM deployments WHERE id = $2)
-			  AND status = 'live' AND id <> $2`, now, deploymentID); err != nil {
+			WHERE app_id = $2 AND status IN ('live', 'deploying') AND id <> $3`, now, l.AppID, deploymentID); err != nil {
 			return err
 		}
 		res, err = tx.ExecContext(ctx, `
@@ -471,7 +471,7 @@ func (s *Store) FinishDeploy(ctx context.Context, l Lease, generation int64, dep
 
 // FailDeploy records a failed attempt and counts the app as reconciled up to
 // generation, so the attempt isn't retried. An attempt that is no longer in
-// progress keeps its status.
+// progress keeps its status. Other rolling-out attempts are retired.
 func (s *Store) FailDeploy(ctx context.Context, l Lease, generation int64, deploymentID, msg string) error {
 	return s.inTx(ctx, "fail deploy", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
@@ -480,16 +480,36 @@ func (s *Store) FailDeploy(ctx context.Context, l Lease, generation int64, deplo
 			msg, time.Now().UTC(), deploymentID); err != nil {
 			return err
 		}
+		if err := retireOthers(ctx, tx, l.AppID, deploymentID); err != nil {
+			return err
+		}
 		return s.reconciled(ctx, tx, l, generation, msg)
 	})
 }
 
 // MarkReconciled counts the app as reconciled up to generation, for an
-// intent that needs no Kubernetes change.
-func (s *Store) MarkReconciled(ctx context.Context, l Lease, generation int64) error {
+// intent that needs no Kubernetes change: its target (target, empty if none)
+// failed, ended or doesn't exist. Other rolling-out attempts are retired.
+func (s *Store) MarkReconciled(ctx context.Context, l Lease, generation int64, target string) error {
 	return s.inTx(ctx, "mark reconciled", func(tx *sql.Tx) error {
+		if err := retireOthers(ctx, tx, l.AppID, target); err != nil {
+			return err
+		}
 		return s.reconciled(ctx, tx, l, generation, "")
 	})
+}
+
+// retireOthers supersedes the app's attempts still marked deploying, other
+// than keep, once its worker has settled its target. Normally the worker
+// supersedes an attempt it stops waiting for, but one whose wait was cut off
+// (a controller restart while a newer target was being built) is left
+// deploying, with no worker for it. It must not linger: it isn't the target,
+// and attempts in progress make admin force sync skip the app.
+func retireOthers(ctx context.Context, tx *sql.Tx, appID, keep string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE deployments SET status = 'superseded', updated_at = $1
+		WHERE app_id = $2 AND status = 'deploying' AND id <> $3`, time.Now().UTC(), appID, keep)
+	return err
 }
 
 // recordStop records a finished teardown, see FenceStop.

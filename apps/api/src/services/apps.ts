@@ -660,15 +660,16 @@ export async function deleteApp(
     const row = await lockQ.executeTakeFirst()
     if (!row) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
-    // Any deployment, not just the newest: an older live deployment keeps
-    // running when a newer one fails.
-    const active = await tx
-      .selectFrom("deployments")
-      .select("id")
+    // The intent says whether the app should be running, locked above so no
+    // deploy is accepted meanwhile. Deployment statuses can't tell: an older
+    // live deployment keeps running when a newer one fails, and a stopped
+    // app can still have a build being cancelled.
+    const intent = await tx
+      .selectFrom("app_intents")
+      .select("desired_state")
       .where("app_id", "=", appId)
-      .where("status", "not in", ["failed", "stopped", "superseded"])
       .executeTakeFirst()
-    if (active) {
+    if (intent?.desired_state === "running") {
       throw new ServiceError(
         "Stop the app before deleting it",
         "CONFLICT",

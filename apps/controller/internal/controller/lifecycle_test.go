@@ -487,3 +487,37 @@ func TestProcessPending_SweepsAndClaims(t *testing.T) {
 		t.Errorf("runtime %+v", r)
 	}
 }
+
+// A restart while a rollout waited for a newer target still being built cuts
+// the wait off and leaves the rollout deploying. It is retired once the newer
+// target takes over.
+func TestRunApp_RolloutCutOffByRestartIsRetired(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	ctx, cancel := context.WithCancel(context.Background())
+	f.rollout(func(poll int) k8sres.RolloutStatus {
+		if poll == 1 {
+			f.deployment("d2", "building") // a newer push
+			f.intent("running", "d2")
+		} else {
+			cancel() // the controller restarts while d1 still rolls out
+		}
+		return k8sres.RolloutStatus{Message: "waiting"}
+	})
+	f.run(ctx)
+	if got := f.status("d1"); got != "deploying" {
+		t.Fatalf("d1 is %s after the restart, want deploying", got)
+	}
+
+	f.exec(`UPDATE deployments SET status = 'pending_deployment' WHERE id = 'd2'`) // d2 is built
+	f.rollout(func(int) k8sres.RolloutStatus { return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"} })
+	f.run(context.Background())
+
+	if got := f.status("d2"); got != "live" {
+		t.Errorf("d2 is %s, want live", got)
+	}
+	if got := f.status("d1"); got != "superseded" {
+		t.Errorf("d1 is %s, want superseded once d2 took over", got)
+	}
+}

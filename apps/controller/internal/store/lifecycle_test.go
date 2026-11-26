@@ -305,7 +305,8 @@ func TestFinishDeploy(t *testing.T) {
 	s, db := testStore(t)
 	ctx := context.Background()
 	addLifecycleApp(t, db, lifecycleApp{id: "app", desired: "running", generation: 3, target: "new", reconciled: 1, token: "mine"},
-		[2]string{"old", "live"}, [2]string{"older", "live"}, [2]string{"new", "deploying"}, [2]string{"gone", "superseded"})
+		[2]string{"old", "live"}, [2]string{"older", "live"}, [2]string{"new", "deploying"}, [2]string{"gone", "superseded"},
+		[2]string{"stale", "deploying"}) // a rollout whose wait a restart cut off
 	lease := Lease{AppID: "app", Token: "mine"}
 	url := sql.NullString{String: "https://app-p.example.com", Valid: true}
 
@@ -322,7 +323,7 @@ func TestFinishDeploy(t *testing.T) {
 	if err := s.FinishDeploy(ctx, lease, 3, "new", url); err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[string]string{"new": "live", "old": "superseded", "older": "superseded"} {
+	for id, want := range map[string]string{"new": "live", "old": "superseded", "older": "superseded", "stale": "superseded"} {
 		if got := statusOf(t, db, id); got != want {
 			t.Errorf("%s: %s, want %s", id, got, want)
 		}
@@ -601,5 +602,22 @@ func TestReleaseAllLeases(t *testing.T) {
 	}
 	if err := s.Fence(context.Background(), Lease{AppID: "held", Token: "dead"}, 2, func(context.Context) error { return nil }); !errors.Is(err, ErrLeaseLost) {
 		t.Errorf("old token: err %v, want ErrLeaseLost", err)
+	}
+}
+
+func TestMarkReconciledRetiresStaleRollouts(t *testing.T) {
+	s, db := testStore(t)
+	addLifecycleApp(t, db, lifecycleApp{id: "app", desired: "running", generation: 3, target: "failed-build", reconciled: 2, token: "mine"},
+		[2]string{"stale", "deploying"}, [2]string{"failed-build", "failed"}, [2]string{"serving", "live"})
+	if err := s.MarkReconciled(context.Background(), Lease{AppID: "app", Token: "mine"}, 3, "failed-build"); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"stale": "superseded", "failed-build": "failed", "serving": "live"} {
+		if got := statusOf(t, db, id); got != want {
+			t.Errorf("%s: %s, want %s", id, got, want)
+		}
+	}
+	if r := runtimeOf(t, db, "app"); r.reconciled != 3 {
+		t.Errorf("reconciled %d, want 3", r.reconciled)
 	}
 }

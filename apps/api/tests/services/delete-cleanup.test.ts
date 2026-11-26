@@ -69,10 +69,18 @@ describe("delete cleanup", () => {
   }
 
   describe("deleteApp", () => {
-    it("rejects deletion when an older deployment is still live", async () => {
+    // What a deploy records: the app should run deploymentId.
+    async function setRunning(appId: string, deploymentId: string) {
+      await db.updateTable("app_intents")
+        .set({ desired_state: "running", target_deployment_id: deploymentId, generation: 1 })
+        .where("app_id", "=", appId).execute()
+    }
+
+    it("rejects deletion while the app should be running, even if its newest deployment failed", async () => {
       const app = await makeApp("older-live")
       await addDeployment(app.id, "live", { createdAt: "2026-01-01T00:00:00.000Z" })
-      await addDeployment(app.id, "failed", { createdAt: "2026-01-02T00:00:00.000Z" })
+      const failed = await addDeployment(app.id, "failed", { createdAt: "2026-01-02T00:00:00.000Z" })
+      await setRunning(app.id, failed)
 
       const err = await deleteApp(db, app.id, "userId").catch((e) => e)
       expect(err).toBeInstanceOf(ServiceError)
@@ -85,10 +93,18 @@ describe("delete cleanup", () => {
       async (status) => {
         const slug = `in-flight-${status.replace("_", "-")}`
         const app = await makeApp(slug)
-        await addDeployment(app.id, status)
+        await setRunning(app.id, await addDeployment(app.id, status))
         await expect(deleteApp(db, app.id, "userId")).rejects.toBeInstanceOf(ServiceError)
       }
     )
+
+    it("allows deleting a stopped app whose build is still being cancelled", async () => {
+      const app = await makeApp("stopped-mid-build")
+      await setRunning(app.id, await addDeployment(app.id, "building"))
+      await stopApp(db, app.id, "userId")
+      expect(await deleteApp(db, app.id, "userId")).toBe(true)
+      expect(await cleanupsFor("stopped-mid-build")).toHaveLength(1)
+    })
 
     it("queues a cleanup when the app is deleted right after Stop", async () => {
       const app = await makeApp("stop-then-delete")

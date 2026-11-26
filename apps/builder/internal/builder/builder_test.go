@@ -79,3 +79,17 @@ func TestRegistryAuthTypeResolution(t *testing.T) {
 		})
 	}
 }
+
+func TestPinnedRef(t *testing.T) {
+	const digest = "sha256:abc"
+	for in, want := range map[string]string{
+		"registry.example.com/p/app:git-1234567":            "registry.example.com/p/app@sha256:abc",
+		"registry.example.com:5000/p/app:git-1234567":       "registry.example.com:5000/p/app@sha256:abc",
+		"registry.example.com:5000/p/app":                   "registry.example.com:5000/p/app@sha256:abc",
+		"registry.example.com/p/app:git-1234567@sha256:old": "registry.example.com/p/app@sha256:abc",
+	} {
+		if got := pinnedRef(in, digest); got != want {
+			t.Errorf("pinnedRef(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

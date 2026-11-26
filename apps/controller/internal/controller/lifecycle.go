@@ -73,14 +73,14 @@ func (c *Controller) step(ctx context.Context, log *zap.Logger, lease store.Leas
 		return c.stopApp(ctx, log, lease, in)
 	}
 	if in.Target == nil {
-		return c.markReconciled(ctx, log, lease, in.Generation)
+		return c.markReconciled(ctx, log, lease, in.Generation, "")
 	}
 	switch in.TargetStatus {
 	case "pending_deployment", "deploying", "live":
 		return c.deploy(ctx, log, lease, in)
 	default:
 		// failed, superseded or stopped: nothing to roll out.
-		return c.markReconciled(ctx, log, lease, in.Generation)
+		return c.markReconciled(ctx, log, lease, in.Generation, in.Target.ID)
 	}
 }
 
@@ -115,8 +115,8 @@ func (c *Controller) stopApp(ctx context.Context, log *zap.Logger, lease store.L
 	return true
 }
 
-func (c *Controller) markReconciled(ctx context.Context, log *zap.Logger, lease store.Lease, generation int64) bool {
-	if err := c.store.MarkReconciled(ctx, lease, generation); err != nil && !errors.Is(err, store.ErrLeaseLost) {
+func (c *Controller) markReconciled(ctx context.Context, log *zap.Logger, lease store.Lease, generation int64, target string) bool {
+	if err := c.store.MarkReconciled(ctx, lease, generation, target); err != nil && !errors.Is(err, store.ErrLeaseLost) {
 		log.Warn("mark reconciled error", zap.Error(err))
 	}
 	return false

@@ -2,15 +2,19 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	k8sjobs "canette.dev/builder/internal/k8s"
 	"canette.dev/builder/internal/scanner"
@@ -289,5 +293,38 @@ func TestBuildFlow_CancelsBuildReplacedWhileRunning(t *testing.T) {
 	}
 	if !slices.ContainsFunc(fs.appendedLogs, func(l string) bool { return strings.Contains(l, "build cancelled") }) {
 		t.Errorf("logs %q, want a cancellation line", fs.appendedLogs)
+	}
+}
+
+// A Job delete that fails is retried: the replaced build doesn't move on
+// while its Job may still be running.
+func TestBuildFlow_RetriesFailedJobDelete(t *testing.T) {
+	dep := pendingDep("d59d1c36-0000-0000-0000-00000000000b")
+	fs := &fakeStore{deployments: []store.PendingDeployment{dep}, replacedOn: map[string]int{dep.ID: 2}}
+	k8s := fake.NewSimpleClientset()
+	var deletes atomic.Int32
+	k8s.PrependReactor("delete", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if deletes.Add(1) == 1 {
+			return true, nil, errors.New("transient API error")
+		}
+		return false, nil, nil // let the tracker delete it
+	})
+	b := newBuildFlowBuilder(t, fs, k8s, "static")
+	b.replacedCheckInterval = 20 * time.Millisecond
+
+	runBuildOnce(t, b)
+
+	if n := deletes.Load(); n < 2 {
+		t.Errorf("tried to delete the Job %d times, want a retry", n)
+	}
+	jobs, err := k8s.BatchV1().Jobs("canette-system").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Errorf("%d Jobs left after the retry", len(jobs.Items))
+	}
+	if len(fs.superseded) != 1 || len(fs.markedFailed) != 0 {
+		t.Errorf("superseded %v, failed %v; want only superseded", fs.superseded, fs.markedFailed)
 	}
 }

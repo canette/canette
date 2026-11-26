@@ -63,13 +63,16 @@ type Builder struct {
 	replacedCheckInterval time.Duration
 }
 
-// whileWanted runs wait with a context that ends, and deletes the Job jobName,
-// as soon as the deployment is no longer wanted: a newer deploy or a Stop
-// replaced it (#354). SupersedeReplaced records that, so the deployment ends
-// superseded rather than failed. It reports whether it was replaced.
+// whileWanted runs wait while the deployment is still wanted. Every
+// replacedCheckInterval it asks SupersedeReplaced, which records it as
+// superseded when a newer deploy or a Stop replaced it (#354). From then on it
+// calls onReplaced (if set) and deletes the Job jobName, retrying on every
+// check until the delete succeeds, and only then ends wait's context: a Job
+// that is still running would keep its build or scan going, and its TTL only
+// starts once it finishes. It reports whether the deployment was replaced.
 // Deleting the Job stops its pod, and with it the build's buildctl session,
 // which makes BuildKit cancel the build. Layers already built stay cached.
-func (b *Builder) whileWanted(ctx context.Context, log *zap.Logger, deploymentID, jobName string, wait func(context.Context)) bool {
+func (b *Builder) whileWanted(ctx context.Context, log *zap.Logger, deploymentID, jobName string, onReplaced func(), wait func(context.Context)) bool {
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var replaced atomic.Bool
@@ -84,23 +87,30 @@ func (b *Builder) whileWanted(ctx context.Context, log *zap.Logger, deploymentID
 				return
 			case <-ticker.C:
 			}
-			ok, err := b.store.SupersedeReplaced(waitCtx, deploymentID)
-			if err != nil {
-				if waitCtx.Err() == nil {
-					log.Warn("check whether the deployment is still wanted failed", zap.Error(err))
+			if !replaced.Load() {
+				ok, err := b.store.SupersedeReplaced(waitCtx, deploymentID)
+				if err != nil {
+					if waitCtx.Err() == nil {
+						log.Warn("check whether the deployment is still wanted failed", zap.Error(err))
+					}
+					continue
 				}
-				continue
+				if !ok {
+					continue
+				}
+				replaced.Store(true)
+				log.Info("deployment replaced by a newer deploy or a Stop; cancelling", zap.String("job", jobName))
+				if onReplaced != nil {
+					onReplaced()
+				}
 			}
-			if !ok {
-				continue
-			}
-			replaced.Store(true)
-			log.Info("deployment replaced by a newer deploy or a Stop; cancelling", zap.String("job", jobName))
-			delCtx, delCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			if err := k8sjobs.DeleteJob(delCtx, b.k8s, b.cfg.Namespace, jobName); err != nil {
-				log.Warn("delete replaced job failed; its TTL removes it", zap.String("job", jobName), zap.Error(err))
-			}
+			delCtx, delCancel := context.WithTimeout(waitCtx, 30*time.Second)
+			err := k8sjobs.DeleteJob(delCtx, b.k8s, b.cfg.Namespace, jobName)
 			delCancel()
+			if err != nil {
+				log.Warn("delete replaced job failed; retrying", zap.String("job", jobName), zap.Error(err))
+				continue
+			}
 			cancel()
 			return
 		}
@@ -109,6 +119,17 @@ func (b *Builder) whileWanted(ctx context.Context, log *zap.Logger, deploymentID
 	cancel()
 	<-checked
 	return replaced.Load()
+}
+
+// pinnedRef turns repo:tag into repo@digest, the immutable reference of the
+// image the build pushed. A tag is only the part after the last ":" that
+// follows the last "/", so a registry port is kept.
+func pinnedRef(imageRef, digest string) string {
+	repo, _, _ := strings.Cut(imageRef, "@")
+	if slash, colon := strings.LastIndex(repo, "/"), strings.LastIndex(repo, ":"); colon > slash {
+		repo = repo[:colon]
+	}
+	return repo + "@" + digest
 }
 
 // logReplaced tells the deployment's log that its build or scan was cancelled.
@@ -370,7 +391,11 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	var capturedDigest, capturedImageRef, capturedCanetteConfigB64, capturedCommitSha string
 	var succeeded bool
 	logDone := make(chan struct{})
-	replaced := b.whileWanted(ctx, log, dep.ID, jobName, func(waitCtx context.Context) {
+	// The log tail ends with the pod, or as soon as the build is replaced:
+	// a pod whose Job can't be deleted yet would keep it open.
+	logCtx, cancelLogs := context.WithCancel(ctx)
+	defer cancelLogs()
+	replaced := b.whileWanted(ctx, log, dep.ID, jobName, cancelLogs, func(waitCtx context.Context) {
 		podName, err := b.waitForPod(waitCtx, log, jobName)
 		if err != nil {
 			close(logDone)
@@ -380,10 +405,10 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 
 		// Tail logs concurrently — errors here are informational only.
 		// Structured marker lines are intercepted in memory and never written to build_logs.
-		// On ctx, not waitCtx: the tail must read to the end after the Job finished.
+		// On logCtx, not waitCtx: the tail must read to the end after the Job finished.
 		go func() {
 			defer close(logDone)
-			b.tailLogs(ctx, log, dep.ID, podName, []string{"git-clone", "image-build"}, map[string]*string{
+			b.tailLogs(logCtx, log, dep.ID, podName, []string{"git-clone", "image-build"}, map[string]*string{
 				"CAN_IMAGE_DIGEST=":   &capturedDigest,
 				"CAN_IMAGE_REF=":      &capturedImageRef,
 				"CAN_CANETTE_CONFIG=": &capturedCanetteConfigB64,
@@ -452,8 +477,10 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		}
 		var scanResult *scanner.ScanResult
 		var scanErr error
-		if b.whileWanted(ctx, log, dep.ID, scanName, func(waitCtx context.Context) {
-			scanResult, scanErr = b.scanProvider.Scan(waitCtx, dep.ID, imageRef)
+		if b.whileWanted(ctx, log, dep.ID, scanName, nil, func(waitCtx context.Context) {
+			// The digest, not the tag: overlapping builds of one commit push
+			// the same tag, and the scan must cover the image that is deployed.
+			scanResult, scanErr = b.scanProvider.Scan(waitCtx, dep.ID, pinnedRef(imageRef, digest))
 		}) {
 			b.logReplaced(ctx, log, dep.ID, "scan")
 			return
