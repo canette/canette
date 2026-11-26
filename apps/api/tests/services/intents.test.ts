@@ -162,16 +162,19 @@ describe("app intent", () => {
     })
   })
 
-  it("force sync re-targets the re-queued deployment", async () => {
+  it("force sync bumps the intent of an app serving its target", async () => {
     const app = await makeApp("force-sync")
     const live = await addDeployment(db, app.id, "live")
-    const before = (await intent(db, app.id))!.generation
+    await db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: live, generation: 1 })
+      .where("app_id", "=", app.id).execute()
 
     await forceSyncLiveApps(db)
 
     expect(await intent(db, app.id)).toMatchObject({
-      desired_state: "running", generation: before + 1, target_deployment_id: live, updated_by: null,
+      desired_state: "running", generation: 2, target_deployment_id: live, updated_by: null,
     })
+    const row = await db.selectFrom("deployments").select("status").where("id", "=", live).executeTakeFirstOrThrow()
+    expect(row.status).toBe("live") // the history is left alone
   })
 })
 

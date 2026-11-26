@@ -120,5 +120,20 @@ describe("updateProject", () => {
 
       expect(await queuedSlugs(project.id)).toEqual(["round-trip-b"])
     })
+
+    it("refuses a rename back while the controller is deleting that namespace", async () => {
+      const project = await makeProject("claimed")
+      await updateProject(db, project.id, "userId", { slug: "claimed-b" })
+      // The controller claimed the old namespace's cleanup.
+      await db.updateTable("queued_namespace_cleanups").set({ claimed_at: new Date().toISOString() })
+        .where("project_id", "=", project.id).where("project_slug", "=", "claimed").execute()
+
+      const err = await updateProject(db, project.id, "userId", { slug: "claimed" }).catch((e) => e)
+      expect(err).toBeInstanceOf(ServiceError)
+      expect((err as ServiceError).status).toBe(409)
+      expect(await queuedSlugs(project.id)).toEqual(["claimed"])
+      const row = await db.selectFrom("projects").select("slug").where("id", "=", project.id).executeTakeFirstOrThrow()
+      expect(row.slug).toBe("claimed-b")
+    })
   })
 })

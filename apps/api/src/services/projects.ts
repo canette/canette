@@ -5,6 +5,7 @@ import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
 import { lockIntents } from "./intents"
+import { supportsForUpdate } from "../db/dialect"
 import { isTeamMember } from "./membership"
 import { isUniqueConstraintError } from "../db/errors"
 
@@ -253,12 +254,28 @@ export async function updateProject(
       .execute()
 
     // Renaming back to a slug whose namespace is still queued makes that
-    // namespace the live one again, so it must not be deleted.
-    await tx
-      .deleteFrom("queued_namespace_cleanups")
+    // namespace the live one again, so it must not be deleted. Once the
+    // controller has claimed the cleanup, the namespace may already be
+    // going, so the rename is refused until the controller is done. The row
+    // is locked first, so a claim can't land between the check and the
+    // delete (the controller skips locked rows).
+    let queuedQ = tx
+      .selectFrom("queued_namespace_cleanups")
+      .select(["id", "claimed_at"])
       .where("project_id", "=", projectId)
       .where("project_slug", "=", newSlug)
-      .execute()
+    if (supportsForUpdate(tx)) queuedQ = queuedQ.forUpdate()
+    const queued = await queuedQ.executeTakeFirst()
+    if (queued?.claimed_at) {
+      throw new ServiceError(
+        "The project's namespace for that slug is still being deleted. Try again in a few minutes.",
+        "CONFLICT",
+        409
+      )
+    }
+    if (queued) {
+      await tx.deleteFrom("queued_namespace_cleanups").where("id", "=", queued.id).execute()
+    }
   })
 
   const row = await db

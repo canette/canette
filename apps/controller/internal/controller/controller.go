@@ -249,6 +249,13 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 					c.log.Warn("namespace deletion error",
 						zap.String("namespace", ns),
 						zap.Error(err))
+					// Listing the PVCs or the delete request failed, so the
+					// namespace isn't being deleted: release the claim for
+					// the next poll, and a rename back to the slug may take
+					// it over meanwhile.
+					if err := c.store.ReleaseNamespaceDeletion(workCtx, d.ID); err != nil {
+						c.log.Warn("release namespace deletion error", zap.Error(err))
+					}
 					return // will retry next poll
 				}
 				if len(pvcs) > 0 {
