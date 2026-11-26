@@ -12,8 +12,14 @@ import { isUniqueConstraintError } from "../db/errors"
 
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
-// latest_deployment_status is a computed column not in the base table, so we extend.
-type AppRow = Selectable<Database["apps"]> & { latest_deployment_status?: string | null }
+// latest_deployment_status is a computed column not in the base table, so we
+// extend. The kubernetes_status columns come from app_observed_status, which
+// the controller writes (see selectApps).
+type AppRow = Selectable<Database["apps"]> & {
+  latest_deployment_status?: string | null
+  kubernetes_status?: string | null
+  kubernetes_status_observed_at?: string | null
+}
 
 // ── Mapper ────────────────────────────────────────────────────────────────────
 
@@ -32,6 +38,20 @@ function effectiveRuntimeHealth(row: AppRow): Pick<App, "runtimeHealth" | "runti
   return {
     runtimeHealth: row.runtime_health as App["runtimeHealth"],
     runtimeHealthReason: row.runtime_health_reason ?? undefined,
+  }
+}
+
+// The controller's status reader follows the same rewrite rule as the health
+// watcher (apps/controller/internal/health/kubestatus.go), so the same
+// staleness window applies. A stale or unparseable reading is left out.
+function effectiveKubernetesStatus(row: AppRow): App["kubernetesStatus"] {
+  const observedAt = row.kubernetes_status_observed_at
+  if (!row.kubernetes_status || !observedAt) return undefined
+  if (Date.now() - new Date(observedAt).getTime() > RUNTIME_HEALTH_STALE_AFTER_MS) return undefined
+  try {
+    return JSON.parse(row.kubernetes_status) as App["kubernetesStatus"]
+  } catch {
+    return undefined
   }
 }
 
@@ -57,9 +77,22 @@ function mapApp(row: AppRow): App {
     position: row.position,
     ...effectiveRuntimeHealth(row),
     runtimeHealthUpdatedAt: row.runtime_health_updated_at ?? undefined,
+    kubernetesStatus: effectiveKubernetesStatus(row),
+    kubernetesStatusObservedAt: row.kubernetes_status_observed_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+// selectApps starts every query that feeds mapApp: the app row plus what the
+// controller has observed for it. LEFT JOIN, because the controller creates
+// the app_observed_status row only on its first observation.
+function selectApps(db: DB) {
+  return db
+    .selectFrom("apps as a")
+    .leftJoin("app_observed_status as o", "o.app_id", "a.id")
+    .selectAll("a")
+    .select(["o.kubernetes_status", "o.kubernetes_status_observed_at"])
 }
 
 // ── Slug validation ───────────────────────────────────────────────────────────
@@ -101,9 +134,7 @@ export async function listApps(
     .executeTakeFirst()
   if (!membership) return null
 
-  const rows = await db
-    .selectFrom("apps as a")
-    .selectAll("a")
+  const rows = await selectApps(db)
     .select((eb) =>
       eb
         .selectFrom("deployments")
@@ -126,11 +157,9 @@ export async function getAppById(
   appId: string,
   userId: string
 ): Promise<App | null> {
-  const row = await db
-    .selectFrom("apps as a")
+  const row = await selectApps(db)
     .innerJoin("projects as p", "p.id", "a.project_id")
     .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
-    .selectAll("a")
     .select((eb) =>
       eb
         .selectFrom("deployments")
@@ -158,11 +187,9 @@ export async function getAppByRef(
   const projectCol = isUuid(projectRef) ? "p.id" : "p.slug"
   const appCol = isUuid(appRef) ? "a.id" : "a.slug"
 
-  const row = await db
-    .selectFrom("apps as a")
+  const row = await selectApps(db)
     .innerJoin("projects as p", "p.id", "a.project_id")
     .innerJoin("team_members as tm", "tm.team_id", "p.team_id")
-    .selectAll("a")
     .select((eb) =>
       eb
         .selectFrom("deployments")
@@ -387,10 +414,8 @@ export async function createApp(
     throw err
   }
 
-  const row = await db
-    .selectFrom("apps")
-    .selectAll()
-    .where("id", "=", id)
+  const row = await selectApps(db)
+    .where("a.id", "=", id)
     .executeTakeFirstOrThrow()
   return mapApp(row)
 }
@@ -541,10 +566,8 @@ export async function updateApp(
     await db.updateTable("apps").set(updates).where("id", "=", appId).execute()
   }
 
-  const row = await db
-    .selectFrom("apps")
-    .selectAll()
-    .where("id", "=", appId)
+  const row = await selectApps(db)
+    .where("a.id", "=", appId)
     .executeTakeFirstOrThrow()
   return mapApp(row)
 }

@@ -68,6 +68,33 @@ export type AppDeploymentType = "web" | "private" | "cronjob"
 // meaningful long-running-pod signal (cronjobs, stopped apps).
 export type RuntimeHealth = "healthy" | "unhealthy" | "unknown"
 
+// What Kubernetes itself reports for the app's workload object ("Kubernetes
+// readiness"), separate from runtimeHealth, which is the verdict on the pods.
+// Mirrors KubernetesStatus in apps/controller/internal/health/kubestatus.go.
+export interface KubernetesStatus {
+  // Whether the Deployment (web, private) or CronJob (cronjob) exists.
+  workload: "present" | "missing"
+  // Set for a present Deployment. available < desired means the app is
+  // serving at reduced capacity.
+  replicas?: { desired: number; ready: number; available: number; updated: number }
+  // Set for a present CronJob.
+  cronJob?: {
+    suspended: boolean
+    lastScheduleTime?: string
+    lastSuccessfulTime?: string
+    // The newest Job the CronJob still owns. Absent with no lastScheduleTime:
+    // the schedule has never run (not an error). Absent with a
+    // lastScheduleTime: the Job was already cleaned up.
+    lastJob?: {
+      name: string
+      outcome: "running" | "succeeded" | "failed"
+      reason?: string
+      startedAt?: string
+      finishedAt?: string
+    }
+  }
+}
+
 export interface App {
   id: string
   projectId: string
@@ -96,6 +123,11 @@ export interface App {
   runtimeHealthReason?: string
   // When the controller last confirmed the verdict.
   runtimeHealthUpdatedAt?: string
+  // Absent when the controller hasn't read it in the last 10 minutes (same
+  // freshness rule as runtimeHealth), so clients use it as is.
+  kubernetesStatus?: KubernetesStatus
+  // When the controller last read kubernetesStatus from Kubernetes.
+  kubernetesStatusObservedAt?: string
   createdAt: string
   updatedAt: string
 }

@@ -1,0 +1,71 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+)
+
+func TestGetCurrentDeployments_IncludesProjectSlug(t *testing.T) {
+	s, db := testStore(t)
+	insertDeployment(t, db, "live", "live", validSnapshot, nil, time.Now())
+	insertDeployment(t, db, "stopped", "stopped", validSnapshot, nil, time.Now())
+
+	deps, err := s.GetCurrentDeployments(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("got %+v, want only the live deployment", deps)
+	}
+	if d := deps[0]; d.DeploymentID != "live" || d.ProjectID != "p1" || d.ProjectSlug != "p" || d.AppSlug != "live" {
+		t.Errorf("got %+v", d)
+	}
+}
+
+func TestUpdateKubernetesStatus(t *testing.T) {
+	s, db := testStore(t)
+	before := time.Now().Add(-time.Second)
+	status := `{"workload":"present","replicas":{"desired":3,"ready":1,"available":1,"updated":3}}`
+
+	ctx := context.Background()
+
+	// First write creates the row, the second updates it in place.
+	if err := s.UpdateKubernetesStatus(ctx, "a1", `{"workload":"missing"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateKubernetesStatus(ctx, "a1", status); err != nil {
+		t.Fatal(err)
+	}
+	var got sql.NullString
+	var observedAt sql.NullTime
+	if err := db.QueryRow(`SELECT kubernetes_status, kubernetes_status_observed_at FROM app_observed_status WHERE app_id = 'a1'`).
+		Scan(&got, &observedAt); err != nil {
+		t.Fatal(err)
+	}
+	if got.String != status {
+		t.Errorf("kubernetes_status = %q, want %q", got.String, status)
+	}
+	if !observedAt.Valid || observedAt.Time.Before(before) {
+		t.Errorf("kubernetes_status_observed_at = %v, want now", observedAt)
+	}
+
+	// Deleting the app removes its observed row.
+	if _, err := db.Exec(`DELETE FROM apps WHERE id = 'a1'`); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := db.QueryRow(`SELECT count(*) FROM app_observed_status WHERE app_id = 'a1'`).Scan(&left); err != nil || left != 0 {
+		t.Errorf("after app delete: %d rows, err %v", left, err)
+	}
+
+	// An app deleted since it was read gets no row, and no FK error.
+	if err := s.UpdateKubernetesStatus(ctx, "deleted-app", status); err != nil {
+		t.Fatalf("deleted app: %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM app_observed_status WHERE app_id = 'deleted-app'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("deleted app: %d rows, err %v", n, err)
+	}
+}

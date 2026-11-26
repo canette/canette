@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
+import { KubernetesReadinessIndicator } from "@/components/kubernetes-readiness-indicator"
 import { StatusBadge, StatusLabel } from "@/components/ui/status-badge"
 import * as api from "@/lib/api"
 import { useSelectedTeam } from "@/lib/team-context"
@@ -150,6 +151,12 @@ export function ProjectList() {
                                     <RuntimeHealthIndicator
                                       runtimeHealth={a.runtimeHealth}
                                       runtimeHealthReason={a.runtimeHealthReason}
+                                    />
+                                  )}
+                                  {a.latestDeploymentStatus === "live" && (
+                                    <KubernetesReadinessIndicator
+                                      kubernetesStatus={a.kubernetesStatus}
+                                      deploymentType={a.deploymentType}
                                     />
                                   )}
                                   <StatusLabel status={a.latestDeploymentStatus} className="text-[11.5px]" />

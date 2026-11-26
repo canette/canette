@@ -253,6 +253,14 @@ export interface Database {
     created_at: string
   }
 
+  // Written only by the controller (what it observed in Kubernetes). A row
+  // exists once the controller has written one, so read it with a LEFT JOIN.
+  app_observed_status: {
+    app_id: string
+    kubernetes_status: string | null
+    kubernetes_status_observed_at: string | null
+  }
+
   // ── DB Migration tracking ──────────────────────────
 
   schema_migrations: {

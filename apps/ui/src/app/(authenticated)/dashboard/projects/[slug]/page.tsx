@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useParams } from "next/navigation"
 import { ArrowUpDown, ChevronDown, ChevronUp } from "lucide-react"
 import { RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
+import { KubernetesReadinessIndicator } from "@/components/kubernetes-readiness-indicator"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { cn } from "@/lib/utils"
@@ -116,6 +117,13 @@ export default function ProjectPage() {
                       <RuntimeHealthIndicator
                         runtimeHealth={app.runtimeHealth}
                         runtimeHealthReason={app.runtimeHealthReason}
+                        className="shrink-0"
+                      />
+                    )}
+                    {app.latestDeploymentStatus === "live" && (
+                      <KubernetesReadinessIndicator
+                        kubernetesStatus={app.kubernetesStatus}
+                        deploymentType={app.deploymentType}
                         className="shrink-0"
                       />
                     )}

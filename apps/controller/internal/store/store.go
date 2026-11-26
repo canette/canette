@@ -596,6 +596,7 @@ type CurrentDeployment struct {
 	AppID          string
 	AppSlug        string
 	ProjectID      string
+	ProjectSlug    string
 	DeploymentID   string
 	DeploymentType string // "web" | "private" | "cronjob"
 }
@@ -608,9 +609,10 @@ type CurrentDeployment struct {
 // a pod that is legitimately still starting up.
 func (s *Store) GetCurrentDeployments(ctx context.Context) ([]CurrentDeployment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT ON (d.app_id) d.app_id, a.slug, a.project_id, d.id, a.deployment_type
+		SELECT DISTINCT ON (d.app_id) d.app_id, a.slug, a.project_id, p.slug, d.id, a.deployment_type
 		FROM deployments d
 		JOIN apps a ON a.id = d.app_id
+		JOIN projects p ON p.id = a.project_id
 		WHERE d.status = 'live'
 		ORDER BY d.app_id, d.created_at DESC`)
 	if err != nil {
@@ -621,7 +623,7 @@ func (s *Store) GetCurrentDeployments(ctx context.Context) ([]CurrentDeployment,
 	var out []CurrentDeployment
 	for rows.Next() {
 		var cd CurrentDeployment
-		if err := rows.Scan(&cd.AppID, &cd.AppSlug, &cd.ProjectID, &cd.DeploymentID, &cd.DeploymentType); err != nil {
+		if err := rows.Scan(&cd.AppID, &cd.AppSlug, &cd.ProjectID, &cd.ProjectSlug, &cd.DeploymentID, &cd.DeploymentType); err != nil {
 			return nil, fmt.Errorf("scan current deployment: %w", err)
 		}
 		out = append(out, cd)
@@ -644,6 +646,27 @@ func (s *Store) UpdateRuntimeHealth(ctx context.Context, appID, health, reason s
 		WHERE id = $4`, health, reasonArg, time.Now().UTC(), appID)
 	if err != nil {
 		return fmt.Errorf("update runtime health: %w", err)
+	}
+	return nil
+}
+
+// UpdateKubernetesStatus records what Kubernetes reports for an app's
+// workload object (Deployment capacity or CronJob state), as JSON, in
+// app_observed_status: a table only the controller writes, so it creates the
+// app's row on first use. kubernetes_status_observed_at is when it was last
+// read: the status reader also rewrites an unchanged status periodically,
+// like UpdateRuntimeHealth. An app deleted since it was read has no apps row
+// to reference, so nothing is written.
+func (s *Store) UpdateKubernetesStatus(ctx context.Context, appID, statusJSON string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO app_observed_status (app_id, kubernetes_status, kubernetes_status_observed_at)
+		SELECT id, $1, $2 FROM apps WHERE id = $3
+		ON CONFLICT (app_id) DO UPDATE
+		SET kubernetes_status = excluded.kubernetes_status,
+			kubernetes_status_observed_at = excluded.kubernetes_status_observed_at`,
+		statusJSON, time.Now().UTC(), appID)
+	if err != nil {
+		return fmt.Errorf("update kubernetes status: %w", err)
 	}
 	return nil
 }
