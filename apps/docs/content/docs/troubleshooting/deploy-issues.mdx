@@ -1,0 +1,63 @@
+---
+title: Deploy Issues
+description: Understand warnings and errors in an app's deploy log.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+## Deploy log shows "would violate PodSecurity"
+
+### Symptoms
+
+The deploy finishes and the app is live, but the deploy log contains a notice like this:
+
+```
+Pod Security notice (the app is not affected): ...
+would violate PodSecurity "restricted:latest": unrestricted capabilities (container "website" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "website" must set securityContext.runAsNonRoot=true)
+Tip: set security.hardened: true in canette.yaml ...
+```
+
+The notice shows up again on every deploy of the app.
+
+### Cause
+
+Kubernetes checks every pod against [Pod Security levels](https://kubernetes.io/docs/concepts/security/pod-security-standards/). canette sets two levels on each project namespace by default:
+
+- **`baseline` is enforced.** Kubernetes refuses to start pods that break it, for example privileged containers or pods using the host's network. Ordinary apps meet it without changes, and your app does too, or it wouldn't be running.
+- **`restricted` is only checked.** It's the strictest level. Kubernetes doesn't block pods that break it, but it warns about them, and canette copies that warning into the deploy log.
+
+Your app gets canette's [default workload settings](/docs/security/platform-security#app-workload-defaults), which meet `baseline`. `restricted` also requires the container to run as a non-root user and to drop all Linux capabilities. canette doesn't turn those on by default, because some images need root to start. The warning names what's missing. `container "website"` is your app's container, named after the app's slug.
+
+The warning doesn't change anything about how the app runs. It tells you the app could be locked down further.
+
+### Fix
+
+Turn on [hardened mode](/docs/security/hardened-mode) in the app's `canette.yaml`:
+
+```yaml
+security:
+  hardened: true
+env:
+  HOME: /tmp
+```
+
+On the next deploy, the app's container runs as UID `10001`, with a read-only root filesystem and all capabilities dropped. That meets `restricted`, so the warning goes away.
+
+`HOME: /tmp` is optional but recommended. UID `10001` has no home directory, and tools that write to `$HOME` (npm, pip, railpack's `mise`) log errors without it. See [Set `HOME` to a writable directory](/docs/security/hardened-mode#set-home-to-a-writable-directory).
+
+Before you turn it on, check two things:
+
+- **Where the app writes files.** Only `/tmp` stays writable. If the app writes anywhere else at runtime (a cache folder, uploads), list those directories in `security.writable_paths`, or use a [volume](/docs/configuration/volumes) for data that must survive a restart. See [Writable directories](/docs/security/hardened-mode#writable-directories).
+- **The app's port.** On some clusters a non-root process can't listen on ports below 1024. Apps built by railpack listen on `PORT` (3000 by default) and aren't affected. Images with a fixed port 80, like the default `nginx` image, are. See [Use a port of 1024 or higher](/docs/security/hardened-mode#use-a-port-of-1024-or-higher).
+
+Most apps, including apps built by railpack, need nothing beyond the snippet above. The [hardened mode examples](/docs/security/hardened-mode#examples) cover Next.js, nginx, PostgreSQL, Redis and custom Dockerfiles.
+
+<Callout type="info">
+If the hardened deploy fails or the app crashes with `permission denied`, `Operation not permitted` or `read-only file system`, the previous deployment keeps running. See [Images that don't work](/docs/security/hardened-mode#images-that-dont-work) for the usual causes. If the image can't run hardened, remove the `security` block. The app keeps working as before, and the notice keeps showing up.
+</Callout>
+
+### For canette admins
+
+The levels come from the `controller.podSecurity.*` Helm values (see [Pod Security Admission](/docs/security/platform-security#pod-security-admission)). To stop the warnings for every app, set `controller.podSecurity.warn` to `baseline` or `""`. Each namespace gets the new label on its next deploy. Keep `audit: restricted` if you still want the API server audit log to show which apps could run hardened.
+
+If the cluster *enforces* `restricted`, the deploy log says so instead: `The cluster enforces this level, so Kubernetes may refuse to start the app's pods`. Then hardened mode isn't optional. The app's pods won't start until it's on.

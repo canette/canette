@@ -114,7 +114,7 @@ Every project namespace carries [Pod Security Admission](https://kubernetes.io/d
 | Label | Default | Effect |
 |-------|---------|--------|
 | `pod-security.kubernetes.io/enforce` | `baseline` | Kubernetes rejects pods that break the [baseline](https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline) level, such as privileged containers, host networking or `hostPath` volumes. |
-| `pod-security.kubernetes.io/warn` | `restricted` | Kubernetes returns a warning when an app doesn't meet the stricter `restricted` level. The controller logs each warning once, and also shows it in the deploy log of the app that caused it. |
+| `pod-security.kubernetes.io/warn` | `restricted` | Kubernetes returns a warning when an app doesn't meet the stricter `restricted` level. The controller logs each warning once, and also shows it in the deploy log of the app that caused it (see [Deploy log shows "would violate PodSecurity"](/docs/troubleshooting/deploy-issues#deploy-log-shows-would-violate-podsecurity)). |
 | `pod-security.kubernetes.io/audit` | `restricted` | Same check, recorded in the API server audit log together with the namespace and workload. Use this to find which apps could run in [hardened mode](/docs/security/hardened-mode). |
 
 Ordinary apps meet `baseline` without changes. Set the levels with the `controller.podSecurity.*` Helm values, or set one to `""` to drop that label. A namespace gets the new labels on its next deploy. Pods that are already running are never evicted.
