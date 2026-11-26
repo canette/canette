@@ -58,9 +58,9 @@ func TestStopDuringDeployThenRedeploy(t *testing.T) {
 	requireServing(t, a)
 }
 
-// Scenario 1 of #330: Stop while a build is running. The build doesn't go
-// live when it finishes (#354): it ends superseded and nothing is rolled
-// out. Deploying again brings the app up.
+// Scenario 1 of #330: Stop while a build is running. The build is cancelled
+// (#354), or if it finished first doesn't go live: either way it ends
+// superseded and nothing is rolled out. Deploying again brings the app up.
 func TestStopDuringBuildThenRedeploy(t *testing.T) {
 	p := newProject(t, "stop-build")
 	a := newApp(t, p, "web")

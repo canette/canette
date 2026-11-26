@@ -75,7 +75,7 @@ An access token is tied to the browser session you authorized it from. Signing o
 | `get_deployment` | Get the status and details of a deployment — provide `app_id` for the latest, or `deployment_id` for a specific one |
 | `get_build_logs` | Fetch the end of a deployment's build log (the last 200 lines by default, up to 2000 with `lines`; `offset` reads further back) — useful for diagnosing build failures |
 | `redeploy_deployment` | Deploy an already-built image again, without rebuilding, using the app's current settings and environment — to apply configuration changes, to roll back, or to start a stopped app |
-| `stop_app` | Take an app offline by stopping its live deployment. Builds and rollouts in progress don't go live afterwards, and the app, its settings and its volumes are kept ([details](#stopping-an-app)) |
+| `stop_app` | Take an app offline by stopping its live deployment. Builds in progress are cancelled and rollouts stopped, and the app, its settings and its volumes are kept ([details](#stopping-an-app)) |
 | `get_app` | Get an app's current state — live URL, custom hostnames, whether password protection is on, the live deployment serving traffic, the latest deployment and runtime health. Takes an `app_id`, or a `project_id` (ID or slug) with an `app_slug` |
 | `get_runtime_logs` | Fetch recent logs and pod status (restarts, `CrashLoopBackOff`, exit code) from the running app. Automatically returns the crashed container's logs when the app is crash-looping |
 | `get_app_metrics` | Get per-pod readiness, restarts, last termination reason (e.g. `OOMKilled`) and CPU/memory usage. Usage requires metrics-server on the cluster |
@@ -136,7 +136,7 @@ Agents can turn on [push-to-deploy](/docs/getting-started/webhooks) for a Git ap
 
 `stop_app` takes an app offline, like **Stop** in the UI: its live deployment is marked stopped, the live URL is cleared, and canette removes the running containers. The app, its settings, environment variables, secrets and volumes, including the data on persistent volumes, are kept.
 
-Only the live deployment is stopped. If the latest deploy failed after creating its resources, for example because its pods crash on start, canette removes those too. That deployment keeps its `failed` status and error. A build or rollout that is still running doesn't go live afterwards: a build that finishes keeps its image and ends `superseded`, and a rollout is stopped. To start the app again, the agent calls `redeploy_deployment` on the deployment that was live (`stop_app` returns its ID), which reuses the built image without a rebuild.
+Only the live deployment is stopped. If the latest deploy failed after creating its resources, for example because its pods crash on start, canette removes those too. That deployment keeps its `failed` status and error. A build that is still running is cancelled and ends `superseded`, and a rollout is stopped. To start the app again, the agent calls `redeploy_deployment` on the deployment that was live (`stop_app` returns its ID), which reuses the built image without a rebuild.
 
 ### Templates
 

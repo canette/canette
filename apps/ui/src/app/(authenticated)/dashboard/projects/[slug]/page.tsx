@@ -113,21 +113,21 @@ export default function ProjectPage() {
                         {app.deploymentType !== "web" && ` · ${app.deploymentType}`}
                       </div>
                     </div>
-                    {app.latestDeploymentStatus === "live" && (
+                    {app.lifecycleStatus === "live" && (
                       <RuntimeHealthIndicator
                         runtimeHealth={app.runtimeHealth}
                         runtimeHealthReason={app.runtimeHealthReason}
                         className="shrink-0"
                       />
                     )}
-                    {app.latestDeploymentStatus === "live" && (
+                    {app.lifecycleStatus === "live" && (
                       <KubernetesReadinessIndicator
                         kubernetesStatus={app.kubernetesStatus}
                         deploymentType={app.deploymentType}
                         className="shrink-0"
                       />
                     )}
-                    <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
+                    <StatusBadge status={app.lifecycleStatus} className="shrink-0" />
                   </div>
                   <div className="flex items-center gap-1.5 mt-2.5 text-xs text-tertiary font-mono truncate">
                     <span className="shrink-0">{app.sourceType === "image" ? "⛁" : "↗"}</span>

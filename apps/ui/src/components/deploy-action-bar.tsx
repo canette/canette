@@ -30,27 +30,29 @@ export function DeployActionBar({
   onStopClick,
 }: DeployActionBarProps) {
   const redeploying = !!currentDeployment && redeployingId === currentDeployment.id
+  // A new deployment replaces one still in progress, which then never goes live.
+  const replaceHint = hasActiveDeployment ? "Replaces the deployment in progress" : undefined
 
   return (
     <>
       {canRedeploy ? (
         <>
-          <Button size="sm" onClick={onDeploy} disabled={deploying}>
+          <Button size="sm" onClick={onDeploy} disabled={deploying} title={replaceHint}>
             {deploying
               ? (sourceType === "git" ? "Rebuilding…" : "Deploying…")
               : (sourceType === "git" ? "Rebuild" : "Deploy new")}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => currentDeployment && onRedeploy(currentDeployment.id)} disabled={redeploying}>
+          <Button size="sm" variant="outline" onClick={() => currentDeployment && onRedeploy(currentDeployment.id)} disabled={redeploying} title={replaceHint}>
             {redeploying ? "Redeploying…" : "Redeploy (no rebuild)"}
           </Button>
         </>
       ) : (
-        <Button size="sm" onClick={onDeploy} disabled={deploying || hasActiveDeployment}>
-          {deploying ? "Deploying…" : hasActiveDeployment ? "In progress…" : "Deploy"}
+        <Button size="sm" onClick={onDeploy} disabled={deploying} title={replaceHint}>
+          {deploying ? "Deploying…" : "Deploy"}
         </Button>
       )}
       <Button size="sm" variant="outline" onClick={onStopClick}
-        disabled={stopping || !currentDeployment || !["live", "failed"].includes(currentDeployment.status)}>
+        disabled={stopping || !currentDeployment || !(hasActiveDeployment || ["live", "failed"].includes(currentDeployment.status))}>
         Stop
       </Button>
     </>

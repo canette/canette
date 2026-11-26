@@ -63,7 +63,9 @@ LIFECYCLE_RUN='TestControllerCrash/after-claim' ./scripts/e2e/macos-lima.sh --li
 | `TestStopThenRedeploy` | A redeploy right after Stop goes live, and the stopped deployment's teardown doesn't touch the new Deployment (same UID and deployment for 3 polls). |
 | `TestKubernetesOutage` | With the controller's ClusterRoleBinding emptied, it logs that Kubernetes is unreachable, and once restored that it is reachable again. The REST API and MCP agree on the app's health throughout, and its pods don't change. With `LIFECYCLE_LONG=1`, the app also stays healthy past the stale window, reads unknown during the outage and healthy again after it. |
 | `TestStopDuringDeployThenRedeploy` | Stop during a rollout ends it `stopped` and tears it down, and a redeploy then goes live untouched (same UID for 3 polls). |
-| `TestStopDuringBuildThenRedeploy` | A build stopped while it runs ends `superseded` and nothing is rolled out. A redeploy of its image (or a new build, if it was skipped) goes live. |
+| `TestStopDuringBuildThenRedeploy` | A build stopped while it runs is cancelled and ends `superseded`, and nothing is rolled out. A new deploy (or a redeploy, if the build had finished) goes live. |
+| `TestDeployDuringBuild` | A deploy while a build runs cancels that build (`superseded`), and the newer deploy goes live. |
+| `TestDeployDuringRollout` | A deploy while a rollout runs lets the rollout finish, then replaces it once the newer build is ready (the earlier one ends `superseded`). |
 | `TestSlugReuseAfterDelete`, `TestVolumeRecreateSameName` | Skipped until [#333](https://github.com/canette/canette/issues/333). |
 | `TestStatus` | Skipped until [#332](https://github.com/canette/canette/issues/332) and [#334](https://github.com/canette/canette/issues/334). |
 

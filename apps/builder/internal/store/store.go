@@ -152,11 +152,12 @@ func (s *Store) MarkDeploying(ctx context.Context, deploymentID, imageDigest str
 	return nil
 }
 
-// SupersedeReplaced marks a claimed build superseded, and reports true, when
-// it is no longer what its app should run: a newer deploy replaced it, or the
-// app was stopped (#354). Not building it saves the work. It is only an early
-// exit: the controller never rolls out an attempt that isn't the target, so a
-// deploy or Stop that lands after this check is still honoured. A deployment
+// SupersedeReplaced marks a build superseded, and reports true, when it is
+// no longer what its app should run: a newer deploy replaced it, or the app
+// was stopped (#354). The builder checks before it starts the build and while
+// the build or scan runs, and stops the work when it reports true. It is only
+// a shortcut: the controller never rolls out an attempt that isn't the target,
+// so a deploy or Stop that lands after the last check is still honoured. A deployment
 // created after its app's intent was last written comes from an API that
 // predates intents and is built as before.
 func (s *Store) SupersedeReplaced(ctx context.Context, deploymentID string) (bool, error) {
@@ -164,7 +165,7 @@ func (s *Store) SupersedeReplaced(ctx context.Context, deploymentID string) (boo
 		UPDATE deployments d SET status = 'superseded', updated_at = $1
 		FROM app_intents i
 		WHERE d.id = $2 AND i.app_id = d.app_id
-		  AND d.status = 'building'
+		  AND d.status IN ('building', 'scanning')
 		  AND d.created_at <= i.updated_at
 		  AND (i.desired_state = 'stopped' OR i.target_deployment_id IS DISTINCT FROM d.id)`,
 		time.Now().UTC(), deploymentID)

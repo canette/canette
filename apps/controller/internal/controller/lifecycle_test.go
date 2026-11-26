@@ -158,12 +158,6 @@ func (f *lifecycleFixture) workloadExists() bool {
 	return err == nil
 }
 
-// dropOneActiveIndex lets an app have two attempts in progress, which the API
-// allows from part 3 of #354 on.
-func (f *lifecycleFixture) dropOneActiveIndex() {
-	f.exec(`DROP INDEX idx_deployments_one_active_per_app`)
-}
-
 func TestRunApp_DeploysTarget(t *testing.T) {
 	f := newLifecycleFixture(t)
 	f.deployment("old", "live")
@@ -254,7 +248,6 @@ func TestRunApp_StopDuringRollout(t *testing.T) {
 
 func TestRunApp_NewerTargetReadyDuringRollout(t *testing.T) {
 	f := newLifecycleFixture(t)
-	f.dropOneActiveIndex()
 	f.deployment("d1", "pending_deployment")
 	f.intent("running", "d1")
 	f.rollout(func(poll int) k8sres.RolloutStatus {
@@ -281,7 +274,6 @@ func TestRunApp_NewerTargetReadyDuringRollout(t *testing.T) {
 
 func TestRunApp_NewerTargetBuildingDuringRollout(t *testing.T) {
 	f := newLifecycleFixture(t)
-	f.dropOneActiveIndex()
 	f.deployment("d1", "pending_deployment")
 	f.intent("running", "d1")
 	f.rollout(func(poll int) k8sres.RolloutStatus {
@@ -320,7 +312,6 @@ func TestRunApp_NewerTargetBuildingDuringRollout(t *testing.T) {
 
 func TestDeploy_IntentChangedBeforeApply(t *testing.T) {
 	f := newLifecycleFixture(t)
-	f.dropOneActiveIndex()
 	f.deployment("d1", "pending_deployment")
 	f.intent("running", "d1")
 	lease := f.claim()

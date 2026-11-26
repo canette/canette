@@ -6,9 +6,11 @@ metadata:
   labels:
     {{- include "canette.labels" . | nindent 4 }}
 rules:
+  # delete: a build or scan replaced by a newer deploy or a Stop is cancelled
+  # by deleting its Job.
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch"]
+    verbs: ["create", "get", "list", "watch", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "get", "delete"]

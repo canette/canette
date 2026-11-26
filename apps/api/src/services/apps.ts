@@ -7,6 +7,7 @@ import { ServiceError } from "./errors"
 import { getReplicasFromCanetteConfig, validateCanetteConfigYaml } from "./canette-config"
 import { supportsForUpdate } from "../db/dialect"
 import { lockIntent } from "./intents"
+import { lifecycleStatus, type LifecycleColumns } from "./lifecycle-status"
 import { AUTHGATE_SIDECAR_PORT } from "./reserved-ports"
 import { credentialDestinationError } from "./git-credential-destination"
 import { isUniqueConstraintError } from "../db/errors"
@@ -16,13 +17,12 @@ import { isUniqueConstraintError } from "../db/errors"
 // latest_deployment_status is a computed column not in the base table, so we
 // extend. The kubernetes_status and runtime_health columns come from
 // app_observed_status, which the controller writes (see selectApps). They are
-// null when the app has no row there yet. runtime_live_url comes from
-// app_runtime (the controller's only writer of the URL) and desired_state from
-// app_intents.
-type AppRow = Selectable<Database["apps"]> & {
+// null when the app has no row there yet. runtime_live_url and the
+// LifecycleColumns come from app_runtime (the controller's side), app_intents
+// and the deployment the intent targets.
+type AppRow = Selectable<Database["apps"]> & LifecycleColumns & {
   latest_deployment_status?: string | null
   runtime_live_url?: string | null
-  desired_state?: string | null
   kubernetes_status?: string | null
   kubernetes_status_observed_at?: string | null
   runtime_health?: string | null
@@ -84,6 +84,7 @@ function mapApp(row: AppRow): App {
     // down and cleared the URL.
     liveUrl: row.desired_state === "stopped" ? undefined : (row.runtime_live_url ?? undefined),
     latestDeploymentStatus: (row.latest_deployment_status as App["latestDeploymentStatus"]) ?? undefined,
+    lifecycleStatus: lifecycleStatus(row),
     canetteConfig: row.canette_config ?? undefined,
     position: row.position,
     ...effectiveRuntimeHealth(row),
@@ -104,10 +105,15 @@ function selectApps(db: DB) {
     .leftJoin("app_observed_status as o", "o.app_id", "a.id")
     .leftJoin("app_runtime as r", "r.app_id", "a.id")
     .leftJoin("app_intents as i", "i.app_id", "a.id")
+    .leftJoin("deployments as t", "t.id", "i.target_deployment_id")
     .selectAll("a")
     .select([
       "r.live_url as runtime_live_url",
+      "r.reconciled_generation",
+      "r.applied_deployment_id",
       "i.desired_state",
+      "i.generation as intent_generation",
+      "t.status as target_status",
       "o.kubernetes_status",
       "o.kubernetes_status_observed_at",
       "o.runtime_health",

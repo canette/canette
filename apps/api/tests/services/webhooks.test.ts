@@ -267,22 +267,18 @@ describe("services/webhooks credential destination binding", () => {
       expect(await deploymentCount("push-stopped")).toBe(1)
     })
 
-    it("acknowledges a push while the latest deployment is queued", async () => {
+    it("a push while a deployment is still in progress supersedes it", async () => {
       for (const status of ["pending_build", "pending_deployment"] as const) {
         const id = `push-${status.replace("_", "-")}`
         await hookedApp(id)
         await insertDeployment(id, status)
-        expect(await push(id)).toEqual({ status: 200, message: "Deployment already in progress" })
-        expect(await deploymentCount(id)).toBe(1)
+        expect(await push(id)).toEqual({ status: 200, message: "Deployment triggered" })
+        expect(await deploymentCount(id)).toBe(2)
+        const newest = await db.selectFrom("deployments").select("id").where("app_id", "=", id)
+          .orderBy("created_at", "desc").limit(1).executeTakeFirstOrThrow()
+        const intent = await db.selectFrom("app_intents").select("target_deployment_id").where("app_id", "=", id).executeTakeFirstOrThrow()
+        expect(intent.target_deployment_id).toBe(newest.id)
       }
-    })
-
-    it("acknowledges a push while an older deployment is still in progress", async () => {
-      await hookedApp("push-older")
-      await insertDeployment("push-older", "pending_deployment")
-      await insertDeployment("push-older", "live")
-      expect(await push("push-older")).toEqual({ status: 200, message: "Deployment already in progress" })
-      expect(await deploymentCount("push-older")).toBe(2)
     })
   })
 })

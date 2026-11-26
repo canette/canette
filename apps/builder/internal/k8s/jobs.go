@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -320,6 +321,17 @@ func CreateGitCredSecret(
 	_, err := client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("create git cred secret: %w", err)
+	}
+	return nil
+}
+
+// DeleteJob deletes a Job and, through the garbage collector, its pods,
+// ignoring not-found errors.
+func DeleteJob(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
+	background := metav1.DeletePropagationBackground
+	err := client.BatchV1().Jobs(namespace).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &background})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete job %s: %w", name, err)
 	}
 	return nil
 }

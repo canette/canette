@@ -17,9 +17,13 @@ A **deployment** is a single attempt to build and ship a commit of an app.
 | `live` | Deployment is running and passing health checks |
 | `failed` | Build or deploy failed — see logs for details |
 | `stopped` | App was manually stopped — K8s resources have been torn down |
-| `superseded` | Replaced before it went live, by a Stop or a newer deployment, or replaced by a newer deployment that went live. A superseded build keeps its image, so it can be redeployed |
+| `superseded` | Replaced before it went live, by a Stop or a newer deployment, or replaced by a newer deployment that went live. A build that finished keeps its image, so it can be redeployed. A build cancelled while it ran has none |
 
-Stopping an app is final for the deployments in progress: a build that finishes afterwards doesn't go live, and a rollout is stopped. Only a new deploy or redeploy runs the app again.
+Stopping an app is final for the deployments in progress: a running build is cancelled, and a rollout is stopped. Only a new deploy or redeploy runs the app again.
+
+A new deploy or redeploy doesn't wait for one in progress: it replaces it. A build that is still running is cancelled. A rollout that is still running finishes first, because it is what serves until the new deployment is ready.
+
+The app's status in the UI and in the MCP `get_app` tool (`lifecycleStatus`) follows what the app should run, not its newest deployment: `building`, `deploying`, `live`, `failed`, `stopping` (stopped, still being torn down) or `stopped`.
 
 If the controller restarts during a rollout, the next controller picks the deployment up again within a few minutes and finishes it, rather than failing it.
 

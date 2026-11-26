@@ -2,6 +2,8 @@ package builder
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +29,8 @@ type fakeStore struct {
 	markedDeploy []string
 
 	replaced   map[string]bool // deployments SupersedeReplaced reports as replaced
+	replacedOn map[string]int  // ... from this call on (1 is the check before the build)
+	checks     map[string]int
 	superseded []string
 }
 
@@ -57,7 +61,11 @@ func (f *fakeStore) MarkDeploying(_ context.Context, id, _ string) error {
 	return nil
 }
 func (f *fakeStore) SupersedeReplaced(_ context.Context, id string) (bool, error) {
-	if f.replaced[id] {
+	if f.checks == nil {
+		f.checks = map[string]int{}
+	}
+	f.checks[id]++
+	if f.replaced[id] || (f.replacedOn[id] > 0 && f.checks[id] >= f.replacedOn[id]) {
 		f.superseded = append(f.superseded, id)
 		return true, nil
 	}
@@ -255,5 +263,31 @@ func TestBuildFlow_SkipsReplacedBuild(t *testing.T) {
 	}
 	if len(fs.superseded) != 1 || len(fs.markedFailed) != 0 || len(fs.markedDeploy) != 0 {
 		t.Errorf("superseded %v, failed %v, deploying %v; want only superseded", fs.superseded, fs.markedFailed, fs.markedDeploy)
+	}
+}
+
+// A build replaced while it runs has its Job deleted and ends superseded, not
+// failed.
+func TestBuildFlow_CancelsBuildReplacedWhileRunning(t *testing.T) {
+	dep := pendingDep("d59d1c36-0000-0000-0000-00000000000a")
+	fs := &fakeStore{deployments: []store.PendingDeployment{dep}, replacedOn: map[string]int{dep.ID: 2}}
+	k8s := fake.NewSimpleClientset()
+	b := newBuildFlowBuilder(t, fs, k8s, "static")
+	b.replacedCheckInterval = 20 * time.Millisecond
+
+	runBuildOnce(t, b) // the Job's pod never starts in the fake
+
+	jobs, err := k8s.BatchV1().Jobs("canette-system").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Errorf("%d Jobs left, want the build Job deleted", len(jobs.Items))
+	}
+	if len(fs.superseded) != 1 || len(fs.markedFailed) != 0 || len(fs.markedDeploy) != 0 {
+		t.Errorf("superseded %v, failed %v, deploying %v; want only superseded", fs.superseded, fs.markedFailed, fs.markedDeploy)
+	}
+	if !slices.ContainsFunc(fs.appendedLogs, func(l string) bool { return strings.Contains(l, "build cancelled") }) {
+		t.Errorf("logs %q, want a cancellation line", fs.appendedLogs)
 	}
 }

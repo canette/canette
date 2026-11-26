@@ -49,9 +49,10 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
   const latestDeployment = deploymentList[0]
   const currentDeployment = liveDeployment ?? latestDeployment
 
+  // A deployment in progress doesn't block a new one: it supersedes it.
   const canRedeployDeployment = useCallback(
-    (d?: Deployment) => !!(d?.imageDigest && !hasActiveDeployment && REDEPLOYABLE_STATUSES.includes(d.status)),
-    [hasActiveDeployment],
+    (d?: Deployment) => !!(d?.imageDigest && REDEPLOYABLE_STATUSES.includes(d.status)),
+    [],
   )
   const canRedeploy = canRedeployDeployment(currentDeployment)
 

@@ -3,7 +3,7 @@ import type { DB } from "../db/db"
 import type { WebhookConfig } from "@canette/types"
 import { encrypt, decrypt } from "../utils/crypto"
 import { ServiceError } from "./errors"
-import { ACTIVE_DEPLOYMENT_STATUSES, createDeployment } from "./deployments"
+import { createDeployment } from "./deployments"
 import { generateInstallationToken } from "./github-app-token"
 import { ALLOWED_ORIGINS_ENV, isAdminAllowedOrigin, normaliseHttpsOrigin } from "./git-credential-destination"
 
@@ -680,18 +680,9 @@ export async function processWebhookEvent(
   if (intent?.desired_state !== "running") {
     return { status: 200, message: NOT_RUNNING_MESSAGE }
   }
-  const latest = await db
-    .selectFrom("deployments")
-    .select("status")
-    .where("app_id", "=", appId)
-    .orderBy("created_at", "desc")
-    .limit(1)
-    .executeTakeFirst()
-  const latestStatus = latest?.status
-  if (latestStatus && (ACTIVE_DEPLOYMENT_STATUSES as readonly string[]).includes(latestStatus)) {
-    return { status: 200, message: "Deployment already in progress" }
-  }
   // ── Trigger deployment ────────────────────────────────────────────────────
+  // A deployment still in progress doesn't hold the push back: the new one
+  // supersedes it, so the newest push is what goes live (#354).
   try {
     await createDeployment(db, appId, null, {
       commitSha: headCommitSha,
@@ -702,11 +693,6 @@ export async function processWebhookEvent(
     // Stopped since the check above: the Stop wins.
     if (err instanceof ServiceError && err.code === "APP_NOT_RUNNING") {
       return { status: 200, message: NOT_RUNNING_MESSAGE }
-    }
-    // A deployment started since the check above (or an older one is still
-    // running). Not an error for the provider, which would retry it.
-    if (err instanceof ServiceError && err.code === "DEPLOYMENT_IN_PROGRESS") {
-      return { status: 200, message: "Deployment already in progress" }
     }
     throw err
   }

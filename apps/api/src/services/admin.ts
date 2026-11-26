@@ -6,6 +6,7 @@ import { sql } from "kysely"
 import { ServiceError } from "./errors"
 import { ACTIVE_DEPLOYMENT_STATUSES } from "./deployments"
 import { lockIntents, setIntent } from "./intents"
+import { lifecycleStatus, type LifecycleColumns } from "./lifecycle-status"
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
@@ -304,7 +305,7 @@ export async function getTeamMembersForAdmin(db: DB, teamId: string): Promise<Te
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
-interface AppOverviewRow {
+interface AppOverviewRow extends LifecycleColumns {
   id: string
   project_id: string
   name: string
@@ -332,10 +333,13 @@ export async function getProjectsOverview(db: DB): Promise<AdminProjectOverview[
       a.id, a.project_id, a.name, a.slug, a.source_type,
       CASE WHEN i.desired_state = 'stopped' THEN NULL ELSE r.live_url END AS live_url,
       d.status AS latest_status,
-      d.created_at AS latest_deployment_at
+      d.created_at AS latest_deployment_at,
+      i.desired_state, i.generation AS intent_generation, t.status AS target_status,
+      r.reconciled_generation, r.applied_deployment_id
     FROM apps a
     LEFT JOIN app_runtime r ON r.app_id = a.id
     LEFT JOIN app_intents i ON i.app_id = a.id
+    LEFT JOIN deployments t ON t.id = i.target_deployment_id
     LEFT JOIN deployments d ON d.id = (
       SELECT id FROM deployments
       WHERE app_id = a.id
@@ -353,6 +357,7 @@ export async function getProjectsOverview(db: DB): Promise<AdminProjectOverview[
       sourceType: r.source_type as "git" | "image",
       liveUrl: r.live_url ?? undefined,
       latestDeploymentStatus: (r.latest_status as DeploymentStatus) ?? undefined,
+      lifecycleStatus: lifecycleStatus(r),
       latestDeploymentAt: r.latest_deployment_at ?? undefined,
     }
     const list = appsByProject.get(r.project_id) ?? []
@@ -493,17 +498,12 @@ export async function resetStuckBuilds(db: DB): Promise<SyncResult> {
 
 export async function forceSyncLiveApps(db: DB): Promise<SyncResult> {
   const now = new Date().toISOString()
-  // Reset the latest-live deployment for every app back to 'pending_deployment'.
-  // The controller's ClaimDeploying query only claims rows in that state (it
-  // atomically transitions pending_deployment -> deploying itself); setting
-  // 'deploying' directly here would never be picked up and the row would be
-  // stuck forever.
-  // Server-side apply is idempotent — if resources are already correct this is a no-op.
-  // The self-referential subquery is kept as sql tag for clarity.
-  // Apps with a deployment still in progress (an older one left stuck) are
-  // skipped: only one may be in progress per app
-  // (idx_deployments_one_active_per_app), and a single conflicting row would
-  // fail the whole statement.
+  // Reset the latest-live deployment for every app back to 'pending_deployment'
+  // and make it the intent's target again, so the controller applies it once
+  // more. Server-side apply is idempotent — if resources are already correct
+  // this is a no-op. The self-referential subquery is kept as sql tag for
+  // clarity. Apps with a deployment still in progress are skipped: re-queueing
+  // the live one would supersede it.
   const synced = await db.transaction().execute(async (tx) => {
     // A re-queue is a lifecycle action, so it takes the intent locks first
     // (services/intents.ts): those of every app with a live deployment, a

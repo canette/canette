@@ -28,12 +28,12 @@ function projectColor(id: string): string {
 function projectAggregate(apps: App[]): { status: string; label: string } | null {
   if (apps.length === 0) return null
   const count = (pred: (s: string | undefined) => boolean) =>
-    apps.filter((a) => pred(a.latestDeploymentStatus)).length
+    apps.filter((a) => pred(a.lifecycleStatus)).length
   const failed = count((s) => s === "failed")
   if (failed > 0) return { status: "failed", label: `${failed} failed` }
-  const building = count((s) => !!s && ["pending_build", "building", "scanning", "pending_deployment", "deploying"].includes(s))
+  const building = count((s) => s === "building" || s === "deploying")
   if (building > 0) return { status: "building", label: `${building} building` }
-  const liveApps = apps.filter((a) => a.latestDeploymentStatus === "live")
+  const liveApps = apps.filter((a) => a.lifecycleStatus === "live")
   const unhealthy = liveApps.filter((a) => a.runtimeHealth === "unhealthy").length
   if (unhealthy > 0) return { status: "unhealthy", label: `${unhealthy} unhealthy` }
   if (liveApps.length > 0) return { status: "live", label: `${liveApps.length} live` }
@@ -147,19 +147,19 @@ export function ProjectList() {
                                 </span>
                                 <span className="text-[12.5px] font-medium font-mono truncate">{a.name}</span>
                                 <div className="ml-auto flex items-center gap-2 shrink-0">
-                                  {a.latestDeploymentStatus === "live" && (
+                                  {a.lifecycleStatus === "live" && (
                                     <RuntimeHealthIndicator
                                       runtimeHealth={a.runtimeHealth}
                                       runtimeHealthReason={a.runtimeHealthReason}
                                     />
                                   )}
-                                  {a.latestDeploymentStatus === "live" && (
+                                  {a.lifecycleStatus === "live" && (
                                     <KubernetesReadinessIndicator
                                       kubernetesStatus={a.kubernetesStatus}
                                       deploymentType={a.deploymentType}
                                     />
                                   )}
-                                  <StatusLabel status={a.latestDeploymentStatus} className="text-[11.5px]" />
+                                  <StatusLabel status={a.lifecycleStatus} className="text-[11.5px]" />
                                 </div>
                               </div>
                             ))}
