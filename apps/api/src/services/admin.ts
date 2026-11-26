@@ -329,10 +329,13 @@ export async function getProjectsOverview(db: DB): Promise<AdminProjectOverview[
   // as a sql tag — forcing it through Kysely's builder would be no clearer.
   const appsResult = await sql<AppOverviewRow>`
     SELECT
-      a.id, a.project_id, a.name, a.slug, a.source_type, a.live_url,
+      a.id, a.project_id, a.name, a.slug, a.source_type,
+      CASE WHEN i.desired_state = 'stopped' THEN NULL ELSE r.live_url END AS live_url,
       d.status AS latest_status,
       d.created_at AS latest_deployment_at
     FROM apps a
+    LEFT JOIN app_runtime r ON r.app_id = a.id
+    LEFT JOIN app_intents i ON i.app_id = a.id
     LEFT JOIN deployments d ON d.id = (
       SELECT id FROM deployments
       WHERE app_id = a.id
@@ -462,14 +465,11 @@ export async function setSignupMode(db: DB, mode: string): Promise<void> {
 
 // ── Reset stuck builds ────────────────────────────────────────────────────────
 
-// A deploying row whose heartbeat (claimed_at) is older than this was left
-// behind by a stopped controller. Matches DeployingHeartbeatTTL in
-// apps/controller/internal/store/store.go.
-export const DEPLOYING_HEARTBEAT_TTL_MS = 2 * 60 * 1000
-
+// resetStuckBuilds fails builds the builder left behind (it crashed mid
+// build). It leaves deploying rows alone: the controller resumes those itself
+// once the app's lease expires (#354).
 export async function resetStuckBuilds(db: DB): Promise<SyncResult> {
   const now = new Date()
-  const staleBefore = new Date(now.getTime() - DEPLOYING_HEARTBEAT_TTL_MS).toISOString()
   const result = await db
     .updateTable("deployments")
     .set({
@@ -477,18 +477,7 @@ export async function resetStuckBuilds(db: DB): Promise<SyncResult> {
       error_message: "Reset by admin: deployment was stuck in an intermediate state",
       updated_at: now.toISOString(),
     })
-    .where((eb) =>
-      eb.or([
-        eb("status", "in", ["building", "scanning"]),
-        // A deploying row the controller is still working on keeps its
-        // heartbeat fresh. Rows claimed before claimed_at existed fall back
-        // to updated_at, like the controller's own recovery.
-        eb.and([
-          eb("status", "=", "deploying"),
-          eb(eb.fn.coalesce("claimed_at", "updated_at"), "<", staleBefore),
-        ]),
-      ]),
-    )
+    .where("status", "in", ["building", "scanning"])
     .executeTakeFirst()
   const synced = Number(result.numUpdatedRows ?? 0n)
   return {

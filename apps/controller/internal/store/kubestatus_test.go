@@ -7,19 +7,28 @@ import (
 	"time"
 )
 
-func TestGetCurrentDeployments_IncludesProjectSlug(t *testing.T) {
+func TestGetCurrentDeployments(t *testing.T) {
 	s, db := testStore(t)
-	insertDeployment(t, db, "live", "live", validSnapshot, nil, time.Now())
-	insertDeployment(t, db, "stopped", "stopped", validSnapshot, nil, time.Now())
+	addLifecycleApp(t, db, lifecycleApp{id: "running", desired: "running", generation: 2, target: "rolling"},
+		[2]string{"serving", "live"}, [2]string{"rolling", "deploying"})
+	addLifecycleApp(t, db, lifecycleApp{id: "stopping", desired: "stopped", generation: 2},
+		[2]string{"stopping-d", "live"})
+	addLifecycleApp(t, db, lifecycleApp{id: "never", desired: "running", generation: 1})
+	if _, err := db.Exec(`UPDATE app_runtime SET applied_deployment_id = CASE app_id
+		WHEN 'running' THEN 'serving' WHEN 'stopping' THEN 'stopping-d' END`); err != nil {
+		t.Fatal(err)
+	}
 
 	deps, err := s.GetCurrentDeployments(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The applied deployment, not the rollout in progress, and nothing for an
+	// app that is being stopped.
 	if len(deps) != 1 {
-		t.Fatalf("got %+v, want only the live deployment", deps)
+		t.Fatalf("got %+v, want only the running app", deps)
 	}
-	if d := deps[0]; d.DeploymentID != "live" || d.ProjectID != "p1" || d.ProjectSlug != "p" || d.AppSlug != "live" {
+	if d := deps[0]; d.DeploymentID != "serving" || d.AppID != "running" || d.ProjectID != "p1" || d.ProjectSlug != "p" || d.AppSlug != "running" {
 		t.Errorf("got %+v", d)
 	}
 }

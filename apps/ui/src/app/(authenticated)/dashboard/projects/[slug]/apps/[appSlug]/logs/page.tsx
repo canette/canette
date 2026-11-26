@@ -67,7 +67,7 @@ export default function LogsPage() {
   }, [loadingDeps, deploymentList, searchParams])
 
   const selectedDeployment = deploymentList.find((d) => d.id === selectedDeploymentId) ?? null
-  const isTerminalStatus = selectedDeployment ? ["live", "failed", "stopped"].includes(selectedDeployment.status) : false
+  const isTerminalStatus = selectedDeployment ? ["live", "failed", "stopped", "superseded"].includes(selectedDeployment.status) : false
 
   // build mode: fetch + poll
   useEffect(() => {

@@ -40,22 +40,31 @@ type Config struct {
 	StorageClassName        string // PVC storage class for new volumes; empty uses the cluster default
 }
 
-// Controller polls for deploying deployments and reconciles them.
+// Controller polls for apps whose intent needs work and reconciles them.
 type Controller struct {
-	store      *store.Store
-	client     kubernetes.Interface
-	dynClient  dynamic.Interface
-	cfg        Config
-	cryptoKey  []byte
-	log        *zap.Logger
-	inProgress sync.Map // deploymentID → struct{}{}
+	store     *store.Store
+	client    kubernetes.Interface
+	dynClient dynamic.Interface
+	cfg       Config
+	cryptoKey []byte
+	log       *zap.Logger
 
-	// deploySlots bounds the reconciles running at once to MaxConcurrent,
+	// appSlots bounds the app workers running at once to MaxConcurrent,
 	// across poll cycles. Only processPending acquires a slot, so the number
 	// of free slots it sees can only grow before it claims.
-	deploySlots chan struct{}
-	deploying   sync.Map // deploymentID → struct{}{}, reconciles running in this process
-	workers     sync.WaitGroup
+	appSlots chan struct{}
+	working  sync.Map // appID → struct{}{}, app workers running in this process
+	workers  sync.WaitGroup
+
+	// applyAll and checkRollout are k8sres.ApplyAll and k8sres.CheckRollout.
+	// Tests replace them, because the fake dynamic client can't server-side
+	// apply and the fake clientset has no rollout controller.
+	applyAll     func(context.Context, dynamic.Interface, k8sres.AppResources) error
+	checkRollout func(ctx context.Context, client kubernetes.Interface, namespace, name, deploymentID string) (k8sres.RolloutStatus, error)
+
+	// rolloutPollInterval is how often a worker checks a rollout (and the
+	// app's intent) while it waits.
+	rolloutPollInterval time.Duration
 
 	// onDeployLive, if set, is called right after a deployment is marked
 	// live — lets the health watcher learn about it immediately instead of
@@ -76,14 +85,17 @@ func New(
 	onDeployLive func(),
 ) *Controller {
 	return &Controller{
-		deploySlots:  make(chan struct{}, max(cfg.MaxConcurrent, 1)),
-		store:        s,
-		client:       client,
-		dynClient:    dynClient,
-		cfg:          cfg,
-		cryptoKey:    cryptoKey,
-		log:          log,
-		onDeployLive: onDeployLive,
+		appSlots:            make(chan struct{}, max(cfg.MaxConcurrent, 1)),
+		store:               s,
+		client:              client,
+		dynClient:           dynClient,
+		cfg:                 cfg,
+		cryptoKey:           cryptoKey,
+		log:                 log,
+		applyAll:            k8sres.ApplyAll,
+		checkRollout:        k8sres.CheckRollout,
+		rolloutPollInterval: 3 * time.Second,
+		onDeployLive:        onDeployLive,
 	}
 }
 
@@ -105,6 +117,14 @@ func (c *Controller) Run(ctx context.Context) error {
 		zap.Int("max_concurrent", c.cfg.MaxConcurrent),
 	)
 
+	// Leases left by the previous controller process are dead: resume their
+	// apps now rather than when the leases expire.
+	if n, err := c.store.ReleaseAllLeases(ctx); err != nil {
+		c.log.Warn("release leases of the previous controller failed; they expire on their own", zap.Error(err))
+	} else if n > 0 {
+		c.log.Info("resuming apps the previous controller was working on", zap.Int64("apps", n))
+	}
+
 	// Workers run on their own context, so a shutdown gives a rollout that is
 	// nearly done the chance to finish instead of failing it straight away.
 	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
@@ -121,7 +141,7 @@ func (c *Controller) Run(ctx context.Context) error {
 				c.log.Warn("workers still running, cancelling them")
 				cancelWork()
 				if !c.waitWorkers(shutdownFailTimeout) {
-					c.log.Warn("workers did not stop in time; their deployments are failed by the next controller")
+					c.log.Warn("workers did not stop in time; the next controller resumes their apps once their leases expire")
 				}
 			}
 			return nil
@@ -158,11 +178,10 @@ func (c *Controller) goWorker(fn func()) {
 	}()
 }
 
-// runningDeployments returns the IDs of the deployments this process is
-// reconciling.
-func (c *Controller) runningDeployments() []string {
+// runningApps returns the IDs of the apps this process has workers for.
+func (c *Controller) runningApps() []string {
 	var ids []string
-	c.deploying.Range(func(k, _ any) bool {
+	c.working.Range(func(k, _ any) bool {
 		ids = append(ids, k.(string))
 		return true
 	})
@@ -172,54 +191,38 @@ func (c *Controller) runningDeployments() []string {
 // processPending claims queued work and starts a worker for each item. Claims
 // run on ctx, which stops on shutdown; workers run on workCtx (see Run).
 func (c *Controller) processPending(ctx, workCtx context.Context) error {
-	// Fail deployments a crashed or killed controller left in deploying, so
-	// the app can be deployed again.
-	recovered, err := c.store.RecoverAbandonedDeploying(ctx, c.runningDeployments())
+	// Attempts that finished building after a newer deploy or a Stop never
+	// roll out.
+	superseded, err := c.store.SweepSuperseded(ctx)
 	if err != nil {
-		c.log.Error("recover abandoned deployments error", zap.Error(err))
+		c.log.Error("sweep superseded deployments error", zap.Error(err))
 	}
-	for _, id := range recovered {
-		c.log.Warn("deployment abandoned by a stopped controller, marked failed", zap.String("deployment", id))
+	for _, id := range superseded {
+		c.log.Info("deployment superseded before it was rolled out", zap.String("deployment", id))
 	}
 
-	// ClaimDeploying atomically transitions pending_deployment → deploying
-	// (UPDATE ... FOR UPDATE SKIP LOCKED), so each row is claimed by exactly
-	// one controller instance even when multiple are running. Only as many
-	// rows are claimed as there are free slots, so a claimed row never waits.
-	free := cap(c.deploySlots) - len(c.deploySlots)
-	deps, err := c.store.ClaimDeploying(ctx, free)
+	// ClaimApps leases apps whose intent needs work (UPDATE ... FOR UPDATE
+	// SKIP LOCKED), so each app has one worker even with several controllers,
+	// and a crashed controller's apps are claimed again once their leases
+	// expire. Only as many apps are claimed as there are free slots, so a
+	// claimed app never waits.
+	free := cap(c.appSlots) - len(c.appSlots)
+	leases, err := c.store.ClaimApps(ctx, free, c.runningApps())
 	if err != nil {
 		return err
 	}
-	if len(deps) > 0 {
+	if len(leases) > 0 {
 		failpoint.Hit("after-claim")
 	}
-	for _, dep := range deps {
-		c.deploySlots <- struct{}{}
-		c.deploying.Store(dep.ID, struct{}{})
+	for _, lease := range leases {
+		c.appSlots <- struct{}{}
+		c.working.Store(lease.AppID, struct{}{})
 		c.goWorker(func() {
 			defer func() {
-				c.deploying.Delete(dep.ID)
-				<-c.deploySlots
+				c.working.Delete(lease.AppID)
+				<-c.appSlots
 			}()
-			c.reconcile(workCtx, dep)
-		})
-	}
-
-	// Tear down stopped deployments.
-	stopped, err := c.store.ClaimTeardown(ctx, c.cfg.MaxConcurrent)
-	if err != nil {
-		c.log.Error("claim teardown error", zap.Error(err))
-		// non-fatal: continue with deploy pass
-	}
-	for _, dep := range stopped {
-		key := "teardown:" + dep.ID
-		if _, loaded := c.inProgress.LoadOrStore(key, struct{}{}); loaded {
-			continue
-		}
-		c.goWorker(func() {
-			defer c.inProgress.Delete("teardown:" + dep.ID)
-			c.runTeardown(workCtx, dep)
+			c.runApp(workCtx, lease)
 		})
 	}
 

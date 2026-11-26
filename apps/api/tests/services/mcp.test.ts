@@ -929,7 +929,13 @@ describe("services/mcp runtime diagnostics", () => {
         })
         const live = await insertDeployment(app.id, "live")
         const building = await insertDeployment(app.id, "building")
-        await db.updateTable("apps").set({ live_url: "https://demo.example.com" }).where("id", "=", app.id).execute()
+        // What the controller recorded when the live deployment rolled out.
+        await db.insertInto("app_runtime")
+          .values({ app_id: app.id, reconciled_generation: 0, applied_deployment_id: live, live_url: "https://demo.example.com" })
+          .execute()
+        await db.updateTable("app_intents").set({ desired_state: "running" }).where("app_id", "=", app.id).execute()
+        const before = JSON.parse(text(await handleTool("get_app", { app_id: app.id }, "userId")))
+        expect(before.liveUrl).toBe("https://demo.example.com")
 
         const result = await handleTool("stop_app", { app_id: app.id }, "userId")
         expect(result.isError).toBeUndefined()
@@ -939,6 +945,7 @@ describe("services/mcp runtime diagnostics", () => {
 
         expect(await statusOf(live)).toBe("stopped")
         expect(await statusOf(building)).toBe("building")
+        // Hidden at once, before the controller has torn the app down.
         const after = JSON.parse(text(await handleTool("get_app", { app_id: app.id }, "userId")))
         expect(after.liveUrl ?? null).toBeNull()
         expect(after.liveDeployment).toBeNull()

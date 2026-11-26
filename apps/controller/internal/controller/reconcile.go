@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -16,42 +17,246 @@ import (
 	"canette.dev/lib/crypto"
 )
 
-func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeployment) {
-	log := c.log.With(
+// rolloutTimeout bounds the wait for a rollout. K8s progressDeadlineSeconds
+// defaults to 600s (10min); the timeout must exceed that so we see the real
+// ProgressDeadlineExceeded condition rather than timing out first.
+const rolloutTimeout = 12 * time.Minute
+
+// deploy rolls out the intent's target: claims it if it is still waiting,
+// applies its resources inside a fenced step and waits for the rollout. An
+// attempt that is already deploying (after a crash) or live (a repair) is
+// applied again, which server-side apply makes safe.
+func (c *Controller) deploy(ctx context.Context, log *zap.Logger, lease store.Lease, in *store.Intent) bool {
+	dep := *in.Target
+	generation := in.Generation
+	log = log.With(
 		zap.String("deployment", dep.ID),
 		zap.String("app", dep.AppSlug),
 		zap.String("project", dep.ProjectSlug),
 	)
+	if in.TargetErr != nil {
+		c.failDeploy(ctx, log, lease, generation, dep.ID, in.TargetErr)
+		return false
+	}
+	if in.TargetStatus == "pending_deployment" {
+		started, err := c.store.StartDeploying(ctx, dep.ID)
+		if err != nil {
+			log.Warn("start deploying error", zap.Error(err))
+			return false
+		}
+		if !started {
+			return true // swept or changed since the intent was read
+		}
+	}
 
-	stopHeartbeat := c.startHeartbeat(ctx, log, dep.ID)
-	defer stopHeartbeat()
+	res, deployCfg, appCfg, err := c.prepare(ctx, log, dep)
+	if err != nil {
+		c.failDeploy(ctx, log, lease, generation, dep.ID, err)
+		return false
+	}
 
-	var lastErr error
-	defer func() {
-		if lastErr != nil {
-			if ctx.Err() != nil {
-				// Whatever failed, it failed because the controller is
-				// shutting down (see Controller.Run).
-				lastErr = errors.New("controller shut down during this deployment; redeploy to retry")
-			}
-			log.Error("reconcile failed", zap.Error(lastErr))
-			// ctx may be cancelled: write the failure on a context of its own.
-			failCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markFailedTimeout)
-			defer cancel()
-			if err := c.store.MarkFailed(failCtx, dep.ID, lastErr.Error()); err != nil {
-				log.Error("failed to mark deployment failed", zap.Error(err))
+	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
+	c.appendLog(ctx, log, dep.ID, "controller", "Applying Kubernetes resources...")
+	var warnings *k8sres.WarningCollector
+	err = c.store.Fence(ctx, lease, generation, func(ctx context.Context) error {
+		var applyCtx context.Context
+		applyCtx, warnings = k8sres.WithWarningCollector(ctx)
+		return c.applyAll(applyCtx, c.dynClient, res)
+	})
+	if errors.Is(err, store.ErrIntentChanged) {
+		c.appendLog(ctx, log, dep.ID, "controller", "The app's intent changed before this deployment was applied")
+		return c.retire(ctx, log, dep.AppID, dep.ID)
+	}
+	if again, handled := c.fenceOutcome(ctx, log, err); handled {
+		return again
+	}
+	if err != nil {
+		c.failDeploy(ctx, log, lease, generation, dep.ID, fmt.Errorf("apply resources: %w", err))
+		return false
+	}
+	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
+	if psa := warnings.PodSecurityWarnings(); len(psa) > 0 {
+		enforce := c.cfg.NamespacePolicy.PodSecurity.Enforce
+		for _, line := range podSecurityLogLines(psa, enforce, appCfg.Security != nil) {
+			c.appendLog(ctx, log, dep.ID, "controller", line)
+		}
+	}
+
+	// CronJobs have no Deployment to roll out.
+	var livePodName string
+	if !deployCfg.IsCronJob {
+		r := c.waitRollout(ctx, log, dep, &generation)
+		switch {
+		case r.interrupted:
+			return r.again
+		case r.err != nil:
+			c.failDeploy(ctx, log, lease, generation, dep.ID, r.err)
+			return false
+		}
+		livePodName = r.podName
+	}
+
+	var liveURL sql.NullString
+	if !deployCfg.IsCronJob && !deployCfg.SkipHTTPRoute {
+		liveURL = sql.NullString{String: fmt.Sprintf("https://%s-%s.%s", dep.AppSlug, dep.ProjectSlug, c.cfg.ClusterDomain), Valid: true}
+	}
+	if err := c.store.FinishDeploy(ctx, lease, generation, dep.ID, liveURL); err != nil {
+		if errors.Is(err, store.ErrNotDeploying) {
+			// Superseded or stopped meanwhile: leave its status alone and
+			// don't publish a URL for it.
+			log.Warn("rollout finished, but the deployment is no longer deploying; not marking it live")
+			c.appendLog(ctx, log, dep.ID, "controller",
+				"Rollout finished, but this deployment was no longer in progress, so it was not marked live")
+			return true
+		}
+		if !errors.Is(err, store.ErrLeaseLost) {
+			log.Error("record rollout success failed", zap.Error(err))
+		}
+		return false
+	}
+	if c.onDeployLive != nil {
+		c.onDeployLive()
+	}
+
+	switch {
+	case deployCfg.IsCronJob:
+		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("CronJob scheduled with expression: %s", deployCfg.Schedule))
+		log.Info("cronjob deployment live", zap.String("schedule", deployCfg.Schedule))
+	case deployCfg.SkipHTTPRoute:
+		clusterDNS := fmt.Sprintf("%s.%s.svc.cluster.local", dep.AppSlug, appNS)
+		msg := fmt.Sprintf("Private deployment live. Reachable at %s", clusterDNS)
+		if livePodName != "" {
+			msg = fmt.Sprintf("%s (pod %s)", msg, livePodName)
+		}
+		c.appendLog(ctx, log, dep.ID, "controller", msg)
+		log.Info("deployment live (private)", zap.String("cluster_dns", clusterDNS), zap.String("pod", livePodName))
+	default:
+		msg := fmt.Sprintf("Deployment live at %s", liveURL.String)
+		if livePodName != "" {
+			msg = fmt.Sprintf("%s (pod %s)", msg, livePodName)
+		}
+		c.appendLog(ctx, log, dep.ID, "controller", msg)
+		log.Info("deployment live", zap.String("url", liveURL.String), zap.String("pod", livePodName))
+	}
+	return true
+}
+
+// rolloutResult is how waitRollout ended. interrupted means the wait was
+// given up without a verdict (the app is needed for something else, the
+// lease was lost, or shutdown), and again whether to read the intent again.
+// Otherwise err is nil for a successful rollout.
+type rolloutResult struct {
+	interrupted bool
+	again       bool
+	err         error
+	podName     string
+}
+
+// waitRollout polls the rollout until it finishes, checking the intent on
+// every poll:
+//
+//   - Stop: give up the wait, the next step tears the app down.
+//   - A newer target that is ready to roll out: supersede this attempt and
+//     give up the wait, the next step rolls the newer one out.
+//   - A newer target still being built: keep waiting, because this attempt is
+//     what will serve until the newer one is ready.
+//   - The same target at a newer generation (a repair): carry on, counting
+//     the work as done up to the newer generation.
+func (c *Controller) waitRollout(ctx context.Context, log *zap.Logger, dep store.DeployingDeployment, generation *int64) rolloutResult {
+	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
+	deadline := time.Now().Add(rolloutTimeout)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return rolloutResult{interrupted: true}
+		}
+		status, err := c.checkRollout(ctx, c.client, appNS, dep.AppSlug, dep.ID)
+		if err != nil {
+			log.Warn("check rollout error", zap.Error(err))
+		} else {
+			c.appendLog(ctx, log, dep.ID, "controller", status.Message)
+			if status.Done {
+				if status.Succeeded {
+					return rolloutResult{podName: status.PodName}
+				}
+				return rolloutResult{err: fmt.Errorf("rollout failed: %s", status.Message)}
 			}
 		}
-	}()
 
+		cur, err := c.store.ReadIntent(ctx, dep.AppID)
+		switch {
+		case err != nil:
+			if ctx.Err() != nil {
+				return rolloutResult{interrupted: true}
+			}
+			log.Warn("read intent during rollout failed", zap.Error(err))
+		case cur == nil:
+			return rolloutResult{interrupted: true} // the app was deleted
+		case cur.Desired == "stopped":
+			c.appendLog(ctx, log, dep.ID, "controller", "The app was stopped during the rollout")
+			return rolloutResult{interrupted: true, again: true}
+		case cur.Target != nil && cur.Target.ID == dep.ID:
+			*generation = cur.Generation
+		case cur.Target != nil && cur.TargetStatus == "pending_deployment":
+			c.appendLog(ctx, log, dep.ID, "controller", "A newer deployment is ready, so this one is superseded")
+			if err := c.store.Supersede(ctx, dep.ID); err != nil {
+				log.Warn("supersede error", zap.Error(err))
+			}
+			return rolloutResult{interrupted: true, again: true}
+		}
+
+		select {
+		case <-ctx.Done():
+			return rolloutResult{interrupted: true}
+		case <-time.After(c.rolloutPollInterval):
+		}
+	}
+	return rolloutResult{err: fmt.Errorf("rollout timed out after %s", rolloutTimeout)}
+}
+
+// retire handles an attempt whose fenced apply was refused because the intent
+// moved on: unless the attempt is still the target, it is superseded. A Stop
+// leaves it to the stop step, which records it as stopped.
+func (c *Controller) retire(ctx context.Context, log *zap.Logger, appID, deploymentID string) bool {
+	in, err := c.store.ReadIntent(ctx, appID)
+	if err != nil {
+		log.Warn("read intent failed", zap.Error(err))
+		return false
+	}
+	if in == nil {
+		return false
+	}
+	if in.Desired == "running" && (in.Target == nil || in.Target.ID != deploymentID) {
+		if err := c.store.Supersede(ctx, deploymentID); err != nil {
+			log.Warn("supersede error", zap.Error(err))
+		}
+	}
+	return true
+}
+
+// failDeploy records the attempt's failure. A failure caused by shutdown is
+// not recorded: the lease is given up and the next controller resumes.
+func (c *Controller) failDeploy(ctx context.Context, log *zap.Logger, lease store.Lease, generation int64, deploymentID string, cause error) {
+	if ctx.Err() != nil {
+		return
+	}
+	log.Error("reconcile failed", zap.Error(cause))
+	if err := c.store.FailDeploy(ctx, lease, generation, deploymentID, cause.Error()); err != nil && !errors.Is(err, store.ErrLeaseLost) {
+		log.Error("failed to mark deployment failed", zap.Error(err))
+	}
+}
+
+// prepare reads the attempt's config and secrets and builds its resources,
+// storing the redacted manifest before anything is applied, so it survives a
+// failed apply.
+func (c *Controller) prepare(ctx context.Context, log *zap.Logger, dep store.DeployingDeployment) (k8sres.AppResources, k8sres.DeployConfig, *store.AppConfig, error) {
+	var none k8sres.AppResources
 	// 1. Fetch app config.
 	appCfg, cfgErr := c.store.GetAppConfig(ctx, dep)
 	// An invalid security block fails the deployment instead of deploying
 	// without the hardening the user asked for.
 	var secErr *config.SecurityError
 	if errors.As(cfgErr, &secErr) {
-		lastErr = fmt.Errorf("invalid canette.yaml: %s", secErr.Msg)
-		return
+		return none, k8sres.DeployConfig{}, nil, fmt.Errorf("invalid canette.yaml: %s", secErr.Msg)
 	}
 	for _, w := range appCfg.ConfigWarnings {
 		c.appendLog(ctx, log, dep.ID, "controller", "Warning: canette.yaml "+w)
@@ -66,16 +271,14 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	// 2. Fetch and decrypt secrets.
 	secrets, err := c.store.GetSecrets(ctx, dep.AppID)
 	if err != nil {
-		lastErr = fmt.Errorf("get secrets: %w", err)
-		return
+		return none, k8sres.DeployConfig{}, nil, fmt.Errorf("get secrets: %w", err)
 	}
 	secretData := make(map[string][]byte, len(secrets))
 	for _, sec := range secrets {
 		decrypted, err := crypto.Decrypt(sec.EncryptedValue, c.cryptoKey)
 		if err != nil {
 			log.Error("failed to decrypt secret", zap.String("key", sec.Key), zap.Error(err))
-			lastErr = fmt.Errorf("failed to decrypt app secrets")
-			return
+			return none, k8sres.DeployConfig{}, nil, fmt.Errorf("failed to decrypt app secrets")
 		}
 		secretData[sec.Key] = []byte(decrypted)
 	}
@@ -131,143 +334,7 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 			log.Warn("failed to store manifest", zap.Error(err))
 		}
 	}
-
-	// 6. Apply all resources via server-side apply.
-	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
-	c.appendLog(ctx, log, dep.ID, "controller", "Applying Kubernetes resources...")
-	applyCtx, warnings := k8sres.WithWarningCollector(ctx)
-	if err := k8sres.ApplyAll(applyCtx, c.dynClient, res); err != nil {
-		lastErr = fmt.Errorf("apply resources: %w", err)
-		return
-	}
-	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
-	if psa := warnings.PodSecurityWarnings(); len(psa) > 0 {
-		enforce := c.cfg.NamespacePolicy.PodSecurity.Enforce
-		for _, line := range podSecurityLogLines(psa, enforce, appCfg.Security != nil) {
-			c.appendLog(ctx, log, dep.ID, "controller", line)
-		}
-	}
-
-	// 7. Watch rollout — skipped for CronJobs (no Deployment to roll out).
-	var livePodName string
-	if !isCronJob {
-		// Poll every 3s, timeout 12min.
-		// K8s progressDeadlineSeconds defaults to 600s (10min); our timeout must exceed that
-		// so we see the real ProgressDeadlineExceeded condition rather than timing out first.
-		deadline := time.Now().Add(12 * time.Minute)
-		for time.Now().Before(deadline) {
-			select {
-			case <-ctx.Done():
-				lastErr = ctx.Err()
-				return
-			default:
-			}
-
-			status, err := k8sres.CheckRollout(ctx, c.client, appNS, dep.AppSlug, dep.ID)
-			if err != nil {
-				log.Warn("check rollout error", zap.Error(err))
-			} else {
-				c.appendLog(ctx, log, dep.ID, "controller", status.Message)
-				if status.Done {
-					if status.Succeeded {
-						livePodName = status.PodName
-						break
-					}
-					lastErr = fmt.Errorf("rollout failed: %s", status.Message)
-					return
-				}
-			}
-			select {
-			case <-ctx.Done():
-			case <-time.After(3 * time.Second):
-			}
-		}
-
-		if time.Now().After(deadline) {
-			lastErr = fmt.Errorf("rollout timed out after 12 minutes")
-			return
-		}
-	}
-
-	// 8. Mark live and set URL.
-	if err := c.store.MarkLive(ctx, dep.ID); err != nil {
-		if errors.Is(err, store.ErrNotDeploying) {
-			// Already failed (its heartbeat expired) or otherwise moved on: leave
-			// its status alone and don't publish a URL for it.
-			log.Warn("rollout finished, but the deployment is no longer deploying; not marking it live")
-			c.appendLog(ctx, log, dep.ID, "controller",
-				"Rollout finished, but this deployment was no longer in progress, so it was not marked live")
-			return
-		}
-		lastErr = fmt.Errorf("mark live: %w", err)
-		return
-	}
-	if c.onDeployLive != nil {
-		c.onDeployLive()
-	}
-
-	if isCronJob {
-		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf("CronJob scheduled with expression: %s", deployCfg.Schedule))
-		log.Info("cronjob deployment live", zap.String("schedule", deployCfg.Schedule))
-	} else if deployCfg.SkipHTTPRoute {
-		if err := c.store.ClearAppLiveURL(ctx, dep.AppID); err != nil {
-			log.Warn("failed to clear live url", zap.Error(err))
-		}
-		clusterDNS := fmt.Sprintf("%s.%s.svc.cluster.local", dep.AppSlug, appNS)
-		msg := fmt.Sprintf("Private deployment live. Reachable at %s", clusterDNS)
-		if livePodName != "" {
-			msg = fmt.Sprintf("%s (pod %s)", msg, livePodName)
-		}
-		c.appendLog(ctx, log, dep.ID, "controller", msg)
-		log.Info("deployment live (private)", zap.String("cluster_dns", clusterDNS), zap.String("pod", livePodName))
-	} else {
-		liveURL := fmt.Sprintf("https://%s-%s.%s", dep.AppSlug, dep.ProjectSlug, c.cfg.ClusterDomain)
-		if err := c.store.SetAppLiveURL(ctx, dep.AppID, liveURL); err != nil {
-			log.Warn("failed to set live url", zap.Error(err))
-		}
-		msg := fmt.Sprintf("Deployment live at %s", liveURL)
-		if livePodName != "" {
-			msg = fmt.Sprintf("%s (pod %s)", msg, livePodName)
-		}
-		c.appendLog(ctx, log, dep.ID, "controller", msg)
-		log.Info("deployment live", zap.String("url", liveURL), zap.String("pod", livePodName))
-	}
-	lastErr = nil
-}
-
-// heartbeatInterval is how often a running reconcile refreshes its
-// deployment's heartbeat. Well within store.DeployingHeartbeatTTL, so a few
-// failed writes in a row don't get the deployment failed as abandoned.
-const heartbeatInterval = 15 * time.Second
-
-// markFailedTimeout bounds the write of a deployment's failure status.
-const markFailedTimeout = 5 * time.Second
-
-// startHeartbeat refreshes the deployment's heartbeat every heartbeatInterval
-// until the returned stop function is called. It runs for the whole reconcile,
-// not just the rollout poll, so a slow apply is not mistaken for a crash.
-func (c *Controller) startHeartbeat(ctx context.Context, log *zap.Logger, deploymentID string) (stop func()) {
-	hbCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(heartbeatInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-hbCtx.Done():
-				return
-			case <-ticker.C:
-				if err := c.store.Heartbeat(hbCtx, deploymentID); err != nil && hbCtx.Err() == nil {
-					log.Warn("deployment heartbeat failed", zap.Error(err))
-				}
-			}
-		}
-	}()
-	return func() {
-		cancel()
-		<-done
-	}
+	return res, deployCfg, appCfg, nil
 }
 
 func (c *Controller) appendLog(ctx context.Context, log *zap.Logger, deploymentID, stream, line string) {

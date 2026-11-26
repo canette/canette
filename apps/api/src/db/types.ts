@@ -262,6 +262,19 @@ export interface Database {
     updated_by: string | null
   }
 
+  // What the controller has done about the app's intent (#354), written only
+  // by the controller, which creates the row on first use, so read it with a
+  // LEFT JOIN. generation columns are BIGINTs, returned as strings by pg.
+  app_runtime: {
+    app_id: string
+    reconciled_generation: string | number
+    applied_deployment_id: string | null
+    live_url: string | null
+    lease_token: string | null
+    claimed_at: string | null
+    last_error: string | null
+  }
+
   // Written only by the controller (what it observed in Kubernetes). A row
   // exists once the controller has written one, so read it with a LEFT JOIN.
   app_observed_status: {

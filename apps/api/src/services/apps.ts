@@ -16,9 +16,13 @@ import { isUniqueConstraintError } from "../db/errors"
 // latest_deployment_status is a computed column not in the base table, so we
 // extend. The kubernetes_status and runtime_health columns come from
 // app_observed_status, which the controller writes (see selectApps). They are
-// null when the app has no row there yet.
+// null when the app has no row there yet. runtime_live_url comes from
+// app_runtime (the controller's only writer of the URL) and desired_state from
+// app_intents.
 type AppRow = Selectable<Database["apps"]> & {
   latest_deployment_status?: string | null
+  runtime_live_url?: string | null
+  desired_state?: string | null
   kubernetes_status?: string | null
   kubernetes_status_observed_at?: string | null
   runtime_health?: string | null
@@ -76,7 +80,9 @@ function mapApp(row: AppRow): App {
     imageTag: row.image_tag,
     port: row.port,
     schedule: row.schedule ?? undefined,
-    liveUrl: row.live_url ?? undefined,
+    // Hidden as soon as the app is stopped, before the controller has torn it
+    // down and cleared the URL.
+    liveUrl: row.desired_state === "stopped" ? undefined : (row.runtime_live_url ?? undefined),
     latestDeploymentStatus: (row.latest_deployment_status as App["latestDeploymentStatus"]) ?? undefined,
     canetteConfig: row.canette_config ?? undefined,
     position: row.position,
@@ -90,14 +96,18 @@ function mapApp(row: AppRow): App {
 }
 
 // selectApps starts every query that feeds mapApp: the app row plus what the
-// controller has observed for it. LEFT JOIN, because the controller creates
-// the app_observed_status row only on its first observation.
+// controller has observed and done for it. LEFT JOIN, because the controller
+// creates its rows only on first use.
 function selectApps(db: DB) {
   return db
     .selectFrom("apps as a")
     .leftJoin("app_observed_status as o", "o.app_id", "a.id")
+    .leftJoin("app_runtime as r", "r.app_id", "a.id")
+    .leftJoin("app_intents as i", "i.app_id", "a.id")
     .selectAll("a")
     .select([
+      "r.live_url as runtime_live_url",
+      "i.desired_state",
       "o.kubernetes_status",
       "o.kubernetes_status_observed_at",
       "o.runtime_health",
@@ -650,7 +660,7 @@ export async function deleteApp(
       .selectFrom("deployments")
       .select("id")
       .where("app_id", "=", appId)
-      .where("status", "not in", ["failed", "stopped"])
+      .where("status", "not in", ["failed", "stopped", "superseded"])
       .executeTakeFirst()
     if (active) {
       throw new ServiceError(

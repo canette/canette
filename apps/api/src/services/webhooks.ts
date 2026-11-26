@@ -667,6 +667,17 @@ export async function processWebhookEvent(
   }
 
   // ── App state check ───────────────────────────────────────────────────────
+  // A push deploys only an app that should be running: one deployed and not
+  // stopped since. Its intent says so (#354). A stopped app's latest
+  // deployment can be superseded rather than stopped, so its status doesn't.
+  const intent = await db
+    .selectFrom("app_intents")
+    .select("desired_state")
+    .where("app_id", "=", appId)
+    .executeTakeFirst()
+  if (intent?.desired_state !== "running") {
+    return { status: 200, message: "App is not running — push acknowledged but no deployment triggered" }
+  }
   const latest = await db
     .selectFrom("deployments")
     .select("status")
@@ -675,10 +686,7 @@ export async function processWebhookEvent(
     .limit(1)
     .executeTakeFirst()
   const latestStatus = latest?.status
-  if (!latestStatus || latestStatus === "stopped") {
-    return { status: 200, message: "App is not running — push acknowledged but no deployment triggered" }
-  }
-  if ((ACTIVE_DEPLOYMENT_STATUSES as readonly string[]).includes(latestStatus)) {
+  if (latestStatus && (ACTIVE_DEPLOYMENT_STATUSES as readonly string[]).includes(latestStatus)) {
     return { status: 200, message: "Deployment already in progress" }
   }
   // ── Trigger deployment ────────────────────────────────────────────────────

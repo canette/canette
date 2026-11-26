@@ -12,21 +12,14 @@ import (
 	"time"
 )
 
-// The error_message RecoverAbandonedDeploying sets
-// (store.AbandonedDeployingMessage in apps/controller/internal/store).
-const abandonedMessage = "controller stopped during this deployment; redeploy to retry"
-
-// A claimed deployment without a heartbeat is failed after
-// store.DeployingHeartbeatTTL (2m); an app cleanup claim is retried after
-// volumeDeletionClaimTTL (5m). The margins cover polls and the restart.
-const (
-	abandonTimeout      = 4 * time.Minute
-	cleanupRetryTimeout = 7 * time.Minute
-)
+// An app cleanup claim is retried after volumeDeletionClaimTTL (5m). The
+// margin covers polls and the restart.
+const cleanupRetryTimeout = 7 * time.Minute
 
 // Scenario 2 of #330: kill the controller after a claim, after a partial
-// apply, and after a delete was accepted. After the restart everything
-// settles, the deployment history is kept and pending cleanup is reported.
+// apply, and after a delete was accepted. After the restart the controller
+// resumes the work it was doing (#354), the deployment history is kept and
+// pending cleanup is reported.
 // The subtests share one app and run in order; the last one deletes it.
 func TestControllerCrash(t *testing.T) {
 	p := newProject(t, "crash")
@@ -40,15 +33,9 @@ func TestControllerCrash(t *testing.T) {
 		history = append(history, d.ID)
 		waitFailpointFired(t, "after-claim", 2*time.Minute)
 
-		failed := waitDeployment(t, a, d.ID, "failed", abandonTimeout)
-		if failed.ErrorMessage != abandonedMessage {
-			t.Errorf("error message = %q, want %q", failed.ErrorMessage, abandonedMessage)
-		}
+		// The restarted controller picks the claimed deployment up again.
+		waitDeployment(t, a, d.ID, "live", deployTimeout)
 		requireHistory(t, a, history)
-
-		next := redeploy(t, failed)
-		history = append(history, next.ID)
-		waitDeployment(t, a, next.ID, "live", deployTimeout)
 		requireServing(t, a)
 	})
 
@@ -58,17 +45,12 @@ func TestControllerCrash(t *testing.T) {
 		history = append(history, d.ID)
 		waitFailpointFired(t, "after-partial-apply", 2*time.Minute)
 
-		failed := waitDeployment(t, a, d.ID, "failed", abandonTimeout)
-		if failed.ErrorMessage != abandonedMessage {
-			t.Errorf("error message = %q, want %q", failed.ErrorMessage, abandonedMessage)
-		}
+		// The restarted controller applies the deployment again, including
+		// the Service the crash cut off, and finishes the rollout.
+		waitDeployment(t, a, d.ID, "live", deployTimeout)
 		requireHistory(t, a, history)
-
-		next := redeploy(t, failed)
-		history = append(history, next.ID)
-		waitDeployment(t, a, next.ID, "live", deployTimeout)
 		if ok, err := serviceExists(t, ns, a.Slug); !ok {
-			t.Errorf("Service %s/%s missing after the redeploy (err %v)", ns, a.Slug, err)
+			t.Errorf("Service %s/%s missing after the resumed deploy (err %v)", ns, a.Slug, err)
 		}
 		requireServing(t, a)
 	})
@@ -79,7 +61,7 @@ func TestControllerCrash(t *testing.T) {
 		waitFailpointFired(t, "after-teardown-delete", 2*time.Minute)
 
 		// The crash came before the teardown was recorded, so the restarted
-		// controller claims it again and finishes it.
+		// controller claims the app again and finishes it.
 		waitControllerLog(t, time.Minute, "teardown complete", `"project":"`+p.Slug+`"`)
 		waitWorkloadGone(t, ns, a.Slug, 10*time.Second)
 		if got := getApp(t, a.ID).LiveURL; got != "" {

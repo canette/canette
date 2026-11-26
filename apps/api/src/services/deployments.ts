@@ -369,7 +369,8 @@ async function cancelPendingTeardowns(db: DB, appId: string): Promise<void> {
 // When the latest attempt that applied resources failed instead (e.g. a first
 // deploy whose pods crash-loop), it is marked for teardown and keeps its
 // 'failed' status and error.
-// Any in-progress build is left running — if it completes it will redeploy the app.
+// A build or rollout in progress doesn't go live afterwards: the builder or
+// the controller sees the stopped intent and supersedes or stops it (#354).
 // Verifies access itself via app → project → team membership.
 export async function stopApp(
   db: DB,
@@ -458,7 +459,7 @@ export async function redeployDeployment(
       409
     )
   }
-  if (access.status !== "failed" && access.status !== "live" && access.status !== "stopped") {
+  if (!["failed", "live", "stopped", "superseded"].includes(access.status)) {
     throw new ServiceError(
       `Cannot redeploy a deployment with status '${access.status}'.`,
       "INVALID_STATUS",

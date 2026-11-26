@@ -9,8 +9,9 @@ metadata:
 spec:
   replicas: 1
   # RollingUpdate would run the old and new controller side by side during an
-  # upgrade, each reconciling its own deployments and failing the other's as
-  # abandoned. Recreate stops the old one first.
+  # upgrade. A starting controller gives up every app lease so it can resume
+  # the previous controller's work at once (store.ReleaseAllLeases), which
+  # assumes that controller is gone. Recreate stops it first.
   strategy:
     type: Recreate
   selector:

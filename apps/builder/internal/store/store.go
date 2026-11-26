@@ -152,13 +152,36 @@ func (s *Store) MarkDeploying(ctx context.Context, deploymentID, imageDigest str
 	return nil
 }
 
+// SupersedeReplaced marks a claimed build superseded, and reports true, when
+// it is no longer what its app should run: a newer deploy replaced it, or the
+// app was stopped (#354). Not building it saves the work. It is only an early
+// exit: the controller never rolls out an attempt that isn't the target, so a
+// deploy or Stop that lands after this check is still honoured. A deployment
+// created after its app's intent was last written comes from an API that
+// predates intents and is built as before.
+func (s *Store) SupersedeReplaced(ctx context.Context, deploymentID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE deployments d SET status = 'superseded', updated_at = $1
+		FROM app_intents i
+		WHERE d.id = $2 AND i.app_id = d.app_id
+		  AND d.status = 'building'
+		  AND d.created_at <= i.updated_at
+		  AND (i.desired_state = 'stopped' OR i.target_deployment_id IS DISTINCT FROM d.id)`,
+		time.Now().UTC(), deploymentID)
+	if err != nil {
+		return false, fmt.Errorf("supersede replaced: %w", err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // MarkFailed transitions any non-terminal status → failed and records the error.
 func (s *Store) MarkFailed(ctx context.Context, deploymentID, errMsg string) error {
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE deployments
 		SET status = 'failed', error_message = $1, updated_at = $2
-		WHERE id = $3 AND status NOT IN ('live', 'failed')`,
+		WHERE id = $3 AND status NOT IN ('live', 'failed', 'superseded')`,
 		errMsg, now, deploymentID)
 	if err != nil {
 		return fmt.Errorf("mark failed: %w", err)

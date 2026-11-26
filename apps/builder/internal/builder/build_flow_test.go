@@ -25,6 +25,9 @@ type fakeStore struct {
 	appendedLogs []string
 	markedFailed []string
 	markedDeploy []string
+
+	replaced   map[string]bool // deployments SupersedeReplaced reports as replaced
+	superseded []string
 }
 
 func (f *fakeStore) ClaimPending(_ context.Context, _ int) ([]store.PendingDeployment, error) {
@@ -52,6 +55,13 @@ func (f *fakeStore) SetScanResults(_ context.Context, _, _, _, _ string) error  
 func (f *fakeStore) MarkDeploying(_ context.Context, id, _ string) error {
 	f.markedDeploy = append(f.markedDeploy, id)
 	return nil
+}
+func (f *fakeStore) SupersedeReplaced(_ context.Context, id string) (bool, error) {
+	if f.replaced[id] {
+		f.superseded = append(f.superseded, id)
+		return true, nil
+	}
+	return false, nil
 }
 
 // genericRepo is a plain registry URL — DetectProvider returns "generic" so
@@ -224,5 +234,26 @@ func TestBuildFlow_RejectsCredentialForUnapprovedHost(t *testing.T) {
 				t.Errorf("created %d Job(s), want none", len(jobs.Items))
 			}
 		})
+	}
+}
+
+// A build replaced by a newer deploy or a Stop while it waited starts no Job
+// and isn't failed.
+func TestBuildFlow_SkipsReplacedBuild(t *testing.T) {
+	dep := pendingDep("d59d1c36-0000-0000-0000-000000000009")
+	fs := &fakeStore{deployments: []store.PendingDeployment{dep}, replaced: map[string]bool{dep.ID: true}}
+	k8s := fake.NewSimpleClientset()
+
+	runBuildOnce(t, newBuildFlowBuilder(t, fs, k8s, "static"))
+
+	jobs, err := k8s.BatchV1().Jobs("canette-system").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Errorf("created %d Jobs, want none", len(jobs.Items))
+	}
+	if len(fs.superseded) != 1 || len(fs.markedFailed) != 0 || len(fs.markedDeploy) != 0 {
+		t.Errorf("superseded %v, failed %v, deploying %v; want only superseded", fs.superseded, fs.markedFailed, fs.markedDeploy)
 	}
 }
