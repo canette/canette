@@ -448,6 +448,10 @@ helm upgrade canette oci://ghcr.io/canette/canette --version 1.2.3 --reuse-value
 
 Migrations run automatically at API startup after the upgrade.
 
+<Callout type="warn">
+  **Upgrading from v1.4.0 or earlier:** upgrade to v1.5.0 first, then to a later version. v1.5.0 moves the deployment lifecycle to versioned app intents and still understands deploys and stops made by older API pods, which keep serving for a moment while an upgrade rolls out. Later versions no longer do. Skipping v1.5.0 can lose a deploy or Stop made while the upgrade rolls out, or let a project rename skip its checks. Avoid deploying, stopping and renaming projects during any upgrade.
+</Callout>
+
 ## Uninstalling
 
 ```bash
