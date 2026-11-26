@@ -4,6 +4,7 @@ import type { Selectable, Updateable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
+import { lockIntents } from "./intents"
 import { isTeamMember } from "./membership"
 import { isUniqueConstraintError } from "../db/errors"
 
@@ -167,22 +168,7 @@ export async function updateProject(
   const slugChanging = newSlug !== null
 
   if (slugChanging) {
-    // Block rename if any app still has an active (non-stopped) deployment.
-    const countResult = await sql<{ count: string }>`
-      SELECT COUNT(*) as count FROM apps a
-      INNER JOIN deployments d ON d.app_id = a.id
-        AND d.created_at = (SELECT MAX(created_at) FROM deployments WHERE app_id = a.id)
-      WHERE a.project_id = ${projectId} AND d.status NOT IN ('stopped', 'superseded')
-    `.execute(db)
-    const activeCount = Number(countResult.rows[0]?.count ?? 0)
-    if (activeCount > 0) {
-      throw new ServiceError(
-        "Stop all apps before renaming the project",
-        "CONFLICT",
-        409
-      )
-    }
-
+    // Whether every app is stopped is checked in the transaction below.
     // A rename deletes the old namespace, and every PVC in it with it. Stop
     // keeps PVCs, so a stopped app would silently come back with an empty
     // volume.
@@ -213,6 +199,25 @@ export async function updateProject(
   // One transaction, so an interrupted rename can't leave the old namespace
   // without a queued cleanup (orphaned) or a teardown pointing at it.
   await db.transaction().execute(async (tx) => {
+    if (slugChanging) {
+      // Every app must be stopped: the rename deletes the old namespace. Its
+      // intent says so, checked under the intent locks so that no deploy can
+      // be accepted meanwhile. The newest deployment can't tell: deploys can
+      // commit in another order than they were created, and a stopped app's
+      // newest deployment can be superseded.
+      const appIds = (await tx.selectFrom("apps").select("id").where("project_id", "=", projectId).execute())
+        .map((r) => r.id)
+      await lockIntents(tx, appIds)
+      const running = appIds.length === 0 ? undefined : await tx
+        .selectFrom("app_intents")
+        .select("app_id")
+        .where("app_id", "in", appIds)
+        .where("desired_state", "=", "running")
+        .executeTakeFirst()
+      if (running) {
+        throw new ServiceError("Stop all apps before renaming the project", "CONFLICT", 409)
+      }
+    }
     try {
       await tx
         .updateTable("projects")

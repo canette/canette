@@ -11,7 +11,7 @@ export function StopAppDialog({ onConfirm, onClose, stopping }: { onConfirm: () 
     <DialogContent aria-describedby={undefined}>
       <DialogHeader><DialogTitle>Stop app?</DialogTitle></DialogHeader>
       <div className="px-6 pb-6 flex flex-col gap-4">
-        <p className="text-sm text-muted-foreground">This will terminate the running deployment. The app will be unavailable until you redeploy.</p>
+        <p className="text-sm text-muted-foreground">This will terminate the running deployment and cancel any build or rollout in progress. The app will be unavailable until you deploy or redeploy it.</p>
         <label className="flex items-center gap-2 cursor-pointer">
           <Checkbox checked={confirmed} onCheckedChange={(v) => setConfirmed(!!v)} />
           <span className="text-sm">Yes, stop this app</span>

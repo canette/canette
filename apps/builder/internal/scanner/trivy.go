@@ -267,7 +267,9 @@ func (p *TrivyProvider) streamLogs(ctx context.Context, log *zap.Logger, deploym
 }
 
 func (p *TrivyProvider) streamContainerLogs(ctx context.Context, log *zap.Logger, deploymentID, podName, container string, interceptors map[string]*string) error {
-	const maxAttempts = 15
+	// Wait for the container to start: the log of one still waiting can come
+	// back empty, which would lose the scan's summary.
+	const maxAttempts = 40
 	var stream interface {
 		Read([]byte) (int, error)
 		Close() error
@@ -276,19 +278,29 @@ func (p *TrivyProvider) streamContainerLogs(ctx context.Context, log *zap.Logger
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		req := p.k8s.CoreV1().Pods(p.namespace).GetLogs(podName, &corev1.PodLogOptions{
-			Container: container,
-			Follow:    true,
-		})
-		s, err := req.Stream(ctx)
+		pod, err := p.k8s.CoreV1().Pods(p.namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err == nil && !k8sjobs.ContainerStarted(pod, container) {
+			err = fmt.Errorf("container %s has not started", container)
+		}
 		if err == nil {
-			stream = s
-			break
+			req := p.k8s.CoreV1().Pods(p.namespace).GetLogs(podName, &corev1.PodLogOptions{
+				Container: container,
+				Follow:    true,
+			})
+			var s io.ReadCloser
+			if s, err = req.Stream(ctx); err == nil {
+				stream = s
+				break
+			}
 		}
 		if attempt == maxAttempts {
 			return fmt.Errorf("open scan log stream after %d attempts: %w", maxAttempts, err)
 		}
-		time.Sleep(3 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
 	}
 	defer stream.Close()
 

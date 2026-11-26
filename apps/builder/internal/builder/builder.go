@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -56,6 +57,89 @@ type Builder struct {
 	registryConfig   registry.Config
 	scanProvider     scanner.Provider
 	scanProviderName string // resolved provider name, used for MarkScanning job name
+
+	// replacedCheckInterval is how often a running build or scan checks that
+	// its deployment is still wanted (whileWanted).
+	replacedCheckInterval time.Duration
+
+	// logRetryInterval is how often a log tail checks whether a container
+	// has started.
+	logRetryInterval time.Duration
+}
+
+// whileWanted runs wait while the deployment is still wanted. Every
+// replacedCheckInterval it asks SupersedeReplaced, which records it as
+// superseded when a newer deploy or a Stop replaced it (#354). From then on it
+// calls onReplaced (if set) and deletes the Job jobName, retrying on every
+// check until the delete succeeds, and only then ends wait's context: a Job
+// that is still running would keep its build or scan going, and its TTL only
+// starts once it finishes. It reports whether the deployment was replaced.
+// Deleting the Job stops its pod, and with it the build's buildctl session,
+// which makes BuildKit cancel the build. Layers already built stay cached.
+func (b *Builder) whileWanted(ctx context.Context, log *zap.Logger, deploymentID, jobName string, onReplaced func(), wait func(context.Context)) bool {
+	waitCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var replaced atomic.Bool
+	checked := make(chan struct{})
+	go func() {
+		defer close(checked)
+		ticker := time.NewTicker(b.replacedCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-waitCtx.Done():
+				return
+			case <-ticker.C:
+			}
+			if !replaced.Load() {
+				ok, err := b.store.SupersedeReplaced(waitCtx, deploymentID)
+				if err != nil {
+					if waitCtx.Err() == nil {
+						log.Warn("check whether the deployment is still wanted failed", zap.Error(err))
+					}
+					continue
+				}
+				if !ok {
+					continue
+				}
+				replaced.Store(true)
+				log.Info("deployment replaced by a newer deploy or a Stop; cancelling", zap.String("job", jobName))
+				if onReplaced != nil {
+					onReplaced()
+				}
+			}
+			delCtx, delCancel := context.WithTimeout(waitCtx, 30*time.Second)
+			err := k8sjobs.DeleteJob(delCtx, b.k8s, b.cfg.Namespace, jobName)
+			delCancel()
+			if err != nil {
+				log.Warn("delete replaced job failed; retrying", zap.String("job", jobName), zap.Error(err))
+				continue
+			}
+			cancel()
+			return
+		}
+	}()
+	wait(waitCtx)
+	cancel()
+	<-checked
+	return replaced.Load()
+}
+
+// pinnedRef turns repo:tag into repo@digest, the immutable reference of the
+// image the build pushed. A tag is only the part after the last ":" that
+// follows the last "/", so a registry port is kept.
+func pinnedRef(imageRef, digest string) string {
+	repo, _, _ := strings.Cut(imageRef, "@")
+	if slash, colon := strings.LastIndex(repo, "/"), strings.LastIndex(repo, ":"); colon > slash {
+		repo = repo[:colon]
+	}
+	return repo + "@" + digest
+}
+
+// logReplaced tells the deployment's log that its build or scan was cancelled.
+func (b *Builder) logReplaced(ctx context.Context, log *zap.Logger, deploymentID, what string) {
+	log.Info(what + " cancelled: a newer deployment or a Stop replaced it")
+	_ = b.store.AppendLog(ctx, deploymentID, "stdout", "[canette] "+what+" cancelled: a newer deployment or a Stop replaced it")
 }
 
 // New creates a Builder.
@@ -94,6 +178,9 @@ func New(
 		log:           log,
 		pollInterval:  pollInterval,
 		maxConcurrent: maxConcurrent,
+
+		replacedCheckInterval: 5 * time.Second,
+		logRetryInterval:      3 * time.Second,
 		registryConfig: registry.Config{
 			ImageRepo: cfg.ImageRepo,
 			AuthType:  cfg.RegistryAuthType,
@@ -304,32 +391,48 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 	}
 	log.Info("job created", zap.String("job", jobName))
 
-	// 5. Wait for the pod to appear, then stream its logs.
-	podName, err := b.waitForPod(ctx, log, jobName)
-	if err != nil {
-		lastErr = fmt.Errorf("wait for pod: %w", err)
+	// 5–6. Wait for the pod, stream its logs and watch the Job until it
+	// succeeds or fails, or until a newer deploy or a Stop replaces the build.
+	var capturedDigest, capturedImageRef, capturedCanetteConfigB64, capturedCommitSha string
+	var succeeded bool
+	logDone := make(chan struct{})
+	// The log tail ends with the pod, or as soon as the build is replaced:
+	// a pod whose Job can't be deleted yet would keep it open.
+	logCtx, cancelLogs := context.WithCancel(ctx)
+	defer cancelLogs()
+	replaced := b.whileWanted(ctx, log, dep.ID, jobName, cancelLogs, func(waitCtx context.Context) {
+		podName, err := b.waitForPod(waitCtx, log, jobName)
+		if err != nil {
+			close(logDone)
+			lastErr = fmt.Errorf("wait for pod: %w", err)
+			return
+		}
+
+		// Tail logs concurrently — errors here are informational only.
+		// Structured marker lines are intercepted in memory and never written to build_logs.
+		// On logCtx, not waitCtx: the tail must read to the end after the Job finished.
+		go func() {
+			defer close(logDone)
+			b.tailLogs(logCtx, log, dep.ID, podName, []string{"git-clone", "image-build"}, map[string]*string{
+				"CAN_IMAGE_DIGEST=":   &capturedDigest,
+				"CAN_IMAGE_REF=":      &capturedImageRef,
+				"CAN_CANETTE_CONFIG=": &capturedCanetteConfigB64,
+				"CAN_COMMIT_SHA=":     &capturedCommitSha,
+			})
+		}()
+
+		succeeded, err = k8sjobs.WaitForJob(waitCtx, b.k8s, b.cfg.Namespace, jobName, log)
+		if err != nil {
+			lastErr = fmt.Errorf("watch job: %w", err)
+		}
+	})
+	<-logDone // wait for log goroutine to finish before transitioning status
+	if replaced {
+		lastErr = nil // superseded, not failed
+		b.logReplaced(ctx, log, dep.ID, "build")
 		return
 	}
-
-	// Tail logs concurrently — errors here are informational only.
-	// Structured marker lines are intercepted in memory and never written to build_logs.
-	var capturedDigest, capturedImageRef, capturedCanetteConfigB64, capturedCommitSha string
-	logDone := make(chan struct{})
-	go func() {
-		defer close(logDone)
-		b.tailLogs(ctx, log, dep.ID, podName, []string{"git-clone", "image-build"}, map[string]*string{
-			"CAN_IMAGE_DIGEST=":   &capturedDigest,
-			"CAN_IMAGE_REF=":      &capturedImageRef,
-			"CAN_CANETTE_CONFIG=": &capturedCanetteConfigB64,
-			"CAN_COMMIT_SHA=":     &capturedCommitSha,
-		})
-	}()
-
-	// 6. Watch the Job until it succeeds or fails.
-	succeeded, err := k8sjobs.WaitForJob(ctx, b.k8s, b.cfg.Namespace, jobName, log)
-	<-logDone // wait for log goroutine to finish before transitioning status
-	if err != nil {
-		lastErr = fmt.Errorf("watch job: %w", err)
+	if lastErr != nil {
 		return
 	}
 	if !succeeded {
@@ -377,7 +480,16 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 			lastErr = fmt.Errorf("mark scanning: %w", err)
 			return
 		}
-		scanResult, scanErr := b.scanProvider.Scan(ctx, dep.ID, imageRef)
+		var scanResult *scanner.ScanResult
+		var scanErr error
+		if b.whileWanted(ctx, log, dep.ID, scanName, nil, func(waitCtx context.Context) {
+			// The digest, not the tag: overlapping builds of one commit push
+			// the same tag, and the scan must cover the image that is deployed.
+			scanResult, scanErr = b.scanProvider.Scan(waitCtx, dep.ID, pinnedRef(imageRef, digest))
+		}) {
+			b.logReplaced(ctx, log, dep.ID, "scan")
+			return
+		}
 		if scanErr != nil {
 			log.Warn("scan failed to run", zap.Error(scanErr))
 			_ = b.store.AppendLog(ctx, dep.ID, "stdout", "[canette] scan error: "+scanErr.Error())
@@ -424,7 +536,11 @@ func (b *Builder) waitForPod(ctx context.Context, log *zap.Logger, jobName strin
 				return p.Name, nil
 			}
 		}
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 	return "", fmt.Errorf("pod for job %s did not appear within 2 minutes", jobName)
 }
@@ -453,9 +569,11 @@ func (b *Builder) tailLogs(ctx context.Context, log *zap.Logger, deploymentID, p
 }
 
 func (b *Builder) streamContainerLogs(ctx context.Context, log *zap.Logger, deploymentID, podName, container string, interceptors map[string]*string, linesWritten *int) error {
-	// Retry opening the log stream — the container may not have started yet
-	// even though the pod exists (especially for image-build after git-clone finishes).
-	const maxAttempts = 15
+	// Wait for the container to start before following its logs: the pod
+	// can exist before its containers do, and the log of a container that is
+	// still waiting can come back empty instead of as an error, which would
+	// end the tail before the build printed anything.
+	const maxAttempts = 40
 	var stream interface {
 		Read([]byte) (int, error)
 		Close() error
@@ -464,20 +582,29 @@ func (b *Builder) streamContainerLogs(ctx context.Context, log *zap.Logger, depl
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		req := b.k8s.CoreV1().Pods(b.cfg.Namespace).GetLogs(podName, &corev1.PodLogOptions{
-			Container: container,
-			Follow:    true,
-		})
-		s, err := req.Stream(ctx)
-		if err == nil {
-			stream = s
-			break
+		pod, err := b.k8s.CoreV1().Pods(b.cfg.Namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err == nil && !k8sjobs.ContainerStarted(pod, container) {
+			err = fmt.Errorf("container %s has not started", container)
 		}
-		// Container not started yet — wait and retry
+		if err == nil {
+			req := b.k8s.CoreV1().Pods(b.cfg.Namespace).GetLogs(podName, &corev1.PodLogOptions{
+				Container: container,
+				Follow:    true,
+			})
+			var s io.ReadCloser
+			if s, err = req.Stream(ctx); err == nil {
+				stream = s
+				break
+			}
+		}
 		if attempt == maxAttempts {
 			return fmt.Errorf("open log stream for %s after %d attempts: %w", container, maxAttempts, err)
 		}
-		time.Sleep(3 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(b.logRetryInterval):
+		}
 	}
 	defer stream.Close()
 

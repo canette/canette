@@ -26,6 +26,7 @@ type app struct {
 	ID                     string `json:"id"`
 	Slug                   string `json:"slug"`
 	LiveURL                string `json:"liveUrl"`
+	LifecycleStatus        string `json:"lifecycleStatus"`
 	RuntimeHealth          string `json:"runtimeHealth"`
 	RuntimeHealthReason    string `json:"runtimeHealthReason"`
 	RuntimeHealthUpdatedAt string `json:"runtimeHealthUpdatedAt"`

@@ -198,7 +198,7 @@ function TeamSelector({
 
 // ── fleet health ──────────────────────────────────────────────────────────────
 
-const BUILDING_STATUSES = new Set(["pending_build", "building", "scanning", "pending_deployment", "deploying"])
+const BUILDING_STATUSES = new Set(["building", "deploying"])
 
 function FleetHealth({ apps }: { apps: App[] }) {
   // Apps that are stopped, or have never been deployed, aren't part of the
@@ -210,9 +210,9 @@ function FleetHealth({ apps }: { apps: App[] }) {
   // showing here otherwise. "unknown" runtime health (no data yet, or a
   // stale verdict, which the API reports as unknown) falls back to counting
   // as healthy, since the deploy did succeed.
-  const building = apps.filter((a) => BUILDING_STATUSES.has(a.latestDeploymentStatus ?? "")).length
-  const failed = apps.filter((a) => a.latestDeploymentStatus === "failed").length
-  const liveApps = apps.filter((a) => a.latestDeploymentStatus === "live")
+  const building = apps.filter((a) => BUILDING_STATUSES.has(a.lifecycleStatus ?? "")).length
+  const failed = apps.filter((a) => a.lifecycleStatus === "failed").length
+  const liveApps = apps.filter((a) => a.lifecycleStatus === "live")
   const unhealthy = liveApps.filter((a) => a.runtimeHealth === "unhealthy").length
   const healthy = liveApps.length - unhealthy
   const total = healthy + unhealthy + building + failed

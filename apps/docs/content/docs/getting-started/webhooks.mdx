@@ -66,7 +66,9 @@ The watch path is matched as a path prefix — `packages/web` matches `packages/
 
 ## Busy app behaviour
 
-If a deployment is already in progress when a push arrives, Canette drops the event silently and returns `200` to the provider. Trigger a new deployment manually from the UI once the current one finishes.
+If a deployment is still in progress when a push arrives, the push replaces it, so the newest commit is what goes live. A build that is still running is cancelled, and a rollout that is still running finishes first, since it is what serves until the newer build is ready. With several pushes in quick succession, only the newest is built to the end.
+
+A push to a stopped app is acknowledged with `200` and deploys nothing.
 
 ## Security
 

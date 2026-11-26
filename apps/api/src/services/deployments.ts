@@ -3,7 +3,6 @@ import type { BuildLog, Deployment, DeploymentStatus, PaginatedResponse } from "
 import type { Insertable, Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
-import { isUniqueConstraintError } from "../db/errors"
 import { ServiceError } from "./errors"
 import { getAppById } from "./apps"
 import { lockIntent, setIntent } from "./intents"
@@ -209,40 +208,6 @@ export async function getLiveDeployment(db: DB, appId: string): Promise<Deployme
 // Statuses of a deployment that is still being built or rolled out.
 export const ACTIVE_DEPLOYMENT_STATUSES = ["pending_build", "building", "scanning", "pending_deployment", "deploying"] as const
 
-const IN_PROGRESS_MESSAGE = "A deployment is already in progress. Stop or wait for it to finish first."
-
-// insertDeployment inserts a new in-progress deployment. Callers run it in the
-// transaction that records the deploy in the app's intent. The database allows
-// only one per app (idx_deployments_one_active_per_app), which also rejects
-// the second of two requests that both passed hasActiveDeployment at the same
-// moment, so that case gets the same DEPLOYMENT_IN_PROGRESS error.
-async function insertDeployment(
-  db: DB,
-  values: Insertable<Database["deployments"]>,
-  inProgressMessage: string
-): Promise<void> {
-  try {
-    await db.insertInto("deployments").values(values).execute()
-  } catch (err) {
-    if (isUniqueConstraintError(err)) {
-      throw new ServiceError(inProgressMessage, "DEPLOYMENT_IN_PROGRESS", 409)
-    }
-    throw err
-  }
-}
-
-// hasActiveDeployment returns true if the app already has an in-progress deployment.
-async function hasActiveDeployment(db: DB, appId: string): Promise<boolean> {
-  const row = await db
-    .selectFrom("deployments")
-    .select("id")
-    .where("app_id", "=", appId)
-    .where("status", "in", ACTIVE_DEPLOYMENT_STATUSES)
-    .limit(1)
-    .executeTakeFirst()
-  return !!row
-}
-
 // triggeredBy is a user ID for manual deploys, or null for webhook-triggered deploys.
 // When non-null, access is verified via team membership.
 // When null (webhook path), the HMAC signature in the receiver is the security gate.
@@ -260,14 +225,6 @@ export async function createDeployment(
   if (triggeredBy !== null) {
     const app = await getAppById(db, appId, triggeredBy)
     if (!app) throw new ServiceError("Not found", "NOT_FOUND", 404)
-  }
-
-  if (await hasActiveDeployment(db, appId)) {
-    throw new ServiceError(
-      IN_PROGRESS_MESSAGE,
-      "DEPLOYMENT_IN_PROGRESS",
-      409
-    )
   }
 
   const appRow = await db
@@ -318,7 +275,7 @@ export async function createDeployment(
       updated_at: now,
     }
   }
-  await startDeployment(db, values, IN_PROGRESS_MESSAGE, { onlyIfRunning: input?.onlyIfRunning })
+  await startDeployment(db, values, { onlyIfRunning: input?.onlyIfRunning })
 
   const row = await db
     .selectFrom("deployments")
@@ -329,11 +286,13 @@ export async function createDeployment(
 }
 
 // startDeployment inserts a new attempt and makes it the app's intent target,
-// in one transaction, so a deploy is never recorded half way.
+// in one transaction, so a deploy is never recorded half way. An attempt still
+// in progress isn't refused: the new one supersedes it (#354). The builder
+// stops it if it is still building, and the controller never rolls out an
+// attempt that isn't the target.
 async function startDeployment(
   db: DB,
   values: Insertable<Database["deployments"]>,
-  inProgressMessage: string,
   opts: { onlyIfRunning?: boolean } = {}
 ): Promise<void> {
   await db.transaction().execute(async (tx) => {
@@ -352,7 +311,7 @@ async function startDeployment(
     // (re)create the same named K8s resources, so a stale teardown claim for an older
     // deployment must not be left to delete them out from under it later.
     await cancelPendingTeardowns(tx, values.app_id)
-    await insertDeployment(tx, values, inProgressMessage)
+    await tx.insertInto("deployments").values(values).execute()
     await setIntent(tx, values.app_id, {
       desiredState: "running",
       targetDeploymentId: values.id,
@@ -480,13 +439,6 @@ export async function redeployDeployment(
       409
     )
   }
-  if (await hasActiveDeployment(db, access.app_id)) {
-    throw new ServiceError(
-      "A deployment is already in progress. Stop it first.",
-      "DEPLOYMENT_IN_PROGRESS",
-      409
-    )
-  }
 
   // Fetch current app canette_config and build a fresh snapshot reflecting current state.
   const appRow = await db
@@ -511,7 +463,7 @@ export async function redeployDeployment(
     deployment_snapshot: snapshot,
     created_at: now,
     updated_at: now,
-  }, "A deployment is already in progress. Stop it first.")
+  })
 
   const row = await db
     .selectFrom("deployments")

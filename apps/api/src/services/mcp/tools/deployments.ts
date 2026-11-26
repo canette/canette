@@ -22,7 +22,7 @@ export const deploymentTools = [
   defineTool({
     name: "trigger_deployment",
     description:
-      "Build and deploy an app from its source: for a Git app this fetches the latest commit and runs a full image build (minutes) before deploying; for a Docker image app it deploys the configured image tag. Use this for the first deployment and whenever the source changed (new commits, branch, repository, image tag). Do NOT use it just to apply changed env vars, secrets or runtime settings — use redeploy_deployment for that, which reuses the existing image and skips the build.",
+      "Build and deploy an app from its source: for a Git app this fetches the latest commit and runs a full image build (minutes) before deploying; for a Docker image app it deploys the configured image tag. Use this for the first deployment and whenever the source changed (new commits, branch, repository, image tag). Do NOT use it just to apply changed env vars, secrets or runtime settings — use redeploy_deployment for that, which reuses the existing image and skips the build. A deployment still in progress is replaced: a running build is cancelled and ends 'superseded'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -108,7 +108,7 @@ export const deploymentTools = [
   defineTool({
     name: "redeploy_deployment",
     description:
-      "Deploy an already-built image again, without rebuilding (seconds instead of minutes). Creates a new deployment that uses the given deployment's image with the app's CURRENT settings, env vars and secrets. Two uses: (1) apply configuration changes — after set_env_var, delete_env_var, a secret change or a runtime-only update_app, pass the app's live deployment (get_app's liveDeployment); (2) roll back — pass an earlier deployment that was live (list_deployments). A rollback restores the earlier image only: the new deployment still uses the current settings, env vars and secrets, not the ones the earlier deployment had. Only works for deployments that have a built image and are live, stopped, failed or superseded.",
+      "Deploy an already-built image again, without rebuilding (seconds instead of minutes). Creates a new deployment that uses the given deployment's image with the app's CURRENT settings, env vars and secrets. Two uses: (1) apply configuration changes — after set_env_var, delete_env_var, a secret change or a runtime-only update_app, pass the app's live deployment (get_app's liveDeployment); (2) roll back — pass an earlier deployment that was live (list_deployments). A rollback restores the earlier image only: the new deployment still uses the current settings, env vars and secrets, not the ones the earlier deployment had. Only works for deployments that have a built image and are live, stopped, failed or superseded. A deployment still in progress is replaced.",
     inputSchema: {
       type: "object",
       properties: {
@@ -127,7 +127,7 @@ export const deploymentTools = [
   defineTool({
     name: "stop_app",
     description:
-      "Take an app offline: its live deployment becomes 'stopped', its live URL is cleared and canette removes its running containers. Only the live deployment is stopped; if the latest deploy failed after creating its resources (e.g. crash-looping pods), those are removed too and the deployment stays 'failed'. A build or rollout that is still in progress doesn't go live afterwards: a build that finishes keeps its image and ends 'superseded', and a rollout is stopped. The app, its settings, env vars, secrets and volumes (including persistent data) are kept. To bring it back, call redeploy_deployment on the deployment that was live (returned here as stoppedDeployment, or from list_deployments), which reuses the built image without a rebuild.",
+      "Take an app offline: its live deployment becomes 'stopped', its live URL is cleared and canette removes its running containers. Only the live deployment is stopped; if the latest deploy failed after creating its resources (e.g. crash-looping pods), those are removed too and the deployment stays 'failed'. A build that is still in progress is cancelled and ends 'superseded', and a rollout is stopped. The app, its settings, env vars, secrets and volumes (including persistent data) are kept. To bring it back, call redeploy_deployment on the deployment that was live (returned here as stoppedDeployment, or from list_deployments), which reuses the built image without a rebuild.",
     inputSchema: {
       type: "object",
       properties: {
@@ -147,7 +147,7 @@ export const deploymentTools = [
         stoppedDeployment: live?.id ?? null,
         note: live
           ? `The app is going offline. To bring it back, call redeploy_deployment with deployment_id ${live.id} (no rebuild needed).`
-          : "The app had no live deployment. Anything a failed deploy left running is removed, and a build or rollout in progress won't go live.",
+          : "The app had no live deployment. Anything a failed deploy left running is removed, and a build or rollout in progress is cancelled.",
       })
     },
   }),

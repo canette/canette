@@ -4,7 +4,7 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
-import { createApp } from "../../src/services/apps"
+import { createApp, getAppById } from "../../src/services/apps"
 import { createDeployment, redeployDeployment, stopApp } from "../../src/services/deployments"
 import { forceSyncLiveApps } from "../../src/services/admin"
 
@@ -96,6 +96,19 @@ describe("app intent", () => {
     })
   })
 
+  it("the app's lifecycleStatus follows its intent, not its newest deployment", async () => {
+    const app = await makeApp("status")
+    expect((await getAppById(db, app.id, "userId"))?.lifecycleStatus).toBeUndefined()
+    const dep = await createDeployment(db, app.id, "userId")
+    expect((await getAppById(db, app.id, "userId"))?.lifecycleStatus).toBe("building")
+    await stopApp(db, app.id, "userId")
+    // Stopped while it builds: the build is still the newest deployment.
+    const stopping = await getAppById(db, app.id, "userId")
+    expect(stopping?.latestDeploymentStatus).toBe("pending_build")
+    expect(stopping?.lifecycleStatus).toBe("stopping")
+    expect(dep.id).toBeTruthy()
+  })
+
   it("a webhook deploy records no user", async () => {
     const app = await makeApp("webhook-deploy")
     const dep = await createDeployment(db, app.id, null, { commitSha: "deadbeef" })
@@ -125,13 +138,15 @@ describe("app intent", () => {
   })
 
   it("a refused deploy changes neither the intent nor a pending teardown", async () => {
+    // A webhook deploy of an app stopped meanwhile is refused inside the
+    // transaction, which cancels pending teardowns only when it commits.
     const app = await makeApp("refused")
     const stopped = await addDeployment(db, app.id, "stopped", { appliedManifest: "kind: Deployment" })
-    await addDeployment(db, app.id, "building")
+    await db.updateTable("app_intents").set({ generation: 1 }).where("app_id", "=", app.id).execute()
     const before = await intent(db, app.id)
 
-    // The pre-check refuses it, and so would the index inside the transaction.
-    await expect(createDeployment(db, app.id, "userId")).rejects.toMatchObject({ code: "DEPLOYMENT_IN_PROGRESS" })
+    await expect(createDeployment(db, app.id, null, { commitSha: "deadbeef", onlyIfRunning: true }))
+      .rejects.toMatchObject({ code: "APP_NOT_RUNNING" })
 
     expect(await intent(db, app.id)).toEqual(before)
     const row = await db.selectFrom("deployments").select("applied_manifest").where("id", "=", stopped).executeTakeFirstOrThrow()

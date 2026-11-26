@@ -92,6 +92,27 @@ describe("updateProject", () => {
       expect(await queuedSlugs(project.id)).toEqual(["no-pvc"])
     })
 
+    it("refuses while an app should be running, whatever its newest deployment", async () => {
+      // Two deploys committed in the other order than they were created:
+      // the intent's target went live, the newer row was superseded.
+      const project = await makeProject("serving")
+      const app = await createApp(db, project.id, "userId", {
+        name: "web", slug: "web", sourceType: "git", gitUrl: "https://github.com/example/repo",
+      })
+      const at = (s: string) => `2026-01-0${s}T00:00:00.000Z`
+      await db.insertInto("deployments").values([
+        { id: "target", app_id: app.id, status: "live", commit_sha: "a", created_at: at("1"), updated_at: at("1") },
+        { id: "newer", app_id: app.id, status: "superseded", commit_sha: "b", created_at: at("2"), updated_at: at("2") },
+      ]).execute()
+      await db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: "target", generation: 2 })
+        .where("app_id", "=", app.id).execute()
+
+      const err = await updateProject(db, project.id, "userId", { slug: "serving-renamed" }).catch((e) => e)
+      expect(err).toBeInstanceOf(ServiceError)
+      expect((err as ServiceError).status).toBe(409)
+      expect(await queuedSlugs(project.id)).toEqual([])
+    })
+
     it("un-queues the namespace when renamed back before cleanup ran", async () => {
       const project = await makeProject("round-trip")
       await updateProject(db, project.id, "userId", { slug: "round-trip-b" })

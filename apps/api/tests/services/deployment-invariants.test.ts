@@ -4,7 +4,6 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
-import { ServiceError } from "../../src/services/errors"
 import { createApp } from "../../src/services/apps"
 import { createDeployment, redeployDeployment } from "../../src/services/deployments"
 import { forceSyncLiveApps } from "../../src/services/admin"
@@ -44,7 +43,7 @@ async function addDeployment(
   return id
 }
 
-describe("one in-progress deployment per app", () => {
+describe("a new deployment supersedes one in progress", () => {
   const db = createTestDb()
 
   beforeAll(async () => {
@@ -58,51 +57,45 @@ describe("one in-progress deployment per app", () => {
     })
   }
 
-  async function activeCount(appId: string) {
+  async function activeIds(appId: string) {
     const rows = await db.selectFrom("deployments").select("id")
       .where("app_id", "=", appId)
       .where("status", "in", ["pending_build", "building", "scanning", "pending_deployment", "deploying"])
       .execute()
-    return rows.length
+    return rows.map((r) => r.id)
   }
 
-  function expectOneWinner(results: PromiseSettledResult<unknown>[]) {
-    const rejected = results.filter((r) => r.status === "rejected")
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1)
-    expect(rejected).toHaveLength(1)
-    const err = (rejected[0] as PromiseRejectedResult).reason
-    expect(err).toBeInstanceOf(ServiceError)
-    expect(err).toMatchObject({ code: "DEPLOYMENT_IN_PROGRESS", status: 409 })
+  async function intentOf(appId: string) {
+    const row = await db.selectFrom("app_intents").selectAll().where("app_id", "=", appId).executeTakeFirstOrThrow()
+    return { ...row, generation: Number(row.generation) }
   }
 
-  it("two simultaneous deploy requests create one deployment, the other gets 409", async () => {
+  it("two simultaneous deploy requests both go through, and the intent targets one of them", async () => {
     const app = await makeApp("double-deploy")
-    const results = await Promise.allSettled([
+    const results = await Promise.all([
       createDeployment(db, app.id, "userId"),
       createDeployment(db, app.id, "userId"),
     ])
-    expectOneWinner(results)
-    expect(await activeCount(app.id)).toBe(1)
+    expect(await activeIds(app.id)).toHaveLength(2)
+    const intent = await intentOf(app.id)
+    expect(intent.generation).toBe(2)
+    expect(results.map((d) => d.id)).toContain(intent.target_deployment_id)
   })
 
-  it("two simultaneous redeploys create one deployment, the other gets 409", async () => {
-    const app = await makeApp("double-redeploy")
+  it("a redeploy while a build runs becomes the target", async () => {
+    const app = await makeApp("redeploy-during-build")
     const live = await addDeployment(db, app.id, "live", { imageDigest: "registry/app@sha256:abc" })
-    const results = await Promise.allSettled([
-      redeployDeployment(db, live, "userId"),
-      redeployDeployment(db, live, "userId"),
-    ])
-    expectOneWinner(results)
-    expect(await activeCount(app.id)).toBe(1)
+    const building = await createDeployment(db, app.id, "userId")
+    const again = await redeployDeployment(db, live, "userId")
+    expect(await activeIds(app.id)).toEqual(expect.arrayContaining([building.id, again!.id]))
+    expect((await intentOf(app.id)).target_deployment_id).toBe(again!.id)
   })
 
-  it("the database rejects a second in-progress row for an app", async () => {
+  it("the database allows several in-progress rows for an app", async () => {
     const app = await makeApp("index-check")
     await addDeployment(db, app.id, "building")
-    await expect(addDeployment(db, app.id, "pending_deployment")).rejects.toThrow()
-    // Finished rows are not limited.
-    await addDeployment(db, app.id, "failed")
-    await addDeployment(db, app.id, "live")
+    await addDeployment(db, app.id, "pending_deployment")
+    expect(await activeIds(app.id)).toHaveLength(2)
   })
 
   it("force sync skips an app that still has a deployment in progress", async () => {

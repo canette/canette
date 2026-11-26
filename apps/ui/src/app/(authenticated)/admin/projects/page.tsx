@@ -20,7 +20,7 @@ function statusVariant(status: string | undefined): StatusVariant {
   if (status === "building") return "building"
   if (status === "deploying") return "deploying"
   if (status === "failed") return "failed"
-  if (status === "stopped" || status === "superseded") return "secondary"
+  if (status === "stopped" || status === "stopping" || status === "superseded") return "secondary"
   return "pending"
 }
 
@@ -136,7 +136,7 @@ export default function AdminProjectsPage() {
                             {app.name}
                           </Link>
                           <span className="text-xs text-muted-foreground shrink-0">{app.sourceType}</span>
-                          {app.liveUrl && app.latestDeploymentStatus === "live" && (
+                          {app.liveUrl && app.lifecycleStatus === "live" && (
                             <a
                               href={app.liveUrl}
                               target="_blank"
@@ -152,9 +152,9 @@ export default function AdminProjectsPage() {
                             onClick={() => setHostnameApp({ id: app.id, name: app.name })}>
                             Hostnames
                           </Button>
-                          {app.latestDeploymentStatus && (
-                            <Badge variant={statusVariant(app.latestDeploymentStatus)}>
-                              {app.latestDeploymentStatus}
+                          {app.lifecycleStatus && (
+                            <Badge variant={statusVariant(app.lifecycleStatus)}>
+                              {app.lifecycleStatus}
                             </Badge>
                           )}
                         </div>

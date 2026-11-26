@@ -12,7 +12,6 @@ import { ExternalLink } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
 import { useDomain } from "@/lib/domain-context"
 import { computeAppUrl } from "@/lib/deployment-format"
-import { ACTIVE_STATUSES } from "@/lib/use-deployment-actions"
 import * as api from "@/lib/api"
 import type { App, AppHostname, Project } from "@canette/types"
 
@@ -59,15 +58,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // which tab (Overview/Deployments/Logs) is mounted underneath — those pages
   // don't all poll deployment/runtime state themselves (the Logs tab never did).
   useEffect(() => {
-    const isActive = !!app?.latestDeploymentStatus && ACTIVE_STATUSES.includes(app.latestDeploymentStatus)
+    // Faster while the app is on its way to what it should run.
+    const isActive = !!app?.lifecycleStatus && ["building", "deploying", "stopping"].includes(app.lifecycleStatus)
     const interval = setInterval(load, isActive ? 3000 : 15000)
     return () => clearInterval(interval)
-  }, [app?.latestDeploymentStatus, load])
+  }, [app?.lifecycleStatus, load])
 
   const computedUrl = app && project && domain && app.deploymentType === "web"
     ? computeAppUrl(app.slug, project.slug, domain)
     : null
-  const isLive = app?.latestDeploymentStatus === "live"
+  const isLive = app?.lifecycleStatus === "live"
 
   const appBase = `/dashboard/projects/${slug}/apps/${appSlug}`
   const isOverview = pathname === appBase || pathname === `${appBase}/`
@@ -87,7 +87,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <h1 className="text-xl font-semibold font-mono tracking-tight truncate">{app.name}</h1>
-                <StatusBadge status={app.latestDeploymentStatus} className="shrink-0" />
+                <StatusBadge status={app.lifecycleStatus} className="shrink-0" />
                 {isLive && (
                   <RuntimeHealthIndicator
                     runtimeHealth={app.runtimeHealth}

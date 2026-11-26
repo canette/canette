@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -320,6 +321,31 @@ func CreateGitCredSecret(
 	_, err := client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("create git cred secret: %w", err)
+	}
+	return nil
+}
+
+// ContainerStarted reports whether the pod's container or init container
+// name is running or has finished, so its log is there to read. The log of a
+// container that is still waiting can come back empty instead of as an error.
+func ContainerStarted(pod *corev1.Pod, name string) bool {
+	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, s := range statuses {
+			if s.Name == name {
+				return s.State.Running != nil || s.State.Terminated != nil
+			}
+		}
+	}
+	return false
+}
+
+// DeleteJob deletes a Job and, through the garbage collector, its pods,
+// ignoring not-found errors.
+func DeleteJob(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
+	background := metav1.DeletePropagationBackground
+	err := client.BatchV1().Jobs(namespace).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &background})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete job %s: %w", name, err)
 	}
 	return nil
 }

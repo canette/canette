@@ -113,7 +113,12 @@ export interface App {
   port: number
   schedule?: string
   liveUrl?: string
+  // The status of the app's newest deployment, which may be superseded or
+  // still in progress. Use lifecycleStatus for the state of the app.
   latestDeploymentStatus?: DeploymentStatus
+  // The state of the app, from what it should run and how far canette has
+  // got with that (#354). Absent for an app that was never deployed.
+  lifecycleStatus?: AppLifecycleStatus
   canetteConfig?: string
   // Manual sort order within the project, shared across the team — lower sorts first.
   position: number
@@ -249,6 +254,12 @@ export interface WebhookSettings {
 
 // Admin types
 
+// building/deploying: the deployment the app should run is on its way.
+// stopping: stopped, the controller is still tearing it down.
+// failed: the deployment the app should run failed (an older one may still
+// serve).
+export type AppLifecycleStatus = "building" | "deploying" | "live" | "failed" | "stopping" | "stopped"
+
 export interface AdminAppSummary {
   id: string
   name: string
@@ -256,6 +267,7 @@ export interface AdminAppSummary {
   sourceType: AppSourceType
   liveUrl?: string
   latestDeploymentStatus?: DeploymentStatus
+  lifecycleStatus?: AppLifecycleStatus
   latestDeploymentAt?: string
 }
 
