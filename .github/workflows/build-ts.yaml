@@ -11,6 +11,7 @@ on:
       - apps/docs/public/schema/**
       - packages/**
       - package.json
+      - .github/workflows/build-ts.yaml
   workflow_dispatch:
 
 permissions:
