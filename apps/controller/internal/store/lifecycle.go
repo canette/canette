@@ -12,14 +12,22 @@ import (
 
 // An app's lifecycle is driven by its intent (app_intents, written by the
 // API) and the controller's progress on it (app_runtime, written here). See
-// #354. The controller claims an app with a lease, reads its effective intent,
-// and makes each Kubernetes change inside Fence, which checks under a lock
-// that the intent and the lease are still the ones it is working on.
+// #354. The controller claims an app with a lease, reads its intent, and makes
+// each Kubernetes change inside Fence, which checks under a lock that the
+// intent and the lease are still the ones it is working on.
 
 // AppLeaseTTL is how long an app's lease lasts without a heartbeat before
 // another poll may claim the app again, e.g. after the controller crashed.
 // Much longer than the heartbeat interval, so a slow DB write never trips it.
 const AppLeaseTTL = 2 * time.Minute
+
+// FenceTimeout bounds a fenced change, including the Kubernetes calls in it,
+// so a stalled request gives the intent lock and the worker back. Well above
+// what an apply takes, including ApplyAll's wait for quota usage.
+const FenceTimeout = time.Minute
+
+// fenceTimeout is FenceTimeout, shortened by tests.
+var fenceTimeout = FenceTimeout
 
 // ErrIntentChanged is returned by Fence when the app's intent has moved on
 // from the generation being worked on, or the app is gone.
@@ -28,6 +36,12 @@ var ErrIntentChanged = errors.New("app intent changed")
 // ErrLeaseLost is returned when this controller no longer holds the app's
 // lease, because it expired and the app was claimed again.
 var ErrLeaseLost = errors.New("app lease lost")
+
+// ErrFence wraps a failure of the fence's own database work (locking,
+// recording, committing), as opposed to an error of the fenced step. After
+// it, the Kubernetes change may or may not have been made, so the work must be
+// resumed from the intent, not recorded as failed.
+var ErrFence = errors.New("fence failed")
 
 // ErrNotDeploying is returned by FinishDeploy when the attempt is no longer
 // in progress, e.g. because it was superseded.
@@ -39,25 +53,75 @@ type Lease struct {
 	Token string
 }
 
-// Writes from an API that predates intents (#354). During the upgrade's API
-// rollout, old pods still deploy and stop without writing app_intents. Until
-// the API stops writing the old markers (part 3 of #354), the controller reads
-// them as intent:
+// AdoptLegacyWrites records in app_intents the lifecycle actions of an API
+// that predates intents (#354): during the upgrade's API rollout, old pods
+// still create apps, deploy and stop without writing app_intents. Until the
+// API stops writing the old markers (part 3 of #354), the controller converts
+// them, so that from then on the intent says what the old pod did:
 //
-//   - unrecordedDeploySQL finds a deployment created after the intent was last
-//     written, which can only come from such a pod. It becomes the target.
-//   - stopMarkerSQL finds the old Stop's teardown markers (a stopped row that
-//     still has its manifest, or a failed attempt marked for teardown). Every
-//     deploy clears them in the transaction that records its intent, so they
-//     mean the app was stopped since. The app is torn down.
+//   - An app without an intent row gets one (stopped, generation 0, written
+//     as of the app's creation), so its deployments count as unrecorded.
+//   - A deployment created after the intent was last written can only come
+//     from such a pod. It becomes the target of a running intent (stopped, if
+//     the old pod has stopped it since).
+//   - The old Stop's teardown markers (a stopped row that still has its
+//     manifest, or a failed attempt marked for teardown) on an app whose
+//     intent says running mean it was stopped since: every deploy clears them
+//     in the transaction that records its intent. The intent becomes stopped.
+//
+// This is the one place the controller writes app_intents. It locks the row
+// first, like the API, and returns the IDs of the apps it changed.
+func (s *Store) AdoptLegacyWrites(ctx context.Context) ([]string, error) {
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO app_intents (app_id, generation, desired_state, updated_at)
+		SELECT a.id, 0, 'stopped', a.created_at FROM apps a
+		WHERE NOT EXISTS (SELECT 1 FROM app_intents i WHERE i.app_id = a.id)
+		ON CONFLICT (app_id) DO NOTHING`); err != nil {
+		return nil, fmt.Errorf("add intent rows: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.app_id FROM app_intents i
+		WHERE EXISTS (`+unrecordedDeploySQL+`)
+		   OR (i.desired_state = 'running' AND EXISTS (`+stopMarkerSQL+`))`)
+	if err != nil {
+		return nil, fmt.Errorf("find legacy writes: %w", err)
+	}
+	var candidates []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan legacy write: %w", err)
+		}
+		candidates = append(candidates, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var adopted []string
+	for _, id := range candidates {
+		changed, err := s.adoptLegacyWrite(ctx, id)
+		if err != nil {
+			return adopted, err
+		}
+		if changed {
+			adopted = append(adopted, id)
+		}
+	}
+	return adopted, nil
+}
+
 const (
+	// unrecordedDeploySQL is the newest deployment of intent i's app created
+	// after the intent was last written (see AdoptLegacyWrites).
 	unrecordedDeploySQL = `
 		SELECT d.id FROM deployments d
-		WHERE d.app_id = i.app_id
-		  AND d.status IN ('pending_deployment', 'deploying')
-		  AND d.created_at > i.updated_at
+		WHERE d.app_id = i.app_id AND d.created_at > i.updated_at
 		ORDER BY d.created_at DESC, d.id DESC
 		LIMIT 1`
+	// stopMarkerSQL finds the old Stop's teardown markers on intent i's app.
 	stopMarkerSQL = `
 		SELECT 1 FROM deployments d
 		WHERE d.app_id = i.app_id
@@ -65,11 +129,56 @@ const (
 		       OR (d.status = 'stopped' AND d.applied_manifest IS NOT NULL))`
 )
 
+func (s *Store) adoptLegacyWrite(ctx context.Context, appID string) (bool, error) {
+	changed := false
+	err := s.inTx(ctx, "adopt legacy write", func(tx *sql.Tx) error {
+		var desired string
+		err := tx.QueryRowContext(ctx, `SELECT desired_state FROM app_intents i WHERE app_id = $1 FOR UPDATE`, appID).Scan(&desired)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // deleted since
+		}
+		if err != nil {
+			return err
+		}
+		// Checked again under the lock: an API pod that records intents may
+		// have written it since. An unrecorded deployment the old pod has
+		// stopped since means the app was stopped.
+		res, err := tx.ExecContext(ctx, `
+			UPDATE app_intents i
+			SET generation = i.generation + 1, target_deployment_id = d.id,
+			    desired_state = CASE WHEN d.status = 'stopped' THEN 'stopped' ELSE 'running' END,
+			    updated_at = GREATEST($2, d.created_at), updated_by = NULL
+			FROM deployments d
+			WHERE i.app_id = $1 AND d.id = (`+unrecordedDeploySQL+`)`, appID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n > 0 {
+			changed = n > 0
+			return err
+		}
+		if desired != "running" {
+			return nil
+		}
+		res, err = tx.ExecContext(ctx, `
+			UPDATE app_intents i
+			SET generation = i.generation + 1, desired_state = 'stopped', updated_at = $2, updated_by = NULL
+			WHERE i.app_id = $1 AND EXISTS (`+stopMarkerSQL+`)`, appID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		changed = n > 0
+		return err
+	})
+	return changed, err
+}
+
 // ClaimApps claims up to limit apps that need lifecycle work and whose lease
 // is free or expired, skipping the apps in running (this process's workers).
 // An app needs work when its intent's generation is ahead of what was
-// reconciled, unless its target is still being built (there is nothing to do
-// until the builder hands it over), or when an old API left writes behind.
+// reconciled, unless its target is still being built: there is nothing to do
+// until the builder hands it over.
 func (s *Store) ClaimApps(ctx context.Context, limit int, running []string) ([]Lease, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -96,15 +205,11 @@ func (s *Store) ClaimApps(ctx context.Context, limit int, running []string) ([]L
 			JOIN app_intents i ON i.app_id = r.app_id
 			WHERE (r.claimed_at IS NULL OR r.claimed_at < $3)
 			  AND NOT (r.app_id = ANY($4))
-			  AND (
-			    (i.generation > r.reconciled_generation
-			     AND NOT (i.desired_state = 'running' AND EXISTS (
-			       SELECT 1 FROM deployments t
-			       WHERE t.id = i.target_deployment_id
-			         AND t.status IN ('pending_build', 'building', 'scanning'))))
-			    OR EXISTS (`+unrecordedDeploySQL+`)
-			    OR EXISTS (`+stopMarkerSQL+`)
-			  )
+			  AND i.generation > r.reconciled_generation
+			  AND NOT (i.desired_state = 'running' AND EXISTS (
+			    SELECT 1 FROM deployments t
+			    WHERE t.id = i.target_deployment_id
+			      AND t.status IN ('pending_build', 'building', 'scanning')))
 			ORDER BY i.updated_at ASC
 			LIMIT $5
 			FOR UPDATE OF r SKIP LOCKED
@@ -163,8 +268,7 @@ func (s *Store) ReleaseAllLeases(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
-// Intent is an app's effective intent: app_intents, adjusted for writes from
-// an API that predates intents (see unrecordedDeploySQL).
+// Intent is an app's intent, with what the controller needs to act on it.
 type Intent struct {
 	AppID      string
 	Generation int64
@@ -183,20 +287,12 @@ type Intent struct {
 	ProjectSlug string
 
 	// Reconciled is the generation the controller has finished.
-	// Unrecorded and StopMarker report writes from an API that predates
-	// intents (see unrecordedDeploySQL), which Desired and Target already
-	// account for.
 	Reconciled int64
-	Unrecorded bool
-	StopMarker bool
 }
 
 // NeedsWork reports whether the controller has something to do for the
 // intent, by the same rule as ClaimApps.
 func (in *Intent) NeedsWork() bool {
-	if in.Unrecorded || in.StopMarker {
-		return true
-	}
 	if in.Generation <= in.Reconciled {
 		return false
 	}
@@ -204,36 +300,25 @@ func (in *Intent) NeedsWork() bool {
 	return in.Desired != "running" || !building
 }
 
-// ReadIntent returns the app's effective intent, or nil when the app is gone.
+// ReadIntent returns the app's intent, or nil when the app is gone.
 func (s *Store) ReadIntent(ctx context.Context, appID string) (*Intent, error) {
 	in := Intent{AppID: appID}
-	var target, unrecorded sql.NullString
-	var stopMarker bool
+	var target sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT i.generation, i.desired_state, i.target_deployment_id,
 		       a.slug, a.project_id, p.slug,
-		       COALESCE(r.reconciled_generation, 0),
-		       (`+unrecordedDeploySQL+`),
-		       EXISTS (`+stopMarkerSQL+`)
+		       COALESCE(r.reconciled_generation, 0)
 		FROM app_intents i
 		JOIN apps a ON a.id = i.app_id
 		JOIN projects p ON p.id = a.project_id
 		LEFT JOIN app_runtime r ON r.app_id = i.app_id
 		WHERE i.app_id = $1`, appID).
-		Scan(&in.Generation, &in.Desired, &target, &in.AppSlug, &in.ProjectID, &in.ProjectSlug,
-			&in.Reconciled, &unrecorded, &stopMarker)
+		Scan(&in.Generation, &in.Desired, &target, &in.AppSlug, &in.ProjectID, &in.ProjectSlug, &in.Reconciled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read intent: %w", err)
-	}
-	in.Unrecorded, in.StopMarker = unrecorded.Valid, stopMarker
-	switch {
-	case unrecorded.Valid:
-		in.Desired, target = "running", unrecorded
-	case stopMarker:
-		in.Desired = "stopped"
 	}
 	if target.Valid {
 		if err := s.loadTarget(ctx, &in, target.String); err != nil {
@@ -267,13 +352,33 @@ func (s *Store) loadTarget(ctx context.Context, in *Intent, id string) error {
 // still at generation and the lease still this controller's. The API changes
 // an intent under FOR UPDATE, so it waits for the step instead of changing the
 // intent halfway through it, and an expired lease can't be claimed during it.
+// The whole fence is bounded by FenceTimeout.
 //
-// If the commit fails after step ran, the change may or may not have been
-// made, and the caller must read the intent again rather than assume either.
+// An error of step is returned as is. A failure of the fence's own database
+// work wraps ErrFence: the change may or may not have been made, and the
+// caller must resume from the intent rather than assume either.
 func (s *Store) Fence(ctx context.Context, l Lease, generation int64, step func(context.Context) error) error {
+	return s.fence(ctx, l, generation, step, nil)
+}
+
+// FenceStop runs teardown like Fence, and records the stop in the same
+// transaction, before the lock is released: attempts that were live or rolling
+// out are stopped, one still waiting to be rolled out is superseded, the old
+// Stop's teardown markers are cleared (see stopMarkerSQL), and the app has no
+// applied deployment or URL any more. Recording it under the lock means a
+// deploy accepted after the teardown can't be swept up by it.
+func (s *Store) FenceStop(ctx context.Context, l Lease, generation int64, teardown func(context.Context) error) error {
+	return s.fence(ctx, l, generation, teardown, func(ctx context.Context, tx *sql.Tx) error {
+		return recordStop(ctx, tx, l, generation)
+	})
+}
+
+func (s *Store) fence(ctx context.Context, l Lease, generation int64, step func(context.Context) error, record func(context.Context, *sql.Tx) error) error {
+	ctx, cancel := context.WithTimeout(ctx, fenceTimeout)
+	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("fence: %w", err)
+		return fmt.Errorf("%w: begin: %w", ErrFence, err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -283,7 +388,7 @@ func (s *Store) Fence(ctx context.Context, l Lease, generation int64, step func(
 		return ErrIntentChanged
 	}
 	if err != nil {
-		return fmt.Errorf("fence: lock intent: %w", err)
+		return fmt.Errorf("%w: lock intent: %w", ErrFence, err)
 	}
 	var held int
 	err = tx.QueryRowContext(ctx, `
@@ -292,7 +397,7 @@ func (s *Store) Fence(ctx context.Context, l Lease, generation int64, step func(
 		return ErrLeaseLost
 	}
 	if err != nil {
-		return fmt.Errorf("fence: lock lease: %w", err)
+		return fmt.Errorf("%w: lock lease: %w", ErrFence, err)
 	}
 	if current != generation {
 		return ErrIntentChanged
@@ -300,8 +405,16 @@ func (s *Store) Fence(ctx context.Context, l Lease, generation int64, step func(
 	if err := step(ctx); err != nil {
 		return err
 	}
+	if record != nil {
+		if err := record(ctx, tx); err != nil {
+			if errors.Is(err, ErrLeaseLost) {
+				return err
+			}
+			return fmt.Errorf("%w: record: %w", ErrFence, err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("fence: commit: %w", err)
+		return fmt.Errorf("%w: commit: %w", ErrFence, err)
 	}
 	return nil
 }
@@ -379,42 +492,37 @@ func (s *Store) MarkReconciled(ctx context.Context, l Lease, generation int64) e
 	})
 }
 
-// FinishStop records that the app's resources are torn down: attempts that
-// were live or rolling out are stopped, one still waiting to be rolled out is
-// superseded, the old Stop's teardown markers are cleared (see stopMarkerSQL),
-// and the app has no applied deployment or URL any more.
-func (s *Store) FinishStop(ctx context.Context, l Lease, generation int64) error {
-	return s.inTx(ctx, "finish stop", func(tx *sql.Tx) error {
-		now := time.Now().UTC()
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE deployments SET status = 'stopped', error_message = NULL, updated_at = $1
-			WHERE app_id = $2 AND status IN ('live', 'deploying')`, now, l.AppID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE deployments SET status = 'superseded', updated_at = $1
-			WHERE app_id = $2 AND status = 'pending_deployment'`, now, l.AppID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE deployments
-			SET applied_manifest = CASE WHEN status = 'stopped' THEN NULL ELSE applied_manifest END,
-			    teardown_requested_at = NULL
-			WHERE app_id = $1
-			  AND (teardown_requested_at IS NOT NULL OR (status = 'stopped' AND applied_manifest IS NOT NULL))`,
-			l.AppID); err != nil {
-			return err
-		}
-		res, err := tx.ExecContext(ctx, `
-			UPDATE app_runtime
-			SET applied_deployment_id = NULL, live_url = NULL, last_error = NULL,
-			    reconciled_generation = GREATEST(reconciled_generation, $1)
-			WHERE app_id = $2 AND lease_token = $3`, generation, l.AppID, l.Token)
-		if err != nil {
-			return err
-		}
-		return requireRow(res, ErrLeaseLost)
-	})
+// recordStop records a finished teardown, see FenceStop.
+func recordStop(ctx context.Context, tx *sql.Tx, l Lease, generation int64) error {
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE deployments SET status = 'stopped', error_message = NULL, updated_at = $1
+		WHERE app_id = $2 AND status IN ('live', 'deploying')`, now, l.AppID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE deployments SET status = 'superseded', updated_at = $1
+		WHERE app_id = $2 AND status = 'pending_deployment'`, now, l.AppID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE deployments
+		SET applied_manifest = CASE WHEN status = 'stopped' THEN NULL ELSE applied_manifest END,
+		    teardown_requested_at = NULL
+		WHERE app_id = $1
+		  AND (teardown_requested_at IS NOT NULL OR (status = 'stopped' AND applied_manifest IS NOT NULL))`,
+		l.AppID); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `
+		UPDATE app_runtime
+		SET applied_deployment_id = NULL, live_url = NULL, last_error = NULL,
+		    reconciled_generation = GREATEST(reconciled_generation, $1)
+		WHERE app_id = $2 AND lease_token = $3`, generation, l.AppID, l.Token)
+	if err != nil {
+		return err
+	}
+	return requireRow(res, ErrLeaseLost)
 }
 
 // Supersede ends an attempt that is no longer the app's target before it went

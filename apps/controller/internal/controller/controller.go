@@ -191,6 +191,16 @@ func (c *Controller) runningApps() []string {
 // processPending claims queued work and starts a worker for each item. Claims
 // run on ctx, which stops on shutdown; workers run on workCtx (see Run).
 func (c *Controller) processPending(ctx, workCtx context.Context) error {
+	// Lifecycle actions of an API pod that predates intents, during an
+	// upgrade, become intent (until part 3 of #354).
+	adopted, err := c.store.AdoptLegacyWrites(ctx)
+	if err != nil {
+		c.log.Error("adopt legacy lifecycle writes error", zap.Error(err))
+	}
+	for _, id := range adopted {
+		c.log.Info("recorded a deploy or stop from an older API in the app's intent", zap.String("app_id", id))
+	}
+
 	// Attempts that finished building after a newer deploy or a Stop never
 	// roll out.
 	superseded, err := c.store.SweepSuperseded(ctx)

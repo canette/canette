@@ -91,11 +91,17 @@ func (c *Controller) step(ctx context.Context, log *zap.Logger, lease store.Leas
 func (c *Controller) stopApp(ctx context.Context, log *zap.Logger, lease store.Lease, in *store.Intent) bool {
 	log = log.With(zap.String("app", in.AppSlug), zap.String("project", in.ProjectSlug))
 	ns := k8sres.AppNamespace(in.ProjectID, in.ProjectSlug)
-	err := c.store.Fence(ctx, lease, in.Generation, func(ctx context.Context) error {
+	// The stop is recorded in the fenced transaction, so a deploy accepted
+	// right after the teardown can't be mistaken for part of it.
+	err := c.store.FenceStop(ctx, lease, in.Generation, func(ctx context.Context) error {
 		if err := k8sres.TeardownApp(ctx, c.dynClient, ns, in.AppSlug); err != nil {
 			return err
 		}
-		return k8sres.TeardownCronJob(ctx, c.dynClient, ns, in.AppSlug)
+		if err := k8sres.TeardownCronJob(ctx, c.dynClient, ns, in.AppSlug); err != nil {
+			return err
+		}
+		failpoint.Hit("after-teardown-delete")
+		return nil
 	})
 	if again, handled := c.fenceOutcome(ctx, log, err); handled {
 		return again
@@ -103,15 +109,6 @@ func (c *Controller) stopApp(ctx context.Context, log *zap.Logger, lease store.L
 	if err != nil {
 		// Idempotent: the app still needs work, so a later poll retries.
 		log.Warn("teardown error", zap.Error(err))
-		return false
-	}
-
-	failpoint.Hit("after-teardown-delete")
-
-	if err := c.store.FinishStop(ctx, lease, in.Generation); err != nil {
-		if !errors.Is(err, store.ErrLeaseLost) {
-			log.Warn("record teardown error", zap.Error(err))
-		}
 		return false
 	}
 	log.Info("teardown complete")
@@ -126,9 +123,10 @@ func (c *Controller) markReconciled(ctx context.Context, log *zap.Logger, lease 
 }
 
 // fenceOutcome handles the results of store.Fence that end the step: the
-// intent moved on (read it again), the lease was lost or the controller is
-// shutting down (stop). handled is false for success and for errors of the
-// step itself, which the caller handles.
+// intent moved on (read it again), the lease was lost, the fence's own
+// database work failed, or the controller is shutting down (stop and resume
+// later). handled is false for success and for errors of the step itself,
+// which the caller handles.
 func (c *Controller) fenceOutcome(ctx context.Context, log *zap.Logger, err error) (again, handled bool) {
 	switch {
 	case errors.Is(err, store.ErrIntentChanged):
@@ -136,6 +134,11 @@ func (c *Controller) fenceOutcome(ctx context.Context, log *zap.Logger, err erro
 		return true, true
 	case errors.Is(err, store.ErrLeaseLost):
 		log.Warn("app lease lost; another worker took over")
+		return false, true
+	case errors.Is(err, store.ErrFence):
+		// The change may or may not have been made. The intent is still
+		// ahead, so a later poll claims the app again and resumes.
+		log.Warn("fenced change not confirmed; resuming on a later poll", zap.Error(err))
 		return false, true
 	case err != nil && ctx.Err() != nil:
 		return false, true // shutting down: the next controller resumes

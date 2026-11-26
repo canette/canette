@@ -110,6 +110,14 @@ func (f *lifecycleFixture) claim() store.Lease {
 	return leases[0]
 }
 
+// adopt runs the poll's conversion of old-API writes into intent.
+func (f *lifecycleFixture) adopt() {
+	f.t.Helper()
+	if _, err := f.c.store.AdoptLegacyWrites(context.Background()); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 func (f *lifecycleFixture) run(ctx context.Context) {
 	f.t.Helper()
 	f.c.runApp(ctx, f.claim())
@@ -374,6 +382,7 @@ func TestRunApp_StopFromOldAPI(t *testing.T) {
 	f.exec(`INSERT INTO app_runtime (app_id, reconciled_generation, applied_deployment_id) VALUES ('a1', 1, 'd1')`)
 	f.exec(`UPDATE deployments SET status = 'stopped', applied_manifest = 'm' WHERE id = 'd1'`)
 
+	f.adopt()
 	f.run(context.Background())
 
 	if f.workloadExists() {
@@ -399,6 +408,7 @@ func TestRunApp_DeployFromOldAPI(t *testing.T) {
 		VALUES ('d2', 'a1', 'pending_deployment', 'abc', 'sha256:abc',
 		        '{"app":{"id":"a1","slug":"a"},"project":{"id":"p1","slug":"p"}}', $1, $1)`, time.Now().UTC())
 
+	f.adopt()
 	f.run(context.Background())
 
 	if got := f.status("d2"); got != "live" {
@@ -406,6 +416,61 @@ func TestRunApp_DeployFromOldAPI(t *testing.T) {
 	}
 	if r := f.runtime(); r.applied.String != "d2" || r.leased {
 		t.Errorf("runtime %+v", r)
+	}
+	// Once live it stays the app's serving deployment: the adoption is
+	// recorded in the intent, not worked out from the attempt in progress.
+	deps, err := f.c.store.GetCurrentDeployments(context.Background())
+	if err != nil || len(deps) != 1 || deps[0].DeploymentID != "d2" {
+		t.Errorf("current deployments %+v, err %v; want d2", deps, err)
+	}
+	if leases, err := f.c.store.ClaimApps(context.Background(), 10, nil); err != nil || len(leases) != 0 {
+		t.Errorf("claimed %+v after it went live, err %v", leases, err)
+	}
+}
+
+// An app created by an API pod that predates intents has no intent row. Its
+// deployment is still rolled out.
+func TestRunApp_AppFromOldAPI(t *testing.T) {
+	f := newLifecycleFixture(t) // seedProject's app a1 has no intent row
+	f.exec(`INSERT INTO deployments (id, app_id, status, commit_sha, image_digest, deployment_snapshot, created_at, updated_at)
+		VALUES ('d1', 'a1', 'pending_deployment', 'abc', 'sha256:abc',
+		        '{"app":{"id":"a1","slug":"a"},"project":{"id":"p1","slug":"p"}}', $1, $1)`, time.Now().UTC().Add(time.Second))
+
+	f.adopt()
+	f.run(context.Background())
+
+	if got := f.status("d1"); got != "live" {
+		t.Errorf("d1 is %s, want live", got)
+	}
+}
+
+// A rollout whose fenced apply worked but whose transaction was lost before
+// it committed is resumed, not failed.
+func TestRunApp_LostFenceResumes(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	f.c.applyAll = func(context.Context, dynamic.Interface, k8sres.AppResources) error {
+		f.applies.Add(1)
+		if f.applies.Load() == 1 {
+			f.exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+				WHERE state = 'idle in transaction' AND query LIKE '%lease_token = $2 FOR SHARE%'`)
+		}
+		return nil
+	}
+
+	f.run(context.Background())
+
+	if got := f.status("d1"); got != "deploying" {
+		t.Errorf("d1 is %s, want deploying (unconfirmed, not failed)", got)
+	}
+	if r := f.runtime(); r.reconciled != 0 || r.leased {
+		t.Errorf("runtime %+v", r)
+	}
+
+	f.run(context.Background())
+	if got := f.status("d1"); got != "live" {
+		t.Errorf("after resuming, d1 is %s, want live", got)
 	}
 }
 
