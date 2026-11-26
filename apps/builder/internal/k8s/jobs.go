@@ -325,6 +325,20 @@ func CreateGitCredSecret(
 	return nil
 }
 
+// ContainerStarted reports whether the pod's container or init container
+// name is running or has finished, so its log is there to read. The log of a
+// container that is still waiting can come back empty instead of as an error.
+func ContainerStarted(pod *corev1.Pod, name string) bool {
+	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, s := range statuses {
+			if s.Name == name {
+				return s.State.Running != nil || s.State.Terminated != nil
+			}
+		}
+	}
+	return false
+}
+
 // DeleteJob deletes a Job and, through the garbage collector, its pods,
 // ignoring not-found errors.
 func DeleteJob(ctx context.Context, client kubernetes.Interface, namespace, name string) error {

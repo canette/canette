@@ -328,3 +328,35 @@ func TestBuildFlow_RetriesFailedJobDelete(t *testing.T) {
 		t.Errorf("superseded %v, failed %v; want only superseded", fs.superseded, fs.markedFailed)
 	}
 }
+
+// The log of a container that hasn't started is not read: it can come back
+// empty, which would end the tail before the build printed its markers.
+func TestStreamContainerLogs_WaitsForTheContainer(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "can-build-x-abcde", Namespace: "canette-system"},
+		Status: corev1.PodStatus{
+			Phase:                 corev1.PodPending,
+			InitContainerStatuses: []corev1.ContainerStatus{{Name: "git-clone", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}}},
+		},
+	}
+	k8s := fake.NewSimpleClientset(pod)
+	b := newBuildFlowBuilder(t, &fakeStore{}, k8s, "static")
+	b.logRetryInterval = time.Millisecond
+	var written int
+
+	err := b.streamContainerLogs(context.Background(), zap.NewNop(), "d", pod.Name, "git-clone", nil, &written)
+	if err == nil || !strings.Contains(err.Error(), "has not started") {
+		t.Fatalf("waiting container: err %v, want it not read", err)
+	}
+
+	pod.Status.InitContainerStatuses[0].State = corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	if _, err := k8s.CoreV1().Pods("canette-system").UpdateStatus(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.streamContainerLogs(context.Background(), zap.NewNop(), "d", pod.Name, "git-clone", nil, &written); err != nil {
+		t.Fatalf("running container: %v", err)
+	}
+	if written == 0 {
+		t.Error("read no log lines from the running container")
+	}
+}

@@ -61,6 +61,10 @@ type Builder struct {
 	// replacedCheckInterval is how often a running build or scan checks that
 	// its deployment is still wanted (whileWanted).
 	replacedCheckInterval time.Duration
+
+	// logRetryInterval is how often a log tail checks whether a container
+	// has started.
+	logRetryInterval time.Duration
 }
 
 // whileWanted runs wait while the deployment is still wanted. Every
@@ -176,6 +180,7 @@ func New(
 		maxConcurrent: maxConcurrent,
 
 		replacedCheckInterval: 5 * time.Second,
+		logRetryInterval:      3 * time.Second,
 		registryConfig: registry.Config{
 			ImageRepo: cfg.ImageRepo,
 			AuthType:  cfg.RegistryAuthType,
@@ -564,9 +569,11 @@ func (b *Builder) tailLogs(ctx context.Context, log *zap.Logger, deploymentID, p
 }
 
 func (b *Builder) streamContainerLogs(ctx context.Context, log *zap.Logger, deploymentID, podName, container string, interceptors map[string]*string, linesWritten *int) error {
-	// Retry opening the log stream — the container may not have started yet
-	// even though the pod exists (especially for image-build after git-clone finishes).
-	const maxAttempts = 15
+	// Wait for the container to start before following its logs: the pod
+	// can exist before its containers do, and the log of a container that is
+	// still waiting can come back empty instead of as an error, which would
+	// end the tail before the build printed anything.
+	const maxAttempts = 40
 	var stream interface {
 		Read([]byte) (int, error)
 		Close() error
@@ -575,20 +582,29 @@ func (b *Builder) streamContainerLogs(ctx context.Context, log *zap.Logger, depl
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		req := b.k8s.CoreV1().Pods(b.cfg.Namespace).GetLogs(podName, &corev1.PodLogOptions{
-			Container: container,
-			Follow:    true,
-		})
-		s, err := req.Stream(ctx)
-		if err == nil {
-			stream = s
-			break
+		pod, err := b.k8s.CoreV1().Pods(b.cfg.Namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err == nil && !k8sjobs.ContainerStarted(pod, container) {
+			err = fmt.Errorf("container %s has not started", container)
 		}
-		// Container not started yet — wait and retry
+		if err == nil {
+			req := b.k8s.CoreV1().Pods(b.cfg.Namespace).GetLogs(podName, &corev1.PodLogOptions{
+				Container: container,
+				Follow:    true,
+			})
+			var s io.ReadCloser
+			if s, err = req.Stream(ctx); err == nil {
+				stream = s
+				break
+			}
+		}
 		if attempt == maxAttempts {
 			return fmt.Errorf("open log stream for %s after %d attempts: %w", container, maxAttempts, err)
 		}
-		time.Sleep(3 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(b.logRetryInterval):
+		}
 	}
 	defer stream.Close()
 
