@@ -42,6 +42,7 @@ type Storer interface {
 	MarkScanning(ctx context.Context, deploymentID, scanJobName string) error
 	SetScanResults(ctx context.Context, deploymentID, scanStatus, scanSummary, sbom string) error
 	MarkDeploying(ctx context.Context, deploymentID, imageDigest string) error
+	SupersedeReplaced(ctx context.Context, deploymentID string) (bool, error)
 }
 
 type Builder struct {
@@ -164,7 +165,15 @@ func (b *Builder) build(ctx context.Context, dep store.PendingDeployment) {
 		}
 	}()
 
-	// 1. Deployment was claimed atomically by ClaimPending — proceed directly.
+	// 1. Deployment was claimed atomically by ClaimPending. Skip it if a newer
+	// deploy or a Stop replaced it while it waited.
+	if superseded, err := b.store.SupersedeReplaced(ctx, dep.ID); err != nil {
+		log.Warn("supersede check failed; building anyway", zap.Error(err))
+	} else if superseded {
+		log.Info("build skipped: a newer deploy or a Stop replaced it")
+		_ = b.store.AppendLog(ctx, dep.ID, "stdout", "[canette] build skipped: a newer deployment or a Stop replaced it")
+		return
+	}
 	log.Info("build started", zap.String("job", jobName))
 
 	// 2. Resolve git credentials if the app has them.

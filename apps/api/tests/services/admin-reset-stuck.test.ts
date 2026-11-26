@@ -2,7 +2,7 @@ import { beforeAll, describe, it, expect } from "vitest"
 import { join } from "path"
 import { runMigrations } from "../../src/db/migrations"
 import { createTestDb } from "../utils/sqlite"
-import { DEPLOYING_HEARTBEAT_TTL_MS, resetStuckBuilds } from "../../src/services/admin"
+import { resetStuckBuilds } from "../../src/services/admin"
 import { createApp } from "../../src/services/apps"
 import { createProject } from "../../src/services/projects"
 
@@ -31,7 +31,7 @@ describe("resetStuckBuilds", () => {
   })
 
   const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
-  const expired = () => ago(DEPLOYING_HEARTBEAT_TTL_MS + 60_000)
+  const longAgo = () => ago(60 * 60 * 1000)
 
   // Each deployment gets an app of its own: an app can have only one
   // deployment in progress.
@@ -50,24 +50,21 @@ describe("resetStuckBuilds", () => {
     return row.status
   }
 
-  it("fails building, scanning and abandoned deploying rows, and leaves the rest", async () => {
+  it("fails building and scanning rows, and leaves the rest", async () => {
     await addDeployment("building", "building", null, ago(1000))
     await addDeployment("scanning", "scanning", null, ago(1000))
-    await addDeployment("deploying-expired", "deploying", expired(), expired())
-    // Claimed before claimed_at existed: falls back to updated_at.
-    await addDeployment("deploying-legacy", "deploying", null, expired())
-    // Heartbeat is fresh even though the row was claimed long ago.
-    await addDeployment("deploying-fresh", "deploying", ago(10_000), expired())
-    await addDeployment("pending", "pending_deployment", null, expired())
-    await addDeployment("live", "live", null, expired())
+    // The controller resumes a deploying row itself, however old.
+    await addDeployment("deploying", "deploying", longAgo(), longAgo())
+    await addDeployment("pending", "pending_deployment", null, longAgo())
+    await addDeployment("live", "live", null, longAgo())
 
     const result = await resetStuckBuilds(db)
-    expect(result.synced).toBe(4)
+    expect(result.synced).toBe(2)
 
-    for (const id of ["building", "scanning", "deploying-expired", "deploying-legacy"]) {
+    for (const id of ["building", "scanning"]) {
       expect(await statusOf(id)).toBe("failed")
     }
-    expect(await statusOf("deploying-fresh")).toBe("deploying")
+    expect(await statusOf("deploying")).toBe("deploying")
     expect(await statusOf("pending")).toBe("pending_deployment")
     expect(await statusOf("live")).toBe("live")
 

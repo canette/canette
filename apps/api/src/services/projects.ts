@@ -172,7 +172,7 @@ export async function updateProject(
       SELECT COUNT(*) as count FROM apps a
       INNER JOIN deployments d ON d.app_id = a.id
         AND d.created_at = (SELECT MAX(created_at) FROM deployments WHERE app_id = a.id)
-      WHERE a.project_id = ${projectId} AND d.status != 'stopped'
+      WHERE a.project_id = ${projectId} AND d.status NOT IN ('stopped', 'superseded')
     `.execute(db)
     const activeCount = Number(countResult.rows[0]?.count ?? 0)
     if (activeCount > 0) {

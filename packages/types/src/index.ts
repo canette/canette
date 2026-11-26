@@ -188,6 +188,9 @@ export type DeploymentStatus =
   | "live"
   | "failed"
   | "stopped"
+  // A newer deploy or a Stop replaced it before it went live, or a newer
+  // deployment went live after it.
+  | "superseded"
 
 export type ScanStatus = "pass" | "fail" | "error" | "skipped"
 

@@ -10,7 +10,7 @@ export function statusVariant(status: string | undefined | null): StatusVariant 
   if (status === "pending_deployment" || status === "deploying") return "deploying"
   if (status === "failed") return "failed"
   if (status === "unhealthy") return "unhealthy"
-  if (status === "stopped") return "stopped"
+  if (status === "stopped" || status === "superseded") return "stopped"
   return "pending"
 }
 

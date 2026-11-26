@@ -39,7 +39,7 @@ type deployment struct {
 }
 
 // Statuses a deployment does not leave on its own.
-var terminalStatuses = []string{"live", "failed", "stopped"}
+var terminalStatuses = []string{"live", "failed", "stopped", "superseded"}
 
 // Build and rollout of the busybox fixture take well under this.
 const deployTimeout = 7 * time.Minute
@@ -143,6 +143,19 @@ func waitDeployment(t *testing.T, a app, id, want string, timeout time.Duration)
 		t.Fatalf("deployment %s finished %s (%s), want %s", id, d.Status, d.ErrorMessage, want)
 	}
 	return d
+}
+
+// waitStatus waits until the deployment has status want, which need not be
+// terminal, e.g. building or deploying.
+func waitStatus(t *testing.T, a app, id, want string, timeout time.Duration) {
+	t.Helper()
+	eventually(t, timeout, 300*time.Millisecond, fmt.Sprintf("deployment %s to be %s", id, want), func() (bool, error) {
+		d, ok := getDeployment(t, a, id)
+		if ok && d.Status != want && slices.Contains(terminalStatuses, d.Status) {
+			return false, fmt.Errorf("deployment %s finished %s before it was %s", id, d.Status, want)
+		}
+		return ok && d.Status == want, nil
+	})
 }
 
 // deployLive deploys the app and waits until it is live.

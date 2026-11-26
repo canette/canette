@@ -248,11 +248,14 @@ async function hasActiveDeployment(db: DB, appId: string): Promise<boolean> {
 // When null (webhook path), the HMAC signature in the receiver is the security gate.
 // input is provided by webhooks (real commit data); omit for manual deploys and the
 // branch/tag is read from the apps table with commit_message set to 'Manual Deploy'.
+// With onlyIfRunning (webhooks), an app whose intent is stopped isn't deployed:
+// APP_NOT_RUNNING is thrown instead, checked under the intent lock so a Stop
+// that commits while the request is handled wins.
 export async function createDeployment(
   db: DB,
   appId: string,
   triggeredBy: string | null,
-  input?: { commitSha: string; commitMessage?: string }
+  input?: { commitSha: string; commitMessage?: string; onlyIfRunning?: boolean }
 ): Promise<Deployment> {
   if (triggeredBy !== null) {
     const app = await getAppById(db, appId, triggeredBy)
@@ -315,7 +318,7 @@ export async function createDeployment(
       updated_at: now,
     }
   }
-  await startDeployment(db, values, IN_PROGRESS_MESSAGE)
+  await startDeployment(db, values, IN_PROGRESS_MESSAGE, { onlyIfRunning: input?.onlyIfRunning })
 
   const row = await db
     .selectFrom("deployments")
@@ -330,10 +333,21 @@ export async function createDeployment(
 async function startDeployment(
   db: DB,
   values: Insertable<Database["deployments"]>,
-  inProgressMessage: string
+  inProgressMessage: string,
+  opts: { onlyIfRunning?: boolean } = {}
 ): Promise<void> {
   await db.transaction().execute(async (tx) => {
     await lockIntent(tx, values.app_id)
+    if (opts.onlyIfRunning) {
+      const intent = await tx
+        .selectFrom("app_intents")
+        .select("desired_state")
+        .where("app_id", "=", values.app_id)
+        .executeTakeFirst()
+      if (intent?.desired_state !== "running") {
+        throw new ServiceError("App is not running", "APP_NOT_RUNNING", 409)
+      }
+    }
     // Cancel any pending teardown from a previous stop. The new deployment is about to
     // (re)create the same named K8s resources, so a stale teardown claim for an older
     // deployment must not be left to delete them out from under it later.
@@ -369,7 +383,8 @@ async function cancelPendingTeardowns(db: DB, appId: string): Promise<void> {
 // When the latest attempt that applied resources failed instead (e.g. a first
 // deploy whose pods crash-loop), it is marked for teardown and keeps its
 // 'failed' status and error.
-// Any in-progress build is left running — if it completes it will redeploy the app.
+// A build or rollout in progress doesn't go live afterwards: the builder or
+// the controller sees the stopped intent and supersedes or stops it (#354).
 // Verifies access itself via app → project → team membership.
 export async function stopApp(
   db: DB,
@@ -458,7 +473,7 @@ export async function redeployDeployment(
       409
     )
   }
-  if (access.status !== "failed" && access.status !== "live" && access.status !== "stopped") {
+  if (!["failed", "live", "stopped", "superseded"].includes(access.status)) {
     throw new ServiceError(
       `Cannot redeploy a deployment with status '${access.status}'.`,
       "INVALID_STATUS",

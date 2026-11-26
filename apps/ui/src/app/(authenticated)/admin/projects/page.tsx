@@ -20,7 +20,7 @@ function statusVariant(status: string | undefined): StatusVariant {
   if (status === "building") return "building"
   if (status === "deploying") return "deploying"
   if (status === "failed") return "failed"
-  if (status === "stopped") return "secondary"
+  if (status === "stopped" || status === "superseded") return "secondary"
   return "pending"
 }
 

@@ -102,6 +102,28 @@ describe("app intent", () => {
     expect(await intent(db, app.id)).toMatchObject({ target_deployment_id: dep.id, updated_by: null })
   })
 
+  it("a webhook deploy re-checks under the lock that the app is running", async () => {
+    // The webhook's early check saw it running, then a Stop committed.
+    const app = await makeApp("stopped-meanwhile")
+    await createDeployment(db, app.id, "userId")
+    await db.updateTable("deployments").set({ status: "live" }).where("app_id", "=", app.id).execute()
+    await stopApp(db, app.id, "userId")
+    const before = await intent(db, app.id)
+
+    await expect(createDeployment(db, app.id, null, { commitSha: "deadbeef", onlyIfRunning: true }))
+      .rejects.toMatchObject({ code: "APP_NOT_RUNNING" })
+    expect(await intent(db, app.id)).toEqual(before)
+    const rows = await db.selectFrom("deployments").select("id").where("app_id", "=", app.id).execute()
+    expect(rows).toHaveLength(1)
+
+    // A running app is deployed as usual.
+    const running = await makeApp("running-push")
+    await createDeployment(db, running.id, "userId")
+    await db.updateTable("deployments").set({ status: "live" }).where("app_id", "=", running.id).execute()
+    const pushed = await createDeployment(db, running.id, null, { commitSha: "deadbeef", onlyIfRunning: true })
+    expect(await intent(db, running.id)).toMatchObject({ desired_state: "running", target_deployment_id: pushed.id })
+  })
+
   it("a refused deploy changes neither the intent nor a pending teardown", async () => {
     const app = await makeApp("refused")
     const stopped = await addDeployment(db, app.id, "stopped", { appliedManifest: "kind: Deployment" })

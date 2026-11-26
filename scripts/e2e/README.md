@@ -57,12 +57,13 @@ LIFECYCLE_RUN='TestControllerCrash/after-claim' ./scripts/e2e/macos-lima.sh --li
 
 | Test | Checks |
 | --- | --- |
-| `TestControllerCrash` | The controller exits at the `after-claim`, `after-partial-apply`, `after-teardown-delete` and `after-app-delete` failpoints. After the restart, the deployment is failed as abandoned and a redeploy goes live, or the teardown or cleanup is retried and finishes. The history is kept, and a pending app cleanup keeps its slug taken. |
+| `TestControllerCrash` | The controller exits at the `after-claim`, `after-partial-apply`, `after-teardown-delete` and `after-app-delete` failpoints. After the restart, the controller resumes the deployment and it goes live, or the teardown or cleanup is retried and finishes. The history is kept, and a pending app cleanup keeps its slug taken. |
 | `TestStopKeepsPVC` | Stop and redeploy keep the app's PVC (same UID). |
 | `TestSlugChangeKeepsPVC` | A rename is refused while an app has a PVC volume, and the old namespace is kept while a PVC is left in it. |
 | `TestStopThenRedeploy` | A redeploy right after Stop goes live, and the stopped deployment's teardown doesn't touch the new Deployment (same UID and deployment for 3 polls). |
 | `TestKubernetesOutage` | With the controller's ClusterRoleBinding emptied, it logs that Kubernetes is unreachable, and once restored that it is reachable again. The REST API and MCP agree on the app's health throughout, and its pods don't change. With `LIFECYCLE_LONG=1`, the app also stays healthy past the stale window, reads unknown during the outage and healthy again after it. |
-| `TestStopDuringBuildThenRedeploy`, `TestStopDuringDeployThenRedeploy` | Skipped until [#331](https://github.com/canette/canette/issues/331). |
+| `TestStopDuringDeployThenRedeploy` | Stop during a rollout ends it `stopped` and tears it down, and a redeploy then goes live untouched (same UID for 3 polls). |
+| `TestStopDuringBuildThenRedeploy` | A build stopped while it runs ends `superseded` and nothing is rolled out. A redeploy of its image (or a new build, if it was skipped) goes live. |
 | `TestSlugReuseAfterDelete`, `TestVolumeRecreateSameName` | Skipped until [#333](https://github.com/canette/canette/issues/333). |
 | `TestStatus` | Skipped until [#332](https://github.com/canette/canette/issues/332) and [#334](https://github.com/canette/canette/issues/334). |
 

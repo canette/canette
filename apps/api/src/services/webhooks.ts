@@ -565,6 +565,8 @@ export async function hasWebhook(db: DB, appId: string): Promise<boolean> {
   return row !== undefined
 }
 
+const NOT_RUNNING_MESSAGE = "App is not running — push acknowledged but no deployment triggered"
+
 export async function processWebhookEvent(
   db: DB,
   appId: string,
@@ -667,6 +669,17 @@ export async function processWebhookEvent(
   }
 
   // ── App state check ───────────────────────────────────────────────────────
+  // A push deploys only an app that should be running: one deployed and not
+  // stopped since. Its intent says so (#354). A stopped app's latest
+  // deployment can be superseded rather than stopped, so its status doesn't.
+  const intent = await db
+    .selectFrom("app_intents")
+    .select("desired_state")
+    .where("app_id", "=", appId)
+    .executeTakeFirst()
+  if (intent?.desired_state !== "running") {
+    return { status: 200, message: NOT_RUNNING_MESSAGE }
+  }
   const latest = await db
     .selectFrom("deployments")
     .select("status")
@@ -675,10 +688,7 @@ export async function processWebhookEvent(
     .limit(1)
     .executeTakeFirst()
   const latestStatus = latest?.status
-  if (!latestStatus || latestStatus === "stopped") {
-    return { status: 200, message: "App is not running — push acknowledged but no deployment triggered" }
-  }
-  if ((ACTIVE_DEPLOYMENT_STATUSES as readonly string[]).includes(latestStatus)) {
+  if (latestStatus && (ACTIVE_DEPLOYMENT_STATUSES as readonly string[]).includes(latestStatus)) {
     return { status: 200, message: "Deployment already in progress" }
   }
   // ── Trigger deployment ────────────────────────────────────────────────────
@@ -686,8 +696,13 @@ export async function processWebhookEvent(
     await createDeployment(db, appId, null, {
       commitSha: headCommitSha,
       commitMessage: headCommitMessage,
+      onlyIfRunning: true,
     })
   } catch (err) {
+    // Stopped since the check above: the Stop wins.
+    if (err instanceof ServiceError && err.code === "APP_NOT_RUNNING") {
+      return { status: 200, message: NOT_RUNNING_MESSAGE }
+    }
     // A deployment started since the check above (or an older one is still
     // running). Not an error for the provider, which would retry it.
     if (err instanceof ServiceError && err.code === "DEPLOYMENT_IN_PROGRESS") {

@@ -122,6 +122,7 @@ describe("services/webhooks credential destination binding", () => {
     }
     await db.deleteFrom("webhook_secrets").execute()
     await db.deleteFrom("deployments").execute()
+    await db.deleteFrom("app_intents").execute()
     await db.deleteFrom("apps").execute()
     await db.deleteFrom("git_credentials").execute()
   })
@@ -218,6 +219,14 @@ describe("services/webhooks credential destination binding", () => {
         id: `${id}-hook`, app_id: id, provider: "github", secret: encrypt(SECRET), watch_path: "",
         provider_hook_id: null, verified_at: new Date().toISOString(), created_at: new Date().toISOString(),
       }).execute()
+      await setDesired(id, "running") // deployed and not stopped since
+    }
+
+    async function setDesired(appId: string, desired: "running" | "stopped"): Promise<void> {
+      await db.insertInto("app_intents")
+        .values({ app_id: appId, generation: 1, desired_state: desired, updated_at: new Date().toISOString() })
+        .onConflict((oc) => oc.column("app_id").doUpdateSet({ desired_state: desired }))
+        .execute()
     }
 
     async function insertDeployment(appId: string, status: "live" | "pending_build" | "pending_deployment"): Promise<void> {
@@ -242,6 +251,20 @@ describe("services/webhooks credential destination binding", () => {
       await insertDeployment("push-idle", "live")
       expect(await push("push-idle")).toEqual({ status: 200, message: "Deployment triggered" })
       expect(await deploymentCount("push-idle")).toBe(2)
+    })
+
+    it("does not deploy a stopped app, whatever its latest deployment", async () => {
+      // Stopped while a build ran: the build ends superseded, not stopped.
+      await hookedApp("push-stopped")
+      await setDesired("push-stopped", "stopped")
+      await db.insertInto("deployments").values({
+        id: crypto.randomUUID(), app_id: "push-stopped", status: "superseded", commit_sha: "old",
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }).execute()
+      expect(await push("push-stopped")).toEqual({
+        status: 200, message: "App is not running — push acknowledged but no deployment triggered",
+      })
+      expect(await deploymentCount("push-stopped")).toBe(1)
     })
 
     it("acknowledges a push while the latest deployment is queued", async () => {
