@@ -6,6 +6,7 @@ import { sql } from "kysely"
 import { ServiceError } from "./errors"
 import { getReplicasFromCanetteConfig, validateCanetteConfigYaml } from "./canette-config"
 import { supportsForUpdate } from "../db/dialect"
+import { lockIntent } from "./intents"
 import { AUTHGATE_SIDECAR_PORT } from "./reserved-ports"
 import { credentialDestinationError } from "./git-credential-destination"
 import { isUniqueConstraintError } from "../db/errors"
@@ -389,31 +390,38 @@ export async function createApp(
   }
 
   try {
-    await db
-      .insertInto("apps")
-      .values({
-        id,
-        project_id: projectId,
-        name: input.name.trim(),
-        slug: input.slug,
-        source_type: sourceType,
-        deployment_type: deploymentType,
-        git_url: sourceType === "git" ? (input.gitUrl?.trim() ?? "") : "",
-        git_branch: sourceType === "git" ? (input.gitBranch ?? "main") : "main",
-        git_credential_id: input.gitCredentialId ?? null,
-        app_path: sourceType === "git" ? (input.appPath ?? "") : "",
-        image_url: sourceType === "image" ? (input.imageUrl?.trim() ?? "") : "",
-        image_tag: sourceType === "image" ? (input.imageTag?.trim() ?? "latest") : "",
-        port,
-        schedule: deploymentType === "cronjob" ? (input.schedule?.trim() ?? null) : null,
-        position,
-        password_gate_enabled: false,
-        password_gate_password_hash: null,
-        canette_config: input.canetteConfig ?? null,
-        created_at: now,
-        updated_at: now,
-      })
-      .execute()
+    await db.transaction().execute(async (tx) => {
+      await tx
+        .insertInto("apps")
+        .values({
+          id,
+          project_id: projectId,
+          name: input.name.trim(),
+          slug: input.slug,
+          source_type: sourceType,
+          deployment_type: deploymentType,
+          git_url: sourceType === "git" ? (input.gitUrl?.trim() ?? "") : "",
+          git_branch: sourceType === "git" ? (input.gitBranch ?? "main") : "main",
+          git_credential_id: input.gitCredentialId ?? null,
+          app_path: sourceType === "git" ? (input.appPath ?? "") : "",
+          image_url: sourceType === "image" ? (input.imageUrl?.trim() ?? "") : "",
+          image_tag: sourceType === "image" ? (input.imageTag?.trim() ?? "latest") : "",
+          port,
+          schedule: deploymentType === "cronjob" ? (input.schedule?.trim() ?? null) : null,
+          position,
+          password_gate_enabled: false,
+          password_gate_password_hash: null,
+          canette_config: input.canetteConfig ?? null,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      // A new app is stopped until its first deploy (see services/intents.ts).
+      await tx
+        .insertInto("app_intents")
+        .values({ app_id: id, generation: 0, desired_state: "stopped", updated_at: now })
+        .execute()
+    })
   } catch (err: unknown) {
     if (isUniqueConstraintError(err)) {
       throw new ServiceError("An app with that slug already exists in this project", "CONFLICT", 409)
@@ -625,6 +633,8 @@ export async function deleteApp(
   if (!app) return false
 
   await db.transaction().execute(async (tx) => {
+    // The intent row first, like every lifecycle action (services/intents.ts).
+    await lockIntent(tx, appId)
     let lockQ = tx
       .selectFrom("apps as a")
       .innerJoin("projects as p", "p.id", "a.project_id")

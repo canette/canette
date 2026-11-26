@@ -250,6 +250,18 @@ export interface Database {
     created_at: string
   }
 
+  // What the user wants the app to run (#354), written only by the API, in
+  // the same transaction as the lifecycle action. See services/intents.ts.
+  // generation is a BIGINT, which pg returns as a string.
+  app_intents: {
+    app_id: string
+    generation: string | number
+    desired_state: string
+    target_deployment_id: string | null
+    updated_at: string
+    updated_by: string | null
+  }
+
   // Written only by the controller (what it observed in Kubernetes). A row
   // exists once the controller has written one, so read it with a LEFT JOIN.
   app_observed_status: {

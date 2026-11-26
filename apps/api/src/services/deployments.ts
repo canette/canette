@@ -6,6 +6,7 @@ import { sql } from "kysely"
 import { isUniqueConstraintError } from "../db/errors"
 import { ServiceError } from "./errors"
 import { getAppById } from "./apps"
+import { lockIntent, setIntent } from "./intents"
 
 // ── Internal row types (snake_case, never exported) ───────────────────────────
 
@@ -210,7 +211,8 @@ export const ACTIVE_DEPLOYMENT_STATUSES = ["pending_build", "building", "scannin
 
 const IN_PROGRESS_MESSAGE = "A deployment is already in progress. Stop or wait for it to finish first."
 
-// insertDeployment inserts a new in-progress deployment. The database allows
+// insertDeployment inserts a new in-progress deployment. Callers run it in the
+// transaction that records the deploy in the app's intent. The database allows
 // only one per app (idx_deployments_one_active_per_app), which also rejects
 // the second of two requests that both passed hasActiveDeployment at the same
 // moment, so that case gets the same DEPLOYMENT_IN_PROGRESS error.
@@ -271,11 +273,6 @@ export async function createDeployment(
     .where("id", "=", appId)
     .executeTakeFirst()
 
-  // Cancel any pending teardown from a previous stop. The new deployment is about to
-  // (re)create the same named K8s resources, so a stale teardown claim for an older
-  // deployment must not be left to delete them out from under it later.
-  await cancelPendingTeardowns(db, appId)
-
   const snapshot = await buildSnapshot(db, appId)
 
   const id = crypto.randomUUID()
@@ -283,12 +280,13 @@ export async function createDeployment(
   const canetteConfig = appRow?.canette_config ?? null
   const commitMessage = input?.commitMessage ?? "Manual Deploy"
 
+  let values: Insertable<Database["deployments"]>
   if (appRow?.source_type === "image") {
     const tag = appRow.image_tag || "latest"
     const imageRef = `${appRow.image_url}:${tag}`
     const commitSha = input?.commitSha ?? tag
     // No build stage, insert directly as pending_deployment
-    await insertDeployment(db, {
+    values = {
       id,
       app_id: appId,
       status: "pending_deployment",
@@ -300,11 +298,11 @@ export async function createDeployment(
       deployment_snapshot: snapshot,
       created_at: now,
       updated_at: now,
-    }, IN_PROGRESS_MESSAGE)
+    }
   } else {
     const commitSha = input?.commitSha ?? (appRow?.git_branch || "main")
     // Build stage, image_digest is set once build is complete
-    await insertDeployment(db, {
+    values = {
       id,
       app_id: appId,
       status: "pending_build",
@@ -315,8 +313,9 @@ export async function createDeployment(
       deployment_snapshot: snapshot,
       created_at: now,
       updated_at: now,
-    }, IN_PROGRESS_MESSAGE)
+    }
   }
+  await startDeployment(db, values, IN_PROGRESS_MESSAGE)
 
   const row = await db
     .selectFrom("deployments")
@@ -324,6 +323,28 @@ export async function createDeployment(
     .where("id", "=", id)
     .executeTakeFirstOrThrow()
   return mapDeployment(row)
+}
+
+// startDeployment inserts a new attempt and makes it the app's intent target,
+// in one transaction, so a deploy is never recorded half way.
+async function startDeployment(
+  db: DB,
+  values: Insertable<Database["deployments"]>,
+  inProgressMessage: string
+): Promise<void> {
+  await db.transaction().execute(async (tx) => {
+    await lockIntent(tx, values.app_id)
+    // Cancel any pending teardown from a previous stop. The new deployment is about to
+    // (re)create the same named K8s resources, so a stale teardown claim for an older
+    // deployment must not be left to delete them out from under it later.
+    await cancelPendingTeardowns(tx, values.app_id)
+    await insertDeployment(tx, values, inProgressMessage)
+    await setIntent(tx, values.app_id, {
+      desiredState: "running",
+      targetDeploymentId: values.id,
+      updatedBy: values.triggered_by ?? null,
+    })
+  })
 }
 
 // cancelPendingTeardowns drops every teardown queued for the app's earlier
@@ -367,39 +388,45 @@ export async function stopApp(
 
   const now = new Date().toISOString()
 
-  // Live → stopped (controller will delete K8s resources)
-  await db
-    .updateTable("deployments")
-    .set({ status: "stopped", error_message: null, updated_at: now })
-    .where("app_id", "=", appId)
-    .where("status", "=", "live")
-    .execute()
+  await db.transaction().execute(async (tx) => {
+    await lockIntent(tx, appId)
 
-  // A failed attempt that got as far as applying resources may have left a
-  // Deployment, Service and route running. Only the latest such attempt
-  // matters: every attempt of an app uses the same resource names.
-  const lastApplied = await db
-    .selectFrom("deployments")
-    .select(["id", "status"])
-    .where("app_id", "=", appId)
-    .where("applied_manifest", "is not", null)
-    .orderBy("created_at", "desc")
-    .limit(1)
-    .executeTakeFirst()
-  if (lastApplied?.status === "failed") {
-    await db
+    // Live → stopped (controller will delete K8s resources)
+    await tx
       .updateTable("deployments")
-      .set({ teardown_requested_at: now })
-      .where("id", "=", lastApplied.id)
+      .set({ status: "stopped", error_message: null, updated_at: now })
+      .where("app_id", "=", appId)
+      .where("status", "=", "live")
       .execute()
-  }
 
-  // Clear the live URL immediately so the UI reflects the stopped state
-  await db
-    .updateTable("apps")
-    .set({ live_url: null })
-    .where("id", "=", appId)
-    .execute()
+    // A failed attempt that got as far as applying resources may have left a
+    // Deployment, Service and route running. Only the latest such attempt
+    // matters: every attempt of an app uses the same resource names.
+    const lastApplied = await tx
+      .selectFrom("deployments")
+      .select(["id", "status"])
+      .where("app_id", "=", appId)
+      .where("applied_manifest", "is not", null)
+      .orderBy("created_at", "desc")
+      .limit(1)
+      .executeTakeFirst()
+    if (lastApplied?.status === "failed") {
+      await tx
+        .updateTable("deployments")
+        .set({ teardown_requested_at: now })
+        .where("id", "=", lastApplied.id)
+        .execute()
+    }
+
+    // Clear the live URL immediately so the UI reflects the stopped state
+    await tx
+      .updateTable("apps")
+      .set({ live_url: null })
+      .where("id", "=", appId)
+      .execute()
+
+    await setIntent(tx, appId, { desiredState: "stopped", updatedBy: userId })
+  })
 
   return true
 }
@@ -455,14 +482,9 @@ export async function redeployDeployment(
   const canetteConfig = appRow?.canette_config ?? null
   const snapshot = await buildSnapshot(db, access.app_id)
 
-  // Cancel any pending teardown from a previous stop. The new deployment is about to
-  // (re)create the same named K8s resources, so a stale teardown claim for an older
-  // deployment must not be left to delete them out from under it later.
-  await cancelPendingTeardowns(db, access.app_id)
-
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
-  await insertDeployment(db, {
+  await startDeployment(db, {
     id,
     app_id: access.app_id,
     status: "pending_deployment",

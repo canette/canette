@@ -13,7 +13,9 @@ class BunSQLiteShim {
 
   prepare(sql: string) {
     const stmt = this.db.prepare(sql)
-    const reader = /^\s*SELECT\b/i.test(sql)
+    // A statement reads rows when it has result columns: a SELECT, or a
+    // write with RETURNING.
+    const reader = stmt.columnNames.length > 0
     return Object.assign(stmt, { reader })
   }
 
