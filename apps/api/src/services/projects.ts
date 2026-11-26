@@ -244,19 +244,6 @@ export async function updateProject(
     }
 
     if (!slugChanging) return
-    const projectApps = tx.selectFrom("apps").select("id").where("project_id", "=", projectId)
-    await tx
-      .updateTable("deployments")
-      .set({ applied_manifest: null })
-      .where("status", "=", "stopped")
-      .where("app_id", "in", projectApps)
-      .execute()
-    await tx
-      .updateTable("deployments")
-      .set({ teardown_requested_at: null })
-      .where("teardown_requested_at", "is not", null)
-      .where("app_id", "in", projectApps)
-      .execute()
 
     await tx
       .insertInto("queued_namespace_cleanups")

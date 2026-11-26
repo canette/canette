@@ -878,6 +878,9 @@ describe("services/mcp runtime diagnostics", () => {
       const live = await insertDeployment(depAppId, "live")
       await insertDeployment(depAppId, "failed")
       const building = await insertDeployment(depAppId, "building")
+      // Deployed, not stopped since.
+      await db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: building })
+        .where("app_id", "=", depAppId).execute()
 
       const body = JSON.parse(text(await handleTool("get_app", { app_id: depAppId }, "userId")))
       expect(body.liveDeployment.id).toBe(live)
@@ -943,7 +946,11 @@ describe("services/mcp runtime diagnostics", () => {
         expect(body.stoppedDeployment).toBe(live)
         expect(body.note).toContain(`redeploy_deployment with deployment_id ${live}`)
 
-        expect(await statusOf(live)).toBe("stopped")
+        // The controller tears it down and marks it stopped: Stop records the
+        // app's intent, and the build in progress is cancelled from it.
+        const intent = await db.selectFrom("app_intents").select("desired_state").where("app_id", "=", app.id).executeTakeFirstOrThrow()
+        expect(intent.desired_state).toBe("stopped")
+        expect(await statusOf(live)).toBe("live")
         expect(await statusOf(building)).toBe("building")
         // Hidden at once, before the controller has torn the app down.
         const after = JSON.parse(text(await handleTool("get_app", { app_id: app.id }, "userId")))

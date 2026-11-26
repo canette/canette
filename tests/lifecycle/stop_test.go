@@ -13,9 +13,10 @@ import (
 	libk8s "canette.dev/lib/k8s"
 )
 
-// Scenario 1 of #330: Stop, then redeploy at once. The redeploy cancels the
-// queued teardown, so the stopped deployment's teardown never changes the
-// new workload.
+// Scenario 1 of #330: Stop, then redeploy at once. A teardown for the Stop
+// either ran before the redeploy was accepted or not at all (the fence
+// refuses it once the intent moved on), so it never changes the new
+// workload.
 func TestStopThenRedeploy(t *testing.T) {
 	p := newProject(t, "stop-redeploy")
 	a := newApp(t, p, "web")
@@ -29,8 +30,10 @@ func TestStopThenRedeploy(t *testing.T) {
 
 	time.Sleep(3 * pollInterval) // let any teardown or cleanup poll run
 	requireWorkloadOf(t, ns, a.Slug, next.ID, uid)
-	if d, _ := getDeployment(t, a, live.ID); d.Status != "stopped" {
-		t.Errorf("stopped deployment %s is %s, want stopped", live.ID, d.Status)
+	// Stopped if the controller tore it down first, superseded if the
+	// redeploy got there first.
+	if d, _ := getDeployment(t, a, live.ID); d.Status != "stopped" && d.Status != "superseded" {
+		t.Errorf("stopped deployment %s is %s, want stopped or superseded", live.ID, d.Status)
 	}
 	requireServing(t, a)
 }

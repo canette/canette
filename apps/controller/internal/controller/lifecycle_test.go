@@ -112,14 +112,6 @@ func (f *lifecycleFixture) claim() store.Lease {
 	return leases[0]
 }
 
-// adopt runs the poll's conversion of old-API writes into intent.
-func (f *lifecycleFixture) adopt() {
-	f.t.Helper()
-	if _, err := f.c.store.AdoptLegacyWrites(context.Background()); err != nil {
-		f.t.Fatal(err)
-	}
-}
-
 func (f *lifecycleFixture) run(ctx context.Context) {
 	f.t.Helper()
 	f.c.runApp(ctx, f.claim())
@@ -365,77 +357,6 @@ func TestRunApp_ShutdownResumes(t *testing.T) {
 	}
 	if n := f.applies.Load(); n != 2 {
 		t.Errorf("applied %d times, want 2 (once more on resume)", n)
-	}
-}
-
-// A Stop handled by an API pod that predates intents leaves only the old
-// teardown markers. The app is torn down, and isn't claimed again after.
-func TestRunApp_StopFromOldAPI(t *testing.T) {
-	f := newLifecycleFixture(t)
-	f.deployment("d1", "live")
-	f.intent("running", "d1")
-	f.exec(`INSERT INTO app_runtime (app_id, reconciled_generation, applied_deployment_id) VALUES ('a1', 1, 'd1')`)
-	f.exec(`UPDATE deployments SET status = 'stopped', applied_manifest = 'm' WHERE id = 'd1'`)
-
-	f.adopt()
-	f.run(context.Background())
-
-	if f.workloadExists() {
-		t.Error("the Deployment is still there")
-	}
-	if r := f.runtime(); r.applied.Valid || r.leased {
-		t.Errorf("runtime %+v", r)
-	}
-	if leases, err := f.c.store.ClaimApps(context.Background(), 10, nil); err != nil || len(leases) != 0 {
-		t.Errorf("claimed %+v after the teardown, err %v", leases, err)
-	}
-}
-
-// A deploy handled by an API pod that predates intents adds a deployment
-// without touching the intent. It is rolled out.
-func TestRunApp_DeployFromOldAPI(t *testing.T) {
-	f := newLifecycleFixture(t)
-	f.deployment("d1", "stopped")
-	f.exec(`INSERT INTO app_intents (app_id, generation, desired_state, target_deployment_id, updated_at)
-		VALUES ('a1', 1, 'stopped', 'd1', $1)`, time.Now().UTC().Add(-time.Minute))
-	f.exec(`INSERT INTO app_runtime (app_id, reconciled_generation) VALUES ('a1', 1)`)
-	f.exec(`INSERT INTO deployments (id, app_id, status, commit_sha, image_digest, deployment_snapshot, created_at, updated_at)
-		VALUES ('d2', 'a1', 'pending_deployment', 'abc', 'sha256:abc',
-		        '{"app":{"id":"a1","slug":"a"},"project":{"id":"p1","slug":"p"}}', $1, $1)`, time.Now().UTC())
-
-	f.adopt()
-	f.run(context.Background())
-
-	if got := f.status("d2"); got != "live" {
-		t.Errorf("d2 is %s, want live", got)
-	}
-	if r := f.runtime(); r.applied.String != "d2" || r.leased {
-		t.Errorf("runtime %+v", r)
-	}
-	// Once live it stays the app's serving deployment: the adoption is
-	// recorded in the intent, not worked out from the attempt in progress.
-	deps, err := f.c.store.GetCurrentDeployments(context.Background())
-	if err != nil || len(deps) != 1 || deps[0].DeploymentID != "d2" {
-		t.Errorf("current deployments %+v, err %v; want d2", deps, err)
-	}
-	if leases, err := f.c.store.ClaimApps(context.Background(), 10, nil); err != nil || len(leases) != 0 {
-		t.Errorf("claimed %+v after it went live, err %v", leases, err)
-	}
-}
-
-// An app created by an API pod that predates intents has no intent row. Its
-// deployment is still rolled out.
-func TestRunApp_AppFromOldAPI(t *testing.T) {
-	f := newLifecycleFixture(t) // seedProject's app a1 has no intent row
-	f.exec(`INSERT INTO deployments (id, app_id, status, commit_sha, image_digest, deployment_snapshot, created_at, updated_at)
-		VALUES ('d1', 'a1', 'pending_deployment', 'abc', 'sha256:abc',
-		        '{"app":{"id":"a1","slug":"a"},"project":{"id":"p1","slug":"p"}}', $1, $1)`, time.Now().UTC().Add(time.Second))
-
-	f.adopt()
-	f.run(context.Background())
-
-	if got := f.status("d1"); got != "live" {
-		t.Errorf("d1 is %s, want live", got)
 	}
 }
 

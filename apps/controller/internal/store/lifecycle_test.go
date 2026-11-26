@@ -366,9 +366,6 @@ func TestFenceStop(t *testing.T) {
 	if _, err := db.Exec(`UPDATE deployments SET applied_manifest = 'm'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE deployments SET teardown_requested_at = $1 WHERE id = 'marked'`, intentWritten); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.Exec(`UPDATE app_runtime SET applied_deployment_id = 'live', live_url = 'https://x' WHERE app_id = 'app'`); err != nil {
 		t.Fatal(err)
 	}
@@ -390,14 +387,10 @@ func TestFenceStop(t *testing.T) {
 			t.Errorf("%s: %s, want %s", id, got, want)
 		}
 	}
-	// No teardown markers are left.
-	_, _, manifest, requested := teardownState(t, db, "marked")
-	if manifest != "m" || requested.Valid {
-		t.Errorf("marked: manifest %q, teardown_requested_at %v; want the manifest kept, the marker cleared", manifest, requested)
-	}
-	for _, id := range []string{"live", "rolling", "was-stopped"} {
-		if _, _, manifest, _ := teardownState(t, db, id); manifest != "" {
-			t.Errorf("%s: manifest %q, want it cleared", id, manifest)
+	// The manifests stay, as the record of what each attempt applied.
+	for _, id := range []string{"live", "rolling", "was-stopped", "marked"} {
+		if _, _, manifest := teardownState(t, db, id); manifest != "m" {
+			t.Errorf("%s: manifest %q, want it kept", id, manifest)
 		}
 	}
 	if r := runtimeOf(t, db, "app"); r.reconciled != 4 || r.applied.Valid || r.liveURL.Valid {
@@ -475,78 +468,6 @@ func TestFenceStop_DeployDuringTeardownSurvives(t *testing.T) {
 	}
 }
 
-func TestAdoptLegacyWrites(t *testing.T) {
-	s, db := testStore(t)
-	ctx := context.Background()
-	// A deploy from an old API pod, after the intent was last written.
-	addLifecycleApp(t, db, lifecycleApp{id: "deployed", desired: "stopped", generation: 1, target: "dep-old", reconciled: 1},
-		[2]string{"dep-old", "stopped"})
-	addAttempt(t, db, "deployed", "dep-new", "pending_build", intentWritten.Add(time.Minute))
-	// A deploy the old pod has also stopped since.
-	addLifecycleApp(t, db, lifecycleApp{id: "deployed-stopped", desired: "running", generation: 1, target: "ds-old", reconciled: 1},
-		[2]string{"ds-old", "live"})
-	addAttempt(t, db, "deployed-stopped", "ds-new", "stopped", intentWritten.Add(time.Minute))
-	// A Stop from an old API pod: only its teardown marker is left.
-	addLifecycleApp(t, db, lifecycleApp{id: "stopped", desired: "running", generation: 1, target: "st-d", reconciled: 1},
-		[2]string{"st-d", "stopped"})
-	if _, err := db.Exec(`UPDATE deployments SET applied_manifest = 'm' WHERE id = 'st-d'`); err != nil {
-		t.Fatal(err)
-	}
-	// A Stop recorded by a new API pod also leaves the marker, and the
-	// intent already says so.
-	addLifecycleApp(t, db, lifecycleApp{id: "recorded", desired: "stopped", generation: 2, target: "rec-d", reconciled: 1},
-		[2]string{"rec-d", "stopped"})
-	if _, err := db.Exec(`UPDATE deployments SET applied_manifest = 'm' WHERE id = 'rec-d'`); err != nil {
-		t.Fatal(err)
-	}
-	// An app the old pod created, with no intent row, deployed since.
-	if _, err := db.Exec(`INSERT INTO apps (id, project_id, name, slug, created_at, updated_at)
-		VALUES ('no-intent', 'p1', 'n', 'n', $1, $1)`, intentWritten); err != nil {
-		t.Fatal(err)
-	}
-	addAttempt(t, db, "no-intent", "ni-d", "pending_deployment", intentWritten.Add(time.Minute))
-
-	adopted, err := s.AdoptLegacyWrites(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	slices.Sort(adopted)
-	if want := []string{"deployed", "deployed-stopped", "no-intent", "stopped"}; !slices.Equal(adopted, want) {
-		t.Errorf("adopted %v, want %v", adopted, want)
-	}
-	for _, want := range []struct {
-		app, desired, target string
-		generation           int64
-	}{
-		{"deployed", "running", "dep-new", 2},
-		{"deployed-stopped", "stopped", "ds-new", 2},
-		{"stopped", "stopped", "st-d", 2},
-		{"recorded", "stopped", "rec-d", 2},
-		{"no-intent", "running", "ni-d", 1},
-		{"a1", "stopped", "", 0}, // seedProject's app, which has no deployments
-	} {
-		var desired string
-		var target sql.NullString
-		var generation int64
-		if err := db.QueryRow(`SELECT desired_state, target_deployment_id, generation FROM app_intents WHERE app_id = $1`, want.app).
-			Scan(&desired, &target, &generation); err != nil {
-			t.Fatalf("%s: %v", want.app, err)
-		}
-		if desired != want.desired || target.String != want.target || generation != want.generation {
-			t.Errorf("%s: %s %q gen %d; want %s %q gen %d", want.app, desired, target.String, generation, want.desired, want.target, want.generation)
-		}
-	}
-
-	// Once recorded, nothing is adopted again, and the adopted deploy no
-	// longer counts as unrecorded for the sweep or the builder.
-	if again, err := s.AdoptLegacyWrites(ctx); err != nil || len(again) != 0 {
-		t.Errorf("second pass adopted %v, err %v", again, err)
-	}
-	if ids, err := s.SweepSuperseded(ctx); err != nil || slices.Contains(ids, "ni-d") {
-		t.Errorf("sweep superseded %v, err %v", ids, err)
-	}
-}
-
 func TestSweepSuperseded(t *testing.T) {
 	s, db := testStore(t)
 	addLifecycleApp(t, db, lifecycleApp{id: "running", desired: "running", generation: 2, target: "target"},
@@ -556,9 +477,6 @@ func TestSweepSuperseded(t *testing.T) {
 		[2]string{"older", "pending_deployment"}, [2]string{"newer", "failed"})
 	addLifecycleApp(t, db, lifecycleApp{id: "stopped", desired: "stopped", generation: 2, target: "built-after-stop"},
 		[2]string{"built-after-stop", "pending_deployment"})
-	addLifecycleApp(t, db, lifecycleApp{id: "old-api", desired: "running", generation: 1, target: "recorded"},
-		[2]string{"recorded", "live"})
-	addAttempt(t, db, "old-api", "unrecorded", "pending_deployment", intentWritten.Add(time.Minute))
 
 	ids, err := s.SweepSuperseded(context.Background())
 	if err != nil {
@@ -568,7 +486,7 @@ func TestSweepSuperseded(t *testing.T) {
 	if want := []string{"built-after-stop", "older"}; !slices.Equal(ids, want) {
 		t.Errorf("superseded %v, want %v", ids, want)
 	}
-	for id, want := range map[string]string{"target": "pending_deployment", "done": "live", "unrecorded": "pending_deployment"} {
+	for id, want := range map[string]string{"target": "pending_deployment", "done": "live"} {
 		if got := statusOf(t, db, id); got != want {
 			t.Errorf("%s: %s, want %s", id, got, want)
 		}

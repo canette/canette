@@ -157,16 +157,13 @@ func (s *Store) MarkDeploying(ctx context.Context, deploymentID, imageDigest str
 // was stopped (#354). The builder checks before it starts the build and while
 // the build or scan runs, and stops the work when it reports true. It is only
 // a shortcut: the controller never rolls out an attempt that isn't the target,
-// so a deploy or Stop that lands after the last check is still honoured. A deployment
-// created after its app's intent was last written comes from an API that
-// predates intents and is built as before.
+// so a deploy or Stop that lands after the last check is still honoured.
 func (s *Store) SupersedeReplaced(ctx context.Context, deploymentID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE deployments d SET status = 'superseded', updated_at = $1
 		FROM app_intents i
 		WHERE d.id = $2 AND i.app_id = d.app_id
 		  AND d.status IN ('building', 'scanning')
-		  AND d.created_at <= i.updated_at
 		  AND (i.desired_state = 'stopped' OR i.target_deployment_id IS DISTINCT FROM d.id)`,
 		time.Now().UTC(), deploymentID)
 	if err != nil {

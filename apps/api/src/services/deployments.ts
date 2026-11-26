@@ -190,15 +190,18 @@ export async function listDeployments(
 
 // getLiveDeployment returns the deployment currently serving the app, which is
 // not necessarily its latest one: a newer rollout may still be in progress or
-// have failed. Null when the app is stopped or has never gone live. Callers
-// check access to the app.
+// have failed. Null when the app is stopped (from the moment Stop is
+// recorded, before the controller has torn it down) or has never gone live.
+// Callers check access to the app.
 export async function getLiveDeployment(db: DB, appId: string): Promise<Deployment | null> {
   const row = await db
-    .selectFrom("deployments")
-    .selectAll()
-    .where("app_id", "=", appId)
-    .where("status", "=", "live")
-    .orderBy("created_at", "desc")
+    .selectFrom("deployments as d")
+    .leftJoin("app_intents as i", "i.app_id", "d.app_id")
+    .selectAll("d")
+    .where("d.app_id", "=", appId)
+    .where("d.status", "=", "live")
+    .where((eb) => eb.or([eb("i.desired_state", "is", null), eb("i.desired_state", "=", "running")]))
+    .orderBy("d.created_at", "desc")
     .limit(1)
     .executeTakeFirst()
   if (!row) return null
@@ -304,10 +307,6 @@ async function startDeployment(
         throw new ServiceError("App is not running", "APP_NOT_RUNNING", 409)
       }
     }
-    // Cancel any pending teardown from a previous stop. The new deployment is about to
-    // (re)create the same named K8s resources, so a stale teardown claim for an older
-    // deployment must not be left to delete them out from under it later.
-    await cancelPendingTeardowns(tx, values.app_id)
     await tx.insertInto("deployments").values(values).execute()
     await setIntent(tx, values.app_id, {
       desiredState: "running",
@@ -317,30 +316,11 @@ async function startDeployment(
   })
 }
 
-// cancelPendingTeardowns drops every teardown queued for the app's earlier
-// deployments: stopped rows that still hold a manifest, and failed attempts
-// that Stop marked with teardown_requested_at.
-async function cancelPendingTeardowns(db: DB, appId: string): Promise<void> {
-  await db
-    .updateTable("deployments")
-    .set({ applied_manifest: null })
-    .where("app_id", "=", appId)
-    .where("status", "=", "stopped")
-    .execute()
-  await db
-    .updateTable("deployments")
-    .set({ teardown_requested_at: null })
-    .where("app_id", "=", appId)
-    .where("teardown_requested_at", "is not", null)
-    .execute()
-}
-
-// stopApp gracefully stops a live deployment (→ 'stopped', triggers K8s teardown).
-// When the latest attempt that applied resources failed instead (e.g. a first
-// deploy whose pods crash-loop), it is marked for teardown and keeps its
-// 'failed' status and error.
-// A build or rollout in progress doesn't go live afterwards: the builder or
-// the controller sees the stopped intent and supersedes or stops it (#354).
+// stopApp stops an app: it records the stop in the app's intent, and the
+// controller tears down whatever the app runs (a live deployment, or what a
+// failed one left behind) and marks the attempts it stopped. A build or
+// rollout in progress doesn't go live afterwards: the builder or the
+// controller sees the stopped intent and supersedes or stops it (#354).
 // Verifies access itself via app → project → team membership.
 export async function stopApp(
   db: DB,
@@ -357,45 +337,11 @@ export async function stopApp(
     .executeTakeFirst()
   if (!access) return false
 
-  const now = new Date().toISOString()
-
+  // The controller tears the app down and records the attempts it stopped
+  // (#354). Until it has, the app reads "stopping" (lifecycleStatus) and its
+  // URL is hidden.
   await db.transaction().execute(async (tx) => {
     await lockIntent(tx, appId)
-
-    // Live → stopped (controller will delete K8s resources)
-    await tx
-      .updateTable("deployments")
-      .set({ status: "stopped", error_message: null, updated_at: now })
-      .where("app_id", "=", appId)
-      .where("status", "=", "live")
-      .execute()
-
-    // A failed attempt that got as far as applying resources may have left a
-    // Deployment, Service and route running. Only the latest such attempt
-    // matters: every attempt of an app uses the same resource names.
-    const lastApplied = await tx
-      .selectFrom("deployments")
-      .select(["id", "status"])
-      .where("app_id", "=", appId)
-      .where("applied_manifest", "is not", null)
-      .orderBy("created_at", "desc")
-      .limit(1)
-      .executeTakeFirst()
-    if (lastApplied?.status === "failed") {
-      await tx
-        .updateTable("deployments")
-        .set({ teardown_requested_at: now })
-        .where("id", "=", lastApplied.id)
-        .execute()
-    }
-
-    // Clear the live URL immediately so the UI reflects the stopped state
-    await tx
-      .updateTable("apps")
-      .set({ live_url: null })
-      .where("id", "=", appId)
-      .execute()
-
     await setIntent(tx, appId, { desiredState: "stopped", updatedBy: userId })
   })
 
