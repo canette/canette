@@ -14,8 +14,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// Runtime health verdict values, mirrored in the apps.runtime_health DB check
-// constraint (apps/api/migrations/000016_app_runtime_health.up.sql).
+// Runtime health verdict values, mirrored in the app_observed_status.runtime_health
+// DB check constraint (apps/api/migrations/000026_app_observed_runtime_health.up.sql).
 const (
 	HealthHealthy   = "healthy"
 	HealthUnhealthy = "unhealthy"

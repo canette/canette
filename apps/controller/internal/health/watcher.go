@@ -71,7 +71,7 @@ type healthStore interface {
 
 // Watcher observes pod state changes cluster-wide via a Kubernetes informer
 // (a single persistent watch connection, not polling) and maintains
-// apps.runtime_health accordingly.
+// app_observed_status.runtime_health accordingly.
 type Watcher struct {
 	client kubernetes.Interface
 	store  healthStore

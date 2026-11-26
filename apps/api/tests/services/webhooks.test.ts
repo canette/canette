@@ -66,9 +66,6 @@ async function insertApp(id: string, gitUrl: string, credentialId: string): Prom
     password_gate_enabled: false,
     live_url: null,
     canette_config: null,
-    runtime_health: "unknown",
-    runtime_health_reason: null,
-    runtime_health_updated_at: null,
     created_at: now,
     updated_at: now,
   }).execute()

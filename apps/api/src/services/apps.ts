@@ -13,12 +13,16 @@ import { isUniqueConstraintError } from "../db/errors"
 // ── Internal row type (snake_case, never exported) ────────────────────────────
 
 // latest_deployment_status is a computed column not in the base table, so we
-// extend. The kubernetes_status columns come from app_observed_status, which
-// the controller writes (see selectApps).
+// extend. The kubernetes_status and runtime_health columns come from
+// app_observed_status, which the controller writes (see selectApps). They are
+// null when the app has no row there yet.
 type AppRow = Selectable<Database["apps"]> & {
   latest_deployment_status?: string | null
   kubernetes_status?: string | null
   kubernetes_status_observed_at?: string | null
+  runtime_health?: string | null
+  runtime_health_reason?: string | null
+  runtime_health_updated_at?: string | null
 }
 
 // ── Mapper ────────────────────────────────────────────────────────────────────
@@ -32,7 +36,7 @@ const RUNTIME_HEALTH_STALE_AFTER_MS = 10 * 60 * 1000
 
 function effectiveRuntimeHealth(row: AppRow): Pick<App, "runtimeHealth" | "runtimeHealthReason"> {
   const updatedAt = row.runtime_health_updated_at
-  if (updatedAt && Date.now() - new Date(updatedAt).getTime() > RUNTIME_HEALTH_STALE_AFTER_MS) {
+  if (!row.runtime_health || (updatedAt && Date.now() - new Date(updatedAt).getTime() > RUNTIME_HEALTH_STALE_AFTER_MS)) {
     return { runtimeHealth: "unknown", runtimeHealthReason: undefined }
   }
   return {
@@ -92,7 +96,13 @@ function selectApps(db: DB) {
     .selectFrom("apps as a")
     .leftJoin("app_observed_status as o", "o.app_id", "a.id")
     .selectAll("a")
-    .select(["o.kubernetes_status", "o.kubernetes_status_observed_at"])
+    .select([
+      "o.kubernetes_status",
+      "o.kubernetes_status_observed_at",
+      "o.runtime_health",
+      "o.runtime_health_reason",
+      "o.runtime_health_updated_at",
+    ])
 }
 
 // ── Slug validation ───────────────────────────────────────────────────────────
@@ -400,9 +410,6 @@ export async function createApp(
         password_gate_enabled: false,
         password_gate_password_hash: null,
         canette_config: input.canetteConfig ?? null,
-        runtime_health: "unknown",
-        runtime_health_reason: null,
-        runtime_health_updated_at: null,
         created_at: now,
         updated_at: now,
       })

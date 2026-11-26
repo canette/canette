@@ -115,9 +115,6 @@ describe("services/apps", () => {
       live_url: null,
       canette_config: null,
       position: 0,
-      runtime_health: "unknown",
-      runtime_health_reason: null,
-      runtime_health_updated_at: null,
       created_at: now,
       updated_at: now,
     }).execute()
@@ -204,9 +201,15 @@ describe("services/apps", () => {
         git_url: "https://github.com/canette/canette", git_branch: "main", git_credential_id: null,
         app_path: "", image_url: "", image_tag: "", port: 3000, password_gate_enabled: false,
         live_url: null, canette_config: null, position: 0,
-        runtime_health: "unhealthy", runtime_health_reason: "CrashLoopBackOff",
-        runtime_health_updated_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
         created_at: now, updated_at: now,
+      }).execute()
+      await db.insertInto("app_observed_status").values({
+        app_id: id,
+        kubernetes_status: null,
+        kubernetes_status_observed_at: null,
+        runtime_health: "unhealthy",
+        runtime_health_reason: "CrashLoopBackOff",
+        runtime_health_updated_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
       }).execute()
       return getAppById(db, id, "userId")
     }
@@ -222,6 +225,19 @@ describe("services/apps", () => {
       expect(app?.runtimeHealthReason).toBeUndefined()
       expect(app?.runtimeHealthUpdatedAt).toBeDefined()
     })
+
+    it("reports an app the controller hasn't observed yet as unknown", async () => {
+      const app = await getAppById(db, "existingAppId", "userId")
+      expect(app?.runtimeHealth).toBe("unknown")
+      expect(app?.runtimeHealthReason).toBeUndefined()
+      expect(app?.runtimeHealthUpdatedAt).toBeUndefined()
+    })
+
+    it("includes the verdict in project app lists", async () => {
+      await appWithHealth("health-listed", 1)
+      const list = await listApps(db, "projectId", "userId")
+      expect(list?.items.find((a) => a.id === "health-listed")?.runtimeHealth).toBe("unhealthy")
+    })
   })
 
   describe("kubernetes status", () => {
@@ -234,13 +250,15 @@ describe("services/apps", () => {
         git_url: "https://github.com/canette/canette", git_branch: "main", git_credential_id: null,
         app_path: "", image_url: "", image_tag: "", port: 3000, password_gate_enabled: false,
         live_url: null, canette_config: null, position: 0,
-        runtime_health: "unknown", runtime_health_reason: null, runtime_health_updated_at: null,
         created_at: now, updated_at: now,
       }).execute()
       await db.insertInto("app_observed_status").values({
         app_id: id,
         kubernetes_status: status,
         kubernetes_status_observed_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+        runtime_health: "unknown",
+        runtime_health_reason: null,
+        runtime_health_updated_at: null,
       }).execute()
       return getAppById(db, id, "userId")
     }
@@ -248,6 +266,7 @@ describe("services/apps", () => {
     it("returns a status the controller read recently", async () => {
       const app = await appWithStatus("k8s-fresh", JSON.stringify(partial), 9)
       expect(app?.kubernetesStatus).toEqual(partial)
+      expect(app?.runtimeHealth).toBe("unknown")
     })
 
     it("leaves out a status not read in 10 minutes", async () => {
