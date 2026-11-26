@@ -44,7 +44,9 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
 
   useEffect(() => { load() }, [load])
 
-  const hasActiveDeployment = deploymentList.some((d) => ACTIVE_STATUSES.includes(d.status))
+  // Newest first, so this is the attempt a newer deploy would replace.
+  const activeDeployment = deploymentList.find((d) => ACTIVE_STATUSES.includes(d.status))
+  const hasActiveDeployment = !!activeDeployment
   const liveDeployment = deploymentList.find((d) => d.status === "live")
   const latestDeployment = deploymentList[0]
   const currentDeployment = liveDeployment ?? latestDeployment
@@ -106,6 +108,7 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
     deploymentList,
     loading,
     loadError,
+    activeDeployment,
     hasActiveDeployment,
     liveDeployment,
     latestDeployment,
