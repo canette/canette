@@ -41,16 +41,22 @@ export async function runMigrations(db: DB, migrationsDir: string): Promise<void
     const source = sqliteVersions.has(sqliteFile) ? sqliteFile : file
     const sqlFile = await readFile(join(migrationsDir, source), "utf8")
     const statements = sqlFile.split(";").map((s) => s.trim()).filter((s) => s.length > 0)
-    for (const stmt of statements) {
-      await sql.raw(stmt).execute(db)
-    }
-
-    await db.insertInto("schema_migrations")
-      .values({
-        version,
-        applied_at: new Date().toISOString(),
-      })
-      .execute()
+    // One transaction per migration, together with its version record, so an
+    // interrupted migration leaves nothing behind and is retried from the
+    // start (DDL is transactional in both Postgres and SQLite). A statement
+    // that can't run in a transaction, like CREATE INDEX CONCURRENTLY, needs
+    // a different runner.
+    await db.transaction().execute(async (tx) => {
+      for (const stmt of statements) {
+        await sql.raw(stmt).execute(tx)
+      }
+      await tx.insertInto("schema_migrations")
+        .values({
+          version,
+          applied_at: new Date().toISOString(),
+        })
+        .execute()
+    })
 
     count++
   }

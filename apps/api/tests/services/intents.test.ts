@@ -200,3 +200,21 @@ describe("runMigrations on SQLite", () => {
     expect(versions.map((v) => v.version)).toEqual(["000001_t", "000002_u"])
   })
 })
+
+describe("runMigrations", () => {
+  it("rolls back a migration that fails part way, so a retry runs it again", async () => {
+    const db = createTestDb()
+    const dir = mkdtempSync(join(tmpdir(), "canette-migrations-"))
+    const migration = join(dir, "000001_t.up.sql")
+    writeFileSync(migration, "CREATE TABLE first_step (id TEXT);\nINSERT INTO missing_table VALUES (1)")
+
+    await expect(runMigrations(db, dir)).rejects.toThrow()
+    const names = (await db.introspection.getTables()).map((t) => t.name)
+    expect(names).not.toContain("first_step")
+    expect(await db.selectFrom("schema_migrations").select("version").execute()).toHaveLength(0)
+
+    writeFileSync(migration, "CREATE TABLE first_step (id TEXT)")
+    await runMigrations(db, dir)
+    expect((await db.introspection.getTables()).map((t) => t.name)).toContain("first_step")
+  })
+})

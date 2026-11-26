@@ -525,12 +525,19 @@ export async function forceSyncLiveApps(db: DB): Promise<SyncResult> {
       .distinct()
       .where("status", "=", "live")
       .execute()
-    await lockIntents(tx, candidates.map((r) => r.app_id))
+    const locked = candidates.map((r) => r.app_id)
+    if (locked.length === 0) return 0
+    await lockIntents(tx, locked)
 
+    // Only those apps: a deployment that goes live after the query above
+    // belongs to an app whose intent isn't locked, and re-queueing it here
+    // would lock its row before its intent, the opposite order to Stop,
+    // which deadlocks.
     const result = await sql<{ id: string; app_id: string }>`
       UPDATE deployments
       SET status = 'pending_deployment', error_message = NULL, updated_at = ${now}
       WHERE status = 'live'
+        AND app_id IN (${sql.join(locked)})
         AND id IN (
           SELECT id FROM deployments d2
           WHERE d2.app_id = deployments.app_id
