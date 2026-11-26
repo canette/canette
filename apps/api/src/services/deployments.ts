@@ -205,9 +205,6 @@ export async function getLiveDeployment(db: DB, appId: string): Promise<Deployme
   return mapDeployment(row, await hasSbomForId(db, row.id))
 }
 
-// Statuses of a deployment that is still being built or rolled out.
-export const ACTIVE_DEPLOYMENT_STATUSES = ["pending_build", "building", "scanning", "pending_deployment", "deploying"] as const
-
 // triggeredBy is a user ID for manual deploys, or null for webhook-triggered deploys.
 // When non-null, access is verified via team membership.
 // When null (webhook path), the HMAC signature in the receiver is the security gate.

@@ -481,18 +481,36 @@ type PendingNamespaceDeletion struct {
 	// BlockedReason is why the last attempt kept the namespace, empty if it
 	// was never blocked.
 	BlockedReason string
+	// ClaimToken names this claim. Finishing it (MarkNamespaceDeleted,
+	// MarkNamespaceBlocked, ReleaseNamespaceDeletion) needs it, so a worker
+	// whose claim expired can't touch the claim of the one that took over.
+	ClaimToken string
 }
 
-// ClaimNamespaceDeletions returns up to limit entries queued for namespace
-// cleanup, skipping blocked ones that are not due for another attempt yet.
+// ClaimNamespaceDeletions claims up to limit entries queued for namespace
+// cleanup, skipping blocked ones that are not due for another attempt yet,
+// with the claim/TTL semantics of ClaimVolumeDeletions. A claimed entry can't
+// be un-queued by a project rename back to its slug (updateProject in the
+// API refuses the rename instead), so the namespace being deleted never
+// becomes the live one again. Finish with MarkNamespaceDeleted,
+// MarkNamespaceBlocked or ReleaseNamespaceDeletion.
 func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]PendingNamespaceDeletion, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT q.id, q.project_id, q.project_slug,
-		        EXISTS (SELECT 1 FROM projects p WHERE p.id = q.project_id),
-		        COALESCE(q.blocked_reason, '')
-		   FROM queued_namespace_cleanups q
-		  WHERE q.next_attempt_at IS NULL OR q.next_attempt_at <= $1
-		  ORDER BY q.created_at ASC LIMIT $2`, time.Now().UTC(), limit)
+	now := time.Now().UTC()
+	rows, err := s.db.QueryContext(ctx, `
+		UPDATE queued_namespace_cleanups q
+		SET claimed_at = $1, claim_token = $4
+		WHERE q.id IN (
+			SELECT id FROM queued_namespace_cleanups
+			WHERE (next_attempt_at IS NULL OR next_attempt_at <= $1)
+			  AND (claimed_at IS NULL OR claimed_at < $2)
+			ORDER BY created_at ASC
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING q.id, q.project_id, q.project_slug,
+		          EXISTS (SELECT 1 FROM projects p WHERE p.id = q.project_id),
+		          COALESCE(q.blocked_reason, ''), q.claim_token`,
+		now, now.Add(-volumeDeletionClaimTTL), limit, uuid.NewString())
 	if err != nil {
 		return nil, fmt.Errorf("query namespace deletions: %w", err)
 	}
@@ -501,7 +519,7 @@ func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]Pendi
 	var dels []PendingNamespaceDeletion
 	for rows.Next() {
 		var d PendingNamespaceDeletion
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ProjectSlug, &d.ProjectExists, &d.BlockedReason); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ProjectSlug, &d.ProjectExists, &d.BlockedReason, &d.ClaimToken); err != nil {
 			return nil, fmt.Errorf("scan namespace deletion row: %w", err)
 		}
 		dels = append(dels, d)
@@ -509,22 +527,40 @@ func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]Pendi
 	return dels, rows.Err()
 }
 
-// MarkNamespaceBlocked keeps a queued namespace cleanup and defers its next
-// attempt until retryAt.
-func (s *Store) MarkNamespaceBlocked(ctx context.Context, id, reason string, retryAt time.Time) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE queued_namespace_cleanups SET blocked_reason = $1, next_attempt_at = $2 WHERE id = $3`,
-		reason, retryAt.UTC(), id)
+// MarkNamespaceBlocked keeps a queued namespace cleanup, unclaimed, and
+// defers its next attempt until retryAt. The namespace was left alone, so a
+// rename back to its slug may take it over meanwhile.
+func (s *Store) MarkNamespaceBlocked(ctx context.Context, d PendingNamespaceDeletion, reason string, retryAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE queued_namespace_cleanups
+		SET blocked_reason = $1, next_attempt_at = $2, claimed_at = NULL, claim_token = NULL
+		WHERE id = $3 AND claim_token = $4`,
+		reason, retryAt.UTC(), d.ID, d.ClaimToken)
 	if err != nil {
 		return fmt.Errorf("mark namespace blocked: %w", err)
 	}
 	return nil
 }
 
-// MarkNamespaceDeleted removes a queued namespace cleanup record.
-func (s *Store) MarkNamespaceDeleted(ctx context.Context, id string) error {
+// ReleaseNamespaceDeletion gives up the claim on a queued namespace cleanup
+// whose attempt failed before the namespace delete was requested, so the
+// next poll retries it. After a delete request, even a failed one, keep the
+// claim: Kubernetes may have started deleting the namespace.
+func (s *Store) ReleaseNamespaceDeletion(ctx context.Context, d PendingNamespaceDeletion) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE queued_namespace_cleanups SET claimed_at = NULL, claim_token = NULL
+		WHERE id = $1 AND claim_token = $2`, d.ID, d.ClaimToken)
+	if err != nil {
+		return fmt.Errorf("release namespace deletion: %w", err)
+	}
+	return nil
+}
+
+// MarkNamespaceDeleted removes a queued namespace cleanup record, if this
+// worker's claim on it still holds.
+func (s *Store) MarkNamespaceDeleted(ctx context.Context, d PendingNamespaceDeletion) error {
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM queued_namespace_cleanups WHERE id = $1`, id)
+		`DELETE FROM queued_namespace_cleanups WHERE id = $1 AND claim_token = $2`, d.ID, d.ClaimToken)
 	if err != nil {
 		return fmt.Errorf("mark namespace deleted: %w", err)
 	}
@@ -609,6 +645,11 @@ type PendingVolumeDeletion struct {
 // another controller may retry it. Long enough to absorb a slow K8s API call,
 // short enough that a crashed controller's claims become available again.
 const volumeDeletionClaimTTL = 5 * time.Minute
+
+// NamespaceDeletionClaimTTL is how long a claim on a queued namespace
+// cleanup lasts (ClaimNamespaceDeletions). The worker must be done well
+// within it.
+const NamespaceDeletionClaimTTL = volumeDeletionClaimTTL
 
 // ClaimVolumeDeletions atomically transitions up to limit rows from "unclaimed"
 // (or "claimed long ago") to "claimed now" and returns them. Uses FOR UPDATE

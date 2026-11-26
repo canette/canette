@@ -57,7 +57,9 @@ func newLifecycleFixture(t *testing.T) *lifecycleFixture {
 		return nil
 	}
 	f.c.rolloutPollInterval = 10 * time.Millisecond
-	f.rollout(func(int) k8sres.RolloutStatus { return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"} })
+	f.rollout(func(int) k8sres.RolloutStatus {
+		return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"}
+	})
 	return f
 }
 
@@ -354,7 +356,9 @@ func TestRunApp_ShutdownResumes(t *testing.T) {
 		t.Errorf("runtime %+v", r)
 	}
 
-	f.rollout(func(int) k8sres.RolloutStatus { return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"} })
+	f.rollout(func(int) k8sres.RolloutStatus {
+		return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"}
+	})
 	f.run(context.Background())
 	if got := f.status("d1"); got != "live" {
 		t.Errorf("after resuming, d1 is %s, want live", got)
@@ -511,7 +515,9 @@ func TestRunApp_RolloutCutOffByRestartIsRetired(t *testing.T) {
 	}
 
 	f.exec(`UPDATE deployments SET status = 'pending_deployment' WHERE id = 'd2'`) // d2 is built
-	f.rollout(func(int) k8sres.RolloutStatus { return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"} })
+	f.rollout(func(int) k8sres.RolloutStatus {
+		return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"}
+	})
 	f.run(context.Background())
 
 	if got := f.status("d2"); got != "live" {
@@ -519,5 +525,27 @@ func TestRunApp_RolloutCutOffByRestartIsRetired(t *testing.T) {
 	}
 	if got := f.status("d1"); got != "superseded" {
 		t.Errorf("d1 is %s, want superseded once d2 took over", got)
+	}
+}
+
+// An admin repair bumps the intent with the same, live target: the worker
+// applies it again and checks the rollout, and the history is left as it is.
+func TestRunApp_RepairReappliesLiveTarget(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "live")
+	f.intent("running", "d1")
+	f.exec(`INSERT INTO app_runtime (app_id, reconciled_generation, applied_deployment_id) VALUES ('a1', 1, 'd1')`)
+	f.intent("running", "") // the repair: generation 2, same target
+
+	f.run(context.Background())
+
+	if n := f.applies.Load(); n != 1 {
+		t.Errorf("applied %d times, want once", n)
+	}
+	if got := f.status("d1"); got != "live" {
+		t.Errorf("d1 is %s, want live", got)
+	}
+	if r := f.runtime(); r.reconciled != 2 || r.applied.String != "d1" || r.leased {
+		t.Errorf("runtime %+v", r)
 	}
 }

@@ -66,3 +66,16 @@ export async function setIntent(
     .where("app_id", "=", appId)
     .execute()
 }
+
+// repairIntent asks the controller to apply an app's intent again, unchanged
+// (admin force sync), on a locked row: it bumps the generation only. updated_at
+// dates the last change of what the app should run, and the controller takes
+// a deployment created after it for one an older API accepted during an
+// upgrade (AdoptLegacyWrites): a repair moving it would hide that deploy.
+export async function repairIntent(tx: DB, appId: string): Promise<void> {
+  await tx
+    .updateTable("app_intents")
+    .set({ generation: sql<string>`generation + 1` })
+    .where("app_id", "=", appId)
+    .execute()
+}

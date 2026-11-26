@@ -4,8 +4,7 @@ import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
-import { ACTIVE_DEPLOYMENT_STATUSES } from "./deployments"
-import { lockIntents, setIntent } from "./intents"
+import { lockIntents, repairIntent } from "./intents"
 import { lifecycleStatus, type LifecycleColumns } from "./lifecycle-status"
 
 // ── Users ─────────────────────────────────────────────────────────────────────
@@ -497,52 +496,34 @@ export async function resetStuckBuilds(db: DB): Promise<SyncResult> {
 // ── Force sync ────────────────────────────────────────────────────────────────
 
 export async function forceSyncLiveApps(db: DB): Promise<SyncResult> {
-  const now = new Date().toISOString()
-  // Reset the latest-live deployment for every app back to 'pending_deployment'
-  // and make it the intent's target again, so the controller applies it once
-  // more. Server-side apply is idempotent — if resources are already correct
-  // this is a no-op. The self-referential subquery is kept as sql tag for
-  // clarity. Apps with a deployment still in progress are skipped: re-queueing
-  // the live one would supersede it.
+  // A repair (#354): every app that should run a live deployment gets its
+  // intent bumped with the same target, so the controller applies that
+  // deployment again and checks its rollout. Server-side apply is idempotent —
+  // if resources are already correct this is a no-op. The deployment history
+  // is left as it is. An app whose target is still on its way is skipped: the
+  // controller is applying it anyway.
   const synced = await db.transaction().execute(async (tx) => {
-    // A re-queue is a lifecycle action, so it takes the intent locks first
-    // (services/intents.ts): those of every app with a live deployment, a
-    // superset of the apps re-queued below.
-    const candidates = await tx
-      .selectFrom("deployments")
-      .select("app_id")
-      .distinct()
-      .where("status", "=", "live")
-      .execute()
-    const locked = candidates.map((r) => r.app_id)
-    if (locked.length === 0) return 0
-    await lockIntents(tx, locked)
-
-    // Only those apps: a deployment that goes live after the query above
-    // belongs to an app whose intent isn't locked, and re-queueing it here
-    // would lock its row before its intent, the opposite order to Stop,
-    // which deadlocks.
-    const result = await sql<{ id: string; app_id: string }>`
-      UPDATE deployments
-      SET status = 'pending_deployment', error_message = NULL, updated_at = ${now}
-      WHERE status = 'live'
-        AND app_id IN (${sql.join(locked)})
-        AND id IN (
-          SELECT id FROM deployments d2
-          WHERE d2.app_id = deployments.app_id
-          ORDER BY created_at DESC LIMIT 1
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM deployments d3
-          WHERE d3.app_id = deployments.app_id
-            AND d3.status IN (${sql.join([...ACTIVE_DEPLOYMENT_STATUSES])})
-        )
-      RETURNING id, app_id
-    `.execute(tx)
-    for (const row of result.rows) {
-      await setIntent(tx, row.app_id, { desiredState: "running", targetDeploymentId: row.id, updatedBy: null })
+    const servingLive = (ids?: string[]) => {
+      let q = tx
+        .selectFrom("app_intents as i")
+        .innerJoin("deployments as t", "t.id", "i.target_deployment_id")
+        .select("i.app_id")
+        .where("i.desired_state", "=", "running")
+        .where("t.status", "=", "live")
+      if (ids) q = q.where("i.app_id", "in", ids)
+      return q.execute()
     }
-    return result.rows.length
+    // A repair is a lifecycle action, so it takes the intent locks first
+    // (services/intents.ts), then checks again under them: a deploy or a
+    // Stop may have committed since the first read.
+    const candidates = (await servingLive()).map((r) => r.app_id)
+    if (candidates.length === 0) return 0
+    await lockIntents(tx, candidates)
+    const due = await servingLive(candidates)
+    for (const { app_id } of due) {
+      await repairIntent(tx, app_id)
+    }
+    return due.length
   })
   return {
     synced,

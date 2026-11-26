@@ -98,19 +98,25 @@ describe("a new deployment supersedes one in progress", () => {
     expect(await activeIds(app.id)).toHaveLength(2)
   })
 
-  it("force sync skips an app that still has a deployment in progress", async () => {
+  it("force sync re-applies apps serving their target, leaving the history alone", async () => {
+    const target = async (appId: string, deploymentId: string) =>
+      db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: deploymentId, generation: 1 })
+        .where("app_id", "=", appId).execute()
     const synced = await makeApp("sync-ok")
     const syncedLive = await addDeployment(db, synced.id, "live")
-    const stuck = await makeApp("sync-stuck")
-    await addDeployment(db, stuck.id, "building", { createdAt: "2026-01-01T00:00:00.000Z" })
-    const stuckLive = await addDeployment(db, stuck.id, "live", { createdAt: "2026-01-02T00:00:00.000Z" })
+    await target(synced.id, syncedLive)
+    // Its target is still being built: the controller applies that anyway.
+    const onItsWay = await makeApp("sync-building")
+    await addDeployment(db, onItsWay.id, "live", { createdAt: "2026-01-01T00:00:00.000Z" })
+    await target(onItsWay.id, await addDeployment(db, onItsWay.id, "building", { createdAt: "2026-01-02T00:00:00.000Z" }))
 
-    await forceSyncLiveApps(db)
+    const result = await forceSyncLiveApps(db)
 
-    const status = async (id: string) =>
-      (await db.selectFrom("deployments").select("status").where("id", "=", id).executeTakeFirstOrThrow()).status
-    expect(await status(syncedLive)).toBe("pending_deployment")
-    expect(await status(stuckLive)).toBe("live")
+    const status = (await db.selectFrom("deployments").select("status").where("id", "=", syncedLive).executeTakeFirstOrThrow()).status
+    expect(status).toBe("live")
+    expect((await intentOf(synced.id)).generation).toBe(2)
+    expect((await intentOf(onItsWay.id)).generation).toBe(1)
+    expect(result.synced).toBe(1)
   })
 })
 

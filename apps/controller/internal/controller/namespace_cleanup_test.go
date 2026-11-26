@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"canette.dev/controller/internal/store"
 )
@@ -52,9 +53,9 @@ func TestCleanupQueuedNamespace(t *testing.T) {
 
 	t.Run("renamed project with a PVC is kept", func(t *testing.T) {
 		dyn := fakeNamespaceWith(true)
-		pvcs, err := cleanupQueuedNamespace(context.Background(), dyn, queued(true))
-		if err != nil {
-			t.Fatal(err)
+		pvcs, requested, err := cleanupQueuedNamespace(context.Background(), dyn, queued(true))
+		if err != nil || requested {
+			t.Fatalf("err %v, delete requested %v", err, requested)
 		}
 		if len(pvcs) != 1 || pvcs[0] != "web-data" {
 			t.Errorf("pvcs = %v, want [web-data] so the row stays queued", pvcs)
@@ -66,9 +67,9 @@ func TestCleanupQueuedNamespace(t *testing.T) {
 
 	t.Run("renamed project without PVCs is deleted", func(t *testing.T) {
 		dyn := fakeNamespaceWith(false)
-		pvcs, err := cleanupQueuedNamespace(context.Background(), dyn, queued(true))
-		if err != nil || len(pvcs) != 0 {
-			t.Fatalf("pvcs = %v, err = %v", pvcs, err)
+		pvcs, requested, err := cleanupQueuedNamespace(context.Background(), dyn, queued(true))
+		if err != nil || len(pvcs) != 0 || !requested {
+			t.Fatalf("pvcs = %v, delete requested %v, err = %v", pvcs, requested, err)
 		}
 		if namespaceExists(t, dyn) {
 			t.Error("namespace was not deleted")
@@ -77,14 +78,27 @@ func TestCleanupQueuedNamespace(t *testing.T) {
 
 	t.Run("deleted project is deleted even with a PVC", func(t *testing.T) {
 		dyn := fakeNamespaceWith(true)
-		pvcs, err := cleanupQueuedNamespace(context.Background(), dyn, queued(false))
-		if err != nil || len(pvcs) != 0 {
-			t.Fatalf("pvcs = %v, err = %v", pvcs, err)
+		pvcs, requested, err := cleanupQueuedNamespace(context.Background(), dyn, queued(false))
+		if err != nil || len(pvcs) != 0 || !requested {
+			t.Fatalf("pvcs = %v, delete requested %v, err = %v", pvcs, requested, err)
 		}
 		if namespaceExists(t, dyn) {
 			t.Error("namespace was not deleted")
 		}
 	})
+}
+
+// A failed delete request still counts as requested: Kubernetes may have
+// started deleting the namespace (a timeout), so the claim must stay.
+func TestCleanupQueuedNamespace_FailedDeleteCountsAsRequested(t *testing.T) {
+	dyn := fakeNamespaceWith(false)
+	dyn.PrependReactor("delete", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, context.DeadlineExceeded
+	})
+	q := store.PendingNamespaceDeletion{ID: "q1", ProjectID: "0123456789abcdef", ProjectSlug: "old", ProjectExists: true}
+	if _, requested, err := cleanupQueuedNamespace(context.Background(), dyn, q); err == nil || !requested {
+		t.Errorf("delete requested %v, err %v; want an error after the request", requested, err)
+	}
 }
 
 func TestNamespaceBlockedReason(t *testing.T) {

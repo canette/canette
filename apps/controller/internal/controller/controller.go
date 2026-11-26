@@ -243,13 +243,29 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 	} else {
 		for _, d := range nsDels {
 			c.goWorker(func() {
+				// Bounded well within the claim, so a worker never acts on
+				// a namespace whose cleanup another worker has taken over.
+				ctx, cancel := context.WithTimeout(workCtx, store.NamespaceDeletionClaimTTL/2)
+				defer cancel()
 				ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
-				pvcs, err := cleanupQueuedNamespace(workCtx, c.dynClient, d)
+				pvcs, deleteRequested, err := cleanupQueuedNamespace(ctx, c.dynClient, d)
 				if err != nil {
 					c.log.Warn("namespace deletion error",
 						zap.String("namespace", ns),
 						zap.Error(err))
-					return // will retry next poll
+					// Before the delete request (listing the PVCs failed), the
+					// namespace is untouched: release the claim for the next
+					// poll, and a rename back to the slug may take it over
+					// meanwhile. After it, even a failed one (a timeout, say),
+					// Kubernetes may be deleting the namespace, so the claim
+					// stays and blocks a rename back until it expires and a
+					// later poll retries.
+					if !deleteRequested {
+						if err := c.store.ReleaseNamespaceDeletion(ctx, d); err != nil {
+							c.log.Warn("release namespace deletion error", zap.Error(err))
+						}
+					}
+					return
 				}
 				if len(pvcs) > 0 {
 					reason := namespaceBlockedReason(pvcs)
@@ -261,12 +277,12 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 						zap.String("namespace", ns),
 						zap.Strings("pvcs", pvcs),
 						zap.Duration("retry_in", namespaceBlockedRetry))
-					if err := c.store.MarkNamespaceBlocked(workCtx, d.ID, reason, time.Now().Add(namespaceBlockedRetry)); err != nil {
+					if err := c.store.MarkNamespaceBlocked(ctx, d, reason, time.Now().Add(namespaceBlockedRetry)); err != nil {
 						c.log.Warn("mark namespace blocked error", zap.Error(err))
 					}
 					return // row stays queued
 				}
-				if err := c.store.MarkNamespaceDeleted(workCtx, d.ID); err != nil {
+				if err := c.store.MarkNamespaceDeleted(ctx, d); err != nil {
 					c.log.Warn("mark namespace deleted error", zap.Error(err))
 				}
 				c.log.Info("namespace deleted", zap.String("namespace", ns))
@@ -459,17 +475,18 @@ func namespaceBlockedReason(pvcs []string) string {
 // A namespace queued by a slug rename (the project still exists) is kept while
 // it holds any PVC, since deleting it would take the volume data with it; the
 // PVC names are returned and the row must stay queued. A deleted project's
-// namespace is always deleted.
-func cleanupQueuedNamespace(ctx context.Context, dyn dynamic.Interface, d store.PendingNamespaceDeletion) ([]string, error) {
+// namespace is always deleted. deleteRequested reports whether the delete
+// request was sent, whatever came of it.
+func cleanupQueuedNamespace(ctx context.Context, dyn dynamic.Interface, d store.PendingNamespaceDeletion) (pvcs []string, deleteRequested bool, err error) {
 	ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
 	if d.ProjectExists {
 		pvcs, err := k8sres.ListPVCNames(ctx, dyn, ns)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(pvcs) > 0 {
-			return pvcs, nil
+			return pvcs, false, nil
 		}
 	}
-	return nil, k8sres.DeleteNamespace(ctx, dyn, ns)
+	return nil, true, k8sres.DeleteNamespace(ctx, dyn, ns)
 }
