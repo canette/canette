@@ -23,6 +23,7 @@ import { isUniqueConstraintError } from "../db/errors"
 type AppRow = Selectable<Database["apps"]> & LifecycleColumns & {
   latest_deployment_status?: string | null
   runtime_live_url?: string | null
+  last_error?: string | null
   kubernetes_status?: string | null
   kubernetes_status_observed_at?: string | null
   runtime_health?: string | null
@@ -85,6 +86,7 @@ function mapApp(row: AppRow): App {
     liveUrl: row.desired_state === "stopped" ? undefined : (row.runtime_live_url ?? undefined),
     latestDeploymentStatus: (row.latest_deployment_status as App["latestDeploymentStatus"]) ?? undefined,
     lifecycleStatus: lifecycleStatus(row),
+    lifecycleError: row.desired_state === "running" ? (row.last_error ?? undefined) : undefined,
     canetteConfig: row.canette_config ?? undefined,
     position: row.position,
     ...effectiveRuntimeHealth(row),
@@ -111,6 +113,7 @@ function selectApps(db: DB) {
       "r.live_url as runtime_live_url",
       "r.reconciled_generation",
       "r.applied_deployment_id",
+      "r.last_error",
       "i.desired_state",
       "i.generation as intent_generation",
       "t.status as target_status",

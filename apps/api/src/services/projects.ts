@@ -165,30 +165,6 @@ export async function updateProject(
     )
   }
 
-  const newSlug = patch.slug !== undefined && patch.slug !== project.slug ? patch.slug : null
-  const slugChanging = newSlug !== null
-
-  if (slugChanging) {
-    // Whether every app is stopped is checked in the transaction below.
-    // A rename deletes the old namespace, and every PVC in it with it. Stop
-    // keeps PVCs, so a stopped app would silently come back with an empty
-    // volume.
-    const pvcResult = await db
-      .selectFrom("app_volumes as v")
-      .innerJoin("apps as a", "a.id", "v.app_id")
-      .select(db.fn.countAll<number>().as("count"))
-      .where("a.project_id", "=", projectId)
-      .where("v.type", "=", "pvc")
-      .executeTakeFirstOrThrow()
-    if (Number(pvcResult.count) > 0) {
-      throw new ServiceError(
-        "Remove the persistent volumes from every app before renaming the project: renaming deletes the volumes and their data",
-        "CONFLICT",
-        409
-      )
-    }
-  }
-
   const updates: Updateable<Database["projects"]> = {}
   if (patch.name !== undefined)        updates.name = patch.name.trim()
   // null (or an empty string) clears the description
@@ -200,23 +176,58 @@ export async function updateProject(
   // One transaction, so an interrupted rename can't leave the old namespace
   // without a queued cleanup (orphaned) or a teardown pointing at it.
   await db.transaction().execute(async (tx) => {
+    // Whether the slug changes is decided from the slug as it is now, under
+    // the project row's lock: a request that read it earlier could otherwise
+    // take a rename (or a rename back) for no change and skip the checks
+    // below. Lifecycle locks come first (services/intents.ts): the intents
+    // of the project's apps, then the project row.
+    let currentSlug = project.slug
+    if (patch.slug !== undefined) {
+      const appIds = (await tx.selectFrom("apps").select("id").where("project_id", "=", projectId).execute())
+        .map((r) => r.id)
+      await lockIntents(tx, appIds)
+      let projectQ = tx.selectFrom("projects").select("slug").where("id", "=", projectId)
+      if (supportsForUpdate(tx)) projectQ = projectQ.forUpdate()
+      const current = await projectQ.executeTakeFirst()
+      if (!current) throw new ServiceError("Not found", "NOT_FOUND", 404)
+      currentSlug = current.slug
+    }
+    const newSlug = patch.slug !== undefined && patch.slug !== currentSlug ? patch.slug : null
+    const slugChanging = newSlug !== null
+
     if (slugChanging) {
       // Every app must be stopped: the rename deletes the old namespace. Its
       // intent says so, checked under the intent locks so that no deploy can
       // be accepted meanwhile. The newest deployment can't tell: deploys can
       // commit in another order than they were created, and a stopped app's
       // newest deployment can be superseded.
-      const appIds = (await tx.selectFrom("apps").select("id").where("project_id", "=", projectId).execute())
-        .map((r) => r.id)
-      await lockIntents(tx, appIds)
-      const running = appIds.length === 0 ? undefined : await tx
-        .selectFrom("app_intents")
-        .select("app_id")
-        .where("app_id", "in", appIds)
-        .where("desired_state", "=", "running")
+      const running = await tx
+        .selectFrom("app_intents as i")
+        .innerJoin("apps as a", "a.id", "i.app_id")
+        .select("i.app_id")
+        .where("a.project_id", "=", projectId)
+        .where("i.desired_state", "=", "running")
         .executeTakeFirst()
       if (running) {
         throw new ServiceError("Stop all apps before renaming the project", "CONFLICT", 409)
+      }
+
+      // A rename deletes the old namespace, and every PVC in it with it. Stop
+      // keeps PVCs, so a stopped app would silently come back with an empty
+      // volume.
+      const pvcResult = await tx
+        .selectFrom("app_volumes as v")
+        .innerJoin("apps as a", "a.id", "v.app_id")
+        .select(tx.fn.countAll<number>().as("count"))
+        .where("a.project_id", "=", projectId)
+        .where("v.type", "=", "pvc")
+        .executeTakeFirstOrThrow()
+      if (Number(pvcResult.count) > 0) {
+        throw new ServiceError(
+          "Remove the persistent volumes from every app before renaming the project: renaming deletes the volumes and their data",
+          "CONFLICT",
+          409
+        )
       }
     }
     try {
@@ -249,7 +260,7 @@ export async function updateProject(
 
     await tx
       .insertInto("queued_namespace_cleanups")
-      .values({ id: crypto.randomUUID(), project_id: projectId, project_slug: project.slug, created_at: new Date().toISOString() })
+      .values({ id: crypto.randomUUID(), project_id: projectId, project_slug: currentSlug, created_at: new Date().toISOString() })
       .onConflict((oc) => oc.doNothing())
       .execute()
 

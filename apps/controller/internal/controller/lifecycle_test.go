@@ -57,7 +57,9 @@ func newLifecycleFixture(t *testing.T) *lifecycleFixture {
 		return nil
 	}
 	f.c.rolloutPollInterval = 10 * time.Millisecond
-	f.rollout(func(int) k8sres.RolloutStatus { return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"} })
+	f.rollout(func(int) k8sres.RolloutStatus {
+		return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"}
+	})
 	return f
 }
 
@@ -354,7 +356,9 @@ func TestRunApp_ShutdownResumes(t *testing.T) {
 		t.Errorf("runtime %+v", r)
 	}
 
-	f.rollout(func(int) k8sres.RolloutStatus { return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"} })
+	f.rollout(func(int) k8sres.RolloutStatus {
+		return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"}
+	})
 	f.run(context.Background())
 	if got := f.status("d1"); got != "live" {
 		t.Errorf("after resuming, d1 is %s, want live", got)
@@ -511,7 +515,9 @@ func TestRunApp_RolloutCutOffByRestartIsRetired(t *testing.T) {
 	}
 
 	f.exec(`UPDATE deployments SET status = 'pending_deployment' WHERE id = 'd2'`) // d2 is built
-	f.rollout(func(int) k8sres.RolloutStatus { return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"} })
+	f.rollout(func(int) k8sres.RolloutStatus {
+		return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"}
+	})
 	f.run(context.Background())
 
 	if got := f.status("d2"); got != "live" {

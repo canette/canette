@@ -4,7 +4,7 @@ import type { Selectable } from "kysely"
 import type { Database } from "../db/types"
 import { sql } from "kysely"
 import { ServiceError } from "./errors"
-import { lockIntents, setIntent } from "./intents"
+import { lockIntents, repairIntent } from "./intents"
 import { lifecycleStatus, type LifecycleColumns } from "./lifecycle-status"
 
 // ── Users ─────────────────────────────────────────────────────────────────────
@@ -521,7 +521,7 @@ export async function forceSyncLiveApps(db: DB): Promise<SyncResult> {
     await lockIntents(tx, candidates)
     const due = await servingLive(candidates)
     for (const { app_id } of due) {
-      await setIntent(tx, app_id, { desiredState: "running", updatedBy: null })
+      await repairIntent(tx, app_id)
     }
     return due.length
   })

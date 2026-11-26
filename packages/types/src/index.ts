@@ -119,6 +119,10 @@ export interface App {
   // The state of the app, from what it should run and how far canette has
   // got with that (#354). Absent for an app that was never deployed.
   lifecycleStatus?: AppLifecycleStatus
+  // Why the controller's last change for the app failed, e.g. an admin
+  // re-sync of the live deployment whose apply or rollout failed while the
+  // app kept serving. Cleared by the next change that succeeds.
+  lifecycleError?: string
   canetteConfig?: string
   // Manual sort order within the project, shared across the team — lower sorts first.
   position: number

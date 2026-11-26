@@ -109,6 +109,25 @@ describe("app intent", () => {
     expect(dep.id).toBeTruthy()
   })
 
+  it("an app reports the controller's last error while it should run", async () => {
+    const app = await makeApp("repair-failed")
+    const live = await addDeployment(db, app.id, "live")
+    await db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: live, generation: 2 })
+      .where("app_id", "=", app.id).execute()
+    // A re-sync whose rollout failed: reconciled, the target still live.
+    await db.insertInto("app_runtime").values({
+      app_id: app.id, reconciled_generation: 2, applied_deployment_id: live, live_url: "https://x",
+      last_error: "rollout failed: pods crash",
+    }).execute()
+
+    const got = await getAppById(db, app.id, "userId")
+    expect(got?.lifecycleStatus).toBe("live")
+    expect(got?.lifecycleError).toBe("rollout failed: pods crash")
+
+    await stopApp(db, app.id, "userId")
+    expect((await getAppById(db, app.id, "userId"))?.lifecycleError).toBeUndefined()
+  })
+
   it("a webhook deploy records no user", async () => {
     const app = await makeApp("webhook-deploy")
     const dep = await createDeployment(db, app.id, null, { commitSha: "deadbeef" })
@@ -168,11 +187,13 @@ describe("app intent", () => {
     await db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: live, generation: 1 })
       .where("app_id", "=", app.id).execute()
 
+    const before = await intent(db, app.id)
     await forceSyncLiveApps(db)
 
-    expect(await intent(db, app.id)).toMatchObject({
-      desired_state: "running", generation: 2, target_deployment_id: live, updated_by: null,
-    })
+    // Only the generation: updated_at dates the last change of what the app
+    // should run, which the controller's adoption of an older API's deploys
+    // compares against.
+    expect(await intent(db, app.id)).toEqual({ ...before!, generation: 2 })
     const row = await db.selectFrom("deployments").select("status").where("id", "=", live).executeTakeFirstOrThrow()
     expect(row.status).toBe("live") // the history is left alone
   })

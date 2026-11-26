@@ -125,6 +125,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   {isLive && <HostnameAltMenu primaryUrl={computedUrl} hostnames={hostnames} />}
                 </div>
               )}
+              {/* A failed status shows its error on the deployment already. */}
+              {app.lifecycleError && app.lifecycleStatus !== "failed" && (
+                <p className="mt-1.5 text-xs text-destructive-text">
+                  The last change to this app failed: {app.lifecycleError}
+                </p>
+              )}
             </div>
           </div>
         ) : (

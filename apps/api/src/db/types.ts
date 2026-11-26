@@ -197,6 +197,7 @@ export interface Database {
     next_attempt_at: string | null
     blocked_reason: string | null
     claimed_at: string | null
+    claim_token: string | null
   }
 
   queued_app_cleanups: {
