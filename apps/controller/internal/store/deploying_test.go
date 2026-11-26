@@ -26,6 +26,16 @@ import (
 // Each test gets its own schema with the API's migrations applied.
 func testStore(t *testing.T) (*Store, *sql.DB) {
 	t.Helper()
+	db := testSchema(t)
+	applyMigrations(t, db, migrationFiles(t, "up"))
+	seedProject(t, db)
+	return New(db, zap.NewNop()), db
+}
+
+// testSchema returns a connection to a new, empty schema that is dropped
+// when the test ends.
+func testSchema(t *testing.T) *sql.DB {
+	t.Helper()
 	base := os.Getenv("CANETTE_TEST_DATABASE_URL")
 	if base == "" {
 		t.Skip("CANETTE_TEST_DATABASE_URL not set")
@@ -61,13 +71,24 @@ func testStore(t *testing.T) (*Store, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
 
-	// Applied the way apps/api/src/db/migrations.ts does.
-	files, err := filepath.Glob("../../../api/migrations/*.up.sql")
+// migrationFiles lists the API's migrations in order, direction "up" or "down".
+func migrationFiles(t *testing.T, direction string) []string {
+	t.Helper()
+	files, err := filepath.Glob("../../../api/migrations/*." + direction + ".sql")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no migrations found: %v", err)
 	}
 	sort.Strings(files)
+	return files
+}
+
+// applyMigrations runs files the way apps/api/src/db/migrations.ts does.
+func applyMigrations(t *testing.T, db *sql.DB, files []string) {
+	t.Helper()
+	ctx := context.Background()
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -82,7 +103,12 @@ func testStore(t *testing.T) (*Store, *sql.DB) {
 			}
 		}
 	}
+}
 
+// seedProject inserts user u1, team t1, project p1 and app a1.
+func seedProject(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ctx := context.Background()
 	now := time.Now().UTC()
 	for _, stmt := range []string{
 		`INSERT INTO "user" (id, name, email, "createdAt", "updatedAt") VALUES ('u1', 'u', 'u@example.com', 'x', 'x')`,
@@ -98,7 +124,6 @@ func testStore(t *testing.T) (*Store, *sql.DB) {
 			t.Fatalf("seed: %v", err)
 		}
 	}
-	return New(db, zap.NewNop()), db
 }
 
 const validSnapshot = `{"app":{"id":"a1","slug":"a"},"project":{"id":"p1","slug":"p"}}`

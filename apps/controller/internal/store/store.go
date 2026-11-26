@@ -633,17 +633,24 @@ func (s *Store) GetCurrentDeployments(ctx context.Context) ([]CurrentDeployment,
 
 // UpdateRuntimeHealth records the health watcher's current verdict for an
 // app's live pod(s) — independent of deployments.status, which only ever
-// records whether the deploy operation itself succeeded.
-// runtime_health_updated_at is when the verdict was last confirmed: the
-// watcher also rewrites an unchanged verdict periodically.
+// records whether the deploy operation itself succeeded — in
+// app_observed_status, creating the app's row on first use like
+// UpdateKubernetesStatus. runtime_health_updated_at is when the verdict was
+// last confirmed: the watcher also rewrites an unchanged verdict
+// periodically. An app deleted since it was read gets nothing written.
 func (s *Store) UpdateRuntimeHealth(ctx context.Context, appID, health, reason string) error {
 	var reasonArg interface{}
 	if reason != "" {
 		reasonArg = reason
 	}
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE apps SET runtime_health = $1, runtime_health_reason = $2, runtime_health_updated_at = $3
-		WHERE id = $4`, health, reasonArg, time.Now().UTC(), appID)
+		INSERT INTO app_observed_status (app_id, runtime_health, runtime_health_reason, runtime_health_updated_at)
+		SELECT id, $1, $2, $3 FROM apps WHERE id = $4
+		ON CONFLICT (app_id) DO UPDATE
+		SET runtime_health = excluded.runtime_health,
+			runtime_health_reason = excluded.runtime_health_reason,
+			runtime_health_updated_at = excluded.runtime_health_updated_at`,
+		health, reasonArg, time.Now().UTC(), appID)
 	if err != nil {
 		return fmt.Errorf("update runtime health: %w", err)
 	}

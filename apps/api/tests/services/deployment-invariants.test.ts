@@ -139,7 +139,6 @@ describe("migration 000024", () => {
         git_url: "https://github.com/example/repo", git_branch: "main", git_credential_id: null,
         app_path: "", image_url: "", image_tag: "", port: 3000, password_gate_enabled: false,
         live_url: null, canette_config: null, position: 0,
-        runtime_health: "unknown", runtime_health_reason: null, runtime_health_updated_at: null,
         created_at: now, updated_at: now,
       }).execute()
     }
