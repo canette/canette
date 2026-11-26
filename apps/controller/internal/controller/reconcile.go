@@ -142,13 +142,9 @@ func (c *Controller) reconcile(ctx context.Context, dep store.DeployingDeploymen
 	}
 	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
 	if psa := warnings.PodSecurityWarnings(); len(psa) > 0 {
-		for _, w := range psa {
-			c.appendLog(ctx, log, dep.ID, "controller", "Kubernetes warning: "+w)
-		}
-		if appCfg.Security == nil {
-			c.appendLog(ctx, log, dep.ID, "controller",
-				"Tip: set security.hardened: true in canette.yaml to meet the stricter Pod Security level, "+
-					"see https://canette.dev/docs/security/hardened-mode")
+		enforce := c.cfg.NamespacePolicy.PodSecurity.Enforce
+		for _, line := range podSecurityLogLines(psa, enforce, appCfg.Security != nil) {
+			c.appendLog(ctx, log, dep.ID, "controller", line)
 		}
 	}
 

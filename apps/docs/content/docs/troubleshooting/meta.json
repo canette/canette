@@ -1,4 +1,4 @@
 {
   "title": "Troubleshooting",
-  "pages": ["ui-issues", "build-issues", "helm-issues"]
+  "pages": ["ui-issues", "build-issues", "deploy-issues", "helm-issues"]
 }
