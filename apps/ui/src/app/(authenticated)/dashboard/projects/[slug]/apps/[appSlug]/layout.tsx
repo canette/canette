@@ -6,6 +6,7 @@ import { AppProvider } from "@/lib/app-context"
 import { TabNavigation } from "@/components/tab-navigation"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { RuntimeHealthIndicator } from "@/components/runtime-health-indicator"
+import { KubernetesReadinessIndicator } from "@/components/kubernetes-readiness-indicator"
 import { HostnameAltMenu } from "@/components/hostname-alt-menu"
 import { ExternalLink } from "lucide-react"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
@@ -91,6 +92,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   <RuntimeHealthIndicator
                     runtimeHealth={app.runtimeHealth}
                     runtimeHealthReason={app.runtimeHealthReason}
+                    className="shrink-0"
+                  />
+                )}
+                {isLive && (
+                  <KubernetesReadinessIndicator
+                    kubernetesStatus={app.kubernetesStatus}
+                    deploymentType={app.deploymentType}
                     className="shrink-0"
                   />
                 )}

@@ -199,6 +199,17 @@ func run(log *zap.Logger) error {
 		}
 	}()
 
+	// Background Kubernetes readiness reader: periodically records what
+	// Kubernetes reports for each live app's Deployment (capacity) or CronJob
+	// (suspended, missing, latest Job outcome). Same single-replica reasoning
+	// as the watcher above.
+	statusReader := controllerhealth.NewStatusReader(k8sClient, s, log)
+	go func() {
+		if err := statusReader.Run(ctx); err != nil {
+			log.Error("kubernetes status reader error", zap.Error(err))
+		}
+	}()
+
 	// Passing watcher.TriggerRefresh lets the reconciler nudge the health
 	// watcher the instant a deployment goes live, instead of it learning
 	// that up to currentDeploymentRefresh later — closing a window where

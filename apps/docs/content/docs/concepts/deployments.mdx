@@ -36,6 +36,20 @@ canette confirms each app's health every few minutes. If it can't confirm it for
 
 No indicator is shown while a deployment has no pods yet (e.g. just after triggering) or while the app is healthy.
 
+## Kubernetes readiness
+
+Next to runtime health, a live app can show a second indicator with what Kubernetes itself reports for the app's workload. Runtime health is about the running pods. Kubernetes readiness is about the Deployment or CronJob that owns them.
+
+| Indicator | Meaning |
+|---|---|
+| `2/3 available` | Fewer replicas are available than configured, so the app is serving at reduced capacity. `0/n available` means it isn't serving traffic |
+| `Deployment missing` / `CronJob missing` | The workload doesn't exist in Kubernetes, for example because it was deleted outside canette. Redeploy to recreate it |
+| `Suspended` | The CronJob is suspended in Kubernetes, so no new runs start on schedule |
+| `Last run failed` | The CronJob's most recent run failed |
+| `Not run yet` | The schedule hasn't triggered a run yet. This is normal for a new or rarely scheduled job, not an error |
+
+canette reads this from Kubernetes about once a minute and applies the same 10-minute rule as runtime health: a reading older than that isn't shown, and the MCP `get_app` tool leaves `kubernetesStatus` out. No indicator is shown at full capacity or when the latest run succeeded.
+
 ## Triggering a deployment
 
 Deployments can be triggered:

@@ -44,6 +44,11 @@ rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
     verbs: ["create", "get", "patch", "delete"]
+  # Read-only: the Kubernetes readiness reader reports each CronJob's latest
+  # Job outcome (see internal/health/kubestatus.go).
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list"]
   # Optional per-project ResourceQuota (canette-quota) and LimitRange (canette-limits)
   - apiGroups: [""]
     resources: ["resourcequotas", "limitranges"]

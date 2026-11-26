@@ -224,6 +224,57 @@ describe("services/apps", () => {
     })
   })
 
+  describe("kubernetes status", () => {
+    const partial = { workload: "present", replicas: { desired: 3, ready: 1, available: 1, updated: 3 } }
+
+    async function appWithStatus(id: string, status: string | null, minutesAgo: number) {
+      const now = new Date().toISOString()
+      await db.insertInto("apps").values({
+        id, project_id: "projectId", name: id, slug: id, source_type: "git", deployment_type: "web",
+        git_url: "https://github.com/canette/canette", git_branch: "main", git_credential_id: null,
+        app_path: "", image_url: "", image_tag: "", port: 3000, password_gate_enabled: false,
+        live_url: null, canette_config: null, position: 0,
+        runtime_health: "unknown", runtime_health_reason: null, runtime_health_updated_at: null,
+        created_at: now, updated_at: now,
+      }).execute()
+      await db.insertInto("app_observed_status").values({
+        app_id: id,
+        kubernetes_status: status,
+        kubernetes_status_observed_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+      }).execute()
+      return getAppById(db, id, "userId")
+    }
+
+    it("returns a status the controller read recently", async () => {
+      const app = await appWithStatus("k8s-fresh", JSON.stringify(partial), 9)
+      expect(app?.kubernetesStatus).toEqual(partial)
+    })
+
+    it("leaves out a status not read in 10 minutes", async () => {
+      const app = await appWithStatus("k8s-stale", JSON.stringify(partial), 11)
+      expect(app?.kubernetesStatus).toBeUndefined()
+      expect(app?.kubernetesStatusObservedAt).toBeDefined()
+    })
+
+    it("leaves out an unparseable status", async () => {
+      const app = await appWithStatus("k8s-bad", "{not json", 1)
+      expect(app?.kubernetesStatus).toBeUndefined()
+    })
+
+    it("returns an app the controller hasn't observed yet", async () => {
+      const app = await getAppById(db, "existingAppId", "userId")
+      expect(app).not.toBeNull()
+      expect(app?.kubernetesStatus).toBeUndefined()
+      expect(app?.kubernetesStatusObservedAt).toBeUndefined()
+    })
+
+    it("includes the status in project app lists", async () => {
+      await appWithStatus("k8s-listed", JSON.stringify(partial), 1)
+      const list = await listApps(db, "projectId", "userId")
+      expect(list?.items.find((a) => a.id === "k8s-listed")?.kubernetesStatus).toEqual(partial)
+    })
+  })
+
   describe("deploymentType", () => {
     it("createApp: defaults to 'web' when omitted", async () => {
       const result = await createApp(db, "projectId", "userId", {
