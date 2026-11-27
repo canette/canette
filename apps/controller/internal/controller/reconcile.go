@@ -82,6 +82,10 @@ func (c *Controller) deploy(ctx context.Context, log *zap.Logger, lease store.Le
 	if err := c.store.SetAppliedWorkload(ctx, dep.ID, workload); err != nil {
 		log.Warn("failed to record the applied workload", zap.Error(err))
 	}
+	if applied.UID != "" {
+		c.appendLog(ctx, log, dep.ID, "controller",
+			fmt.Sprintf("Details: applied workload UID %s, generation %d", applied.UID, applied.Generation))
+	}
 	if psa := warnings.PodSecurityWarnings(); len(psa) > 0 {
 		enforce := c.cfg.NamespacePolicy.PodSecurity.Enforce
 		for _, line := range podSecurityLogLines(psa, enforce, appCfg.Security != nil) {
@@ -183,6 +187,9 @@ func (c *Controller) waitRollout(ctx context.Context, log *zap.Logger, dep store
 			log.Warn("check rollout error", zap.Error(err))
 		} else {
 			c.appendLog(ctx, log, dep.ID, "controller", status.Message)
+			if status.Details != "" {
+				c.appendLog(ctx, log, dep.ID, "controller", "Details: "+status.Details)
+			}
 			if status.Done {
 				if status.Succeeded {
 					return rolloutResult{podName: status.PodName, revision: status.Revision}

@@ -337,6 +337,11 @@ type RolloutStatus struct {
 	Done      bool
 	Succeeded bool
 	Message   string
+	// Details holds Kubernetes identifiers that explain Message, such as
+	// object UIDs, for the deployment log next to its manifest. They are
+	// Kubernetes-specific, so they stay out of Message, which becomes the
+	// deployment's error.
+	Details string
 	PodName   string // name of the pod backing a successful rollout; empty otherwise
 	// Revision is the Deployment's deployment.kubernetes.io/revision once the
 	// rollout succeeded; empty otherwise.
@@ -374,15 +379,16 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 	if err != nil {
 		if errors.IsNotFound(err) {
 			if applied.UID != "" {
-				return RolloutStatus{Done: true, Message: "the Deployment was deleted during the rollout"}, nil
+				return RolloutStatus{Done: true, Message: "the Deployment was deleted during the rollout",
+					Details: fmt.Sprintf("applied Deployment UID %s", applied.UID)}, nil
 			}
 			return RolloutStatus{Message: "deployment not found yet"}, nil
 		}
 		return RolloutStatus{}, fmt.Errorf("get deployment: %w", err)
 	}
 	if applied.UID != "" && string(dep.UID) != applied.UID {
-		return RolloutStatus{Done: true, Message: fmt.Sprintf(
-			"the Deployment was deleted and created again during the rollout (UID %s, applied %s)", dep.UID, applied.UID)}, nil
+		return RolloutStatus{Done: true, Message: "the Deployment was deleted and created again during the rollout",
+			Details: fmt.Sprintf("Deployment UID %s, applied UID %s", dep.UID, applied.UID)}, nil
 	}
 	observed := dep.Status.ObservedGeneration >= max(dep.Generation, applied.Generation)
 

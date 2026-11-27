@@ -287,6 +287,10 @@ func TestCheckRollout_RecreatedDeployment(t *testing.T) {
 	if !status.Done || status.Succeeded || !strings.Contains(status.Message, "created again") {
 		t.Errorf("got %+v, want a failed rollout", status)
 	}
+	// The UIDs explain it in the details, not in the message.
+	if strings.Contains(status.Message, "applied") || !strings.Contains(status.Details, "recreated") || !strings.Contains(status.Details, "applied") {
+		t.Errorf("message %q, details %q; want the UIDs in the details only", status.Message, status.Details)
+	}
 
 	// Deleted and not created again.
 	status, err = CheckRollout(context.Background(), fake.NewSimpleClientset(), testNamespace, testApp, "dep-1", AppliedWorkload{UID: "applied", Generation: 1})

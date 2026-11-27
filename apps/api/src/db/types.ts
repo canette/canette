@@ -138,7 +138,13 @@ export interface Database {
     // Only cleared, for v1.5.0 during an upgrade or a rollback (see
     // cancelPendingTeardowns). Dropped in the next release.
     teardown_requested_at: string | null
-    // The workload the controller applied for this attempt (#332).
+    // The Kubernetes workload (Deployment or CronJob) the controller applied
+    // for this attempt (#332). Written only by the controller: the object's
+    // UID and the metadata.generation the apply wrote, and the
+    // deployment.kubernetes.io/revision its rollout reached (null when the
+    // rollout failed, and for CronJobs). They are Kubernetes identifiers, not
+    // canette concepts: show them only in diagnostics next to
+    // applied_manifest, never as fields of the main API.
     workload_uid: string | null
     workload_generation: string | number | null
     workload_revision: string | null
@@ -282,7 +288,10 @@ export interface Database {
     lease_token: string | null
     claimed_at: string | null
     last_error: string | null
-    // The workload the controller applied for applied_deployment_id (#332).
+    // The Kubernetes workload applied for applied_deployment_id now (#332),
+    // the same identifiers as deployments.workload_*. Written only by the
+    // controller, which clears them on Stop, and used by it to recognize the
+    // object it applied. Diagnostics only, like deployments.workload_*.
     applied_workload_uid: string | null
     applied_workload_generation: string | number | null
     applied_workload_revision: string | null

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -218,6 +219,47 @@ func TestRunApp_RecordsAppliedWorkload(t *testing.T) {
 	// The app still runs what d1 applied.
 	if r := f.runtime(); r.applied.String != "d1" {
 		t.Errorf("runtime %+v, want d1 applied", r)
+	}
+}
+
+// Kubernetes identifiers that explain a failed rollout go into the deployment
+// log as details, not into its error, which the API and UI show as the
+// failure (#332).
+func TestRunApp_RolloutDetailsStayInTheLog(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	f.rollout(func(int) k8sres.RolloutStatus {
+		return k8sres.RolloutStatus{Done: true, Message: "the Deployment was deleted and created again during the rollout",
+			Details: "Deployment UID other, applied UID uid-1"}
+	})
+
+	f.run(context.Background())
+
+	var msg string
+	if err := f.db.QueryRow(`SELECT error_message FROM deployments WHERE id = 'd1'`).Scan(&msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg != "rollout failed: the Deployment was deleted and created again during the rollout" {
+		t.Errorf("error %q, want the message without the UIDs", msg)
+	}
+	var lines []string
+	rows, err := f.db.Query(`SELECT line FROM build_logs WHERE deployment_id = 'd1' AND line LIKE 'Details:%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, l)
+	}
+	slices.Sort(lines)
+	want := []string{"Details: Deployment UID other, applied UID uid-1", "Details: applied workload UID uid-1, generation 3"}
+	if !slices.Equal(lines, want) {
+		t.Errorf("detail lines %q, want %q", lines, want)
 	}
 }
 
