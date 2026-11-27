@@ -440,13 +440,7 @@ encryptionKey: "your-32-character-key-here"
 helm upgrade canette oci://ghcr.io/canette/canette --reuse-values
 ```
 
-To upgrade to a specific version:
-
-```bash
-helm upgrade canette oci://ghcr.io/canette/canette --version 1.2.3 --reuse-values
-```
-
-Migrations run automatically at API startup after the upgrade.
+Before upgrading, read [Upgrading](/docs/self-hosting/upgrading): it has the steps, and what to do before upgrading to each release, including releases you must not skip.
 
 ## Uninstalling
 
