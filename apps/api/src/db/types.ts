@@ -112,7 +112,8 @@ export interface Database {
     schedule: string | null
     password_gate_enabled: boolean
     password_gate_password_hash: string | null
-    live_url: string | null
+    // live_url is still in the schema, unused (app_runtime.live_url replaced
+    // it), and is dropped in the next release.
     canette_config: string | null
     position: number
     created_at: string
@@ -134,6 +135,8 @@ export interface Database {
     canette_config: string | null
     deployment_snapshot: string | null
     claimed_at: string | null
+    // Only cleared, for v1.5.0 during an upgrade or a rollback (see
+    // cancelPendingTeardowns). Dropped in the next release.
     teardown_requested_at: string | null
     created_at: string
     updated_at: string

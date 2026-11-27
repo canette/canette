@@ -137,7 +137,7 @@ describe("migration 000024", () => {
         id, project_id: "projId", name: id, slug: id, source_type: "git", deployment_type: "web",
         git_url: "https://github.com/example/repo", git_branch: "main", git_credential_id: null,
         app_path: "", image_url: "", image_tag: "", port: 3000, password_gate_enabled: false,
-        live_url: null, canette_config: null, position: 0,
+        canette_config: null, position: 0,
         created_at: now, updated_at: now,
       }).execute()
     }

@@ -53,127 +53,6 @@ type Lease struct {
 	Token string
 }
 
-// AdoptLegacyWrites records in app_intents the lifecycle actions of an API
-// that predates intents (#354): during the upgrade's API rollout, old pods
-// still create apps, deploy and stop without writing app_intents. Until the
-// API stops writing the old markers (part 3 of #354), the controller converts
-// them, so that from then on the intent says what the old pod did:
-//
-//   - An app without an intent row gets one (stopped, generation 0, written
-//     as of the app's creation), so its deployments count as unrecorded.
-//   - A deployment created after the intent was last written can only come
-//     from such a pod. It becomes the target of a running intent (stopped, if
-//     the old pod has stopped it since).
-//   - The old Stop's teardown markers (a stopped row that still has its
-//     manifest, or a failed attempt marked for teardown) on an app whose
-//     intent says running mean it was stopped since: every deploy clears them
-//     in the transaction that records its intent. The intent becomes stopped.
-//
-// This is the one place the controller writes app_intents. It locks the row
-// first, like the API, and returns the IDs of the apps it changed.
-func (s *Store) AdoptLegacyWrites(ctx context.Context) ([]string, error) {
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO app_intents (app_id, generation, desired_state, updated_at)
-		SELECT a.id, 0, 'stopped', a.created_at FROM apps a
-		WHERE NOT EXISTS (SELECT 1 FROM app_intents i WHERE i.app_id = a.id)
-		ON CONFLICT (app_id) DO NOTHING`); err != nil {
-		return nil, fmt.Errorf("add intent rows: %w", err)
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.app_id FROM app_intents i
-		WHERE EXISTS (`+unrecordedDeploySQL+`)
-		   OR (i.desired_state = 'running' AND EXISTS (`+stopMarkerSQL+`))`)
-	if err != nil {
-		return nil, fmt.Errorf("find legacy writes: %w", err)
-	}
-	var candidates []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("scan legacy write: %w", err)
-		}
-		candidates = append(candidates, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	var adopted []string
-	for _, id := range candidates {
-		changed, err := s.adoptLegacyWrite(ctx, id)
-		if err != nil {
-			return adopted, err
-		}
-		if changed {
-			adopted = append(adopted, id)
-		}
-	}
-	return adopted, nil
-}
-
-const (
-	// unrecordedDeploySQL is the newest deployment of intent i's app created
-	// after the intent was last written (see AdoptLegacyWrites).
-	unrecordedDeploySQL = `
-		SELECT d.id FROM deployments d
-		WHERE d.app_id = i.app_id AND d.created_at > i.updated_at
-		ORDER BY d.created_at DESC, d.id DESC
-		LIMIT 1`
-	// stopMarkerSQL finds the old Stop's teardown markers on intent i's app.
-	stopMarkerSQL = `
-		SELECT 1 FROM deployments d
-		WHERE d.app_id = i.app_id
-		  AND (d.teardown_requested_at IS NOT NULL
-		       OR (d.status = 'stopped' AND d.applied_manifest IS NOT NULL))`
-)
-
-func (s *Store) adoptLegacyWrite(ctx context.Context, appID string) (bool, error) {
-	changed := false
-	err := s.inTx(ctx, "adopt legacy write", func(tx *sql.Tx) error {
-		var desired string
-		err := tx.QueryRowContext(ctx, `SELECT desired_state FROM app_intents i WHERE app_id = $1 FOR UPDATE`, appID).Scan(&desired)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil // deleted since
-		}
-		if err != nil {
-			return err
-		}
-		// Checked again under the lock: an API pod that records intents may
-		// have written it since. An unrecorded deployment the old pod has
-		// stopped since means the app was stopped.
-		res, err := tx.ExecContext(ctx, `
-			UPDATE app_intents i
-			SET generation = i.generation + 1, target_deployment_id = d.id,
-			    desired_state = CASE WHEN d.status = 'stopped' THEN 'stopped' ELSE 'running' END,
-			    updated_at = GREATEST($2, d.created_at), updated_by = NULL
-			FROM deployments d
-			WHERE i.app_id = $1 AND d.id = (`+unrecordedDeploySQL+`)`, appID, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		if n, err := res.RowsAffected(); err != nil || n > 0 {
-			changed = n > 0
-			return err
-		}
-		if desired != "running" {
-			return nil
-		}
-		res, err = tx.ExecContext(ctx, `
-			UPDATE app_intents i
-			SET generation = i.generation + 1, desired_state = 'stopped', updated_at = $2, updated_by = NULL
-			WHERE i.app_id = $1 AND EXISTS (`+stopMarkerSQL+`)`, appID, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		n, err := res.RowsAffected()
-		changed = n > 0
-		return err
-	})
-	return changed, err
-}
-
 // ClaimApps claims up to limit apps that need lifecycle work and whose lease
 // is free or expired, skipping the apps in running (this process's workers).
 // An app needs work when its intent's generation is ahead of what was
@@ -364,7 +243,7 @@ func (s *Store) Fence(ctx context.Context, l Lease, generation int64, step func(
 // FenceStop runs teardown like Fence, and records the stop in the same
 // transaction, before the lock is released: attempts that were live or rolling
 // out are stopped, one still waiting to be rolled out is superseded, the old
-// Stop's teardown markers are cleared (see stopMarkerSQL), and the app has no
+// Stop's teardown markers are cleared (see recordStop), and the app has no
 // applied deployment or URL any more. Recording it under the lock means a
 // deploy accepted after the teardown can't be swept up by it.
 func (s *Store) FenceStop(ctx context.Context, l Lease, generation int64, teardown func(context.Context) error) error {
@@ -525,6 +404,10 @@ func recordStop(ctx context.Context, tx *sql.Tx, l Lease, generation int64) erro
 		WHERE app_id = $2 AND status = 'pending_deployment'`, now, l.AppID); err != nil {
 		return err
 	}
+	// v1.5.0 takes a stopped row that still has its manifest, or a failed
+	// attempt marked teardown_requested_at, on a running app for a Stop
+	// (AdoptLegacyWrites). None may be left for it to find after a rollback,
+	// so they are cleared here until the release that drops the column.
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE deployments
 		SET applied_manifest = CASE WHEN status = 'stopped' THEN NULL ELSE applied_manifest END,
@@ -559,16 +442,14 @@ func (s *Store) Supersede(ctx context.Context, deploymentID string) error {
 
 // SweepSuperseded supersedes every attempt waiting to be rolled out that is
 // no longer its app's target, or whose app should be stopped, e.g. a build
-// that finished after a newer deploy or a Stop. An attempt created after its
-// app's intent was last written is left alone (see unrecordedDeploySQL). It
-// returns the IDs it superseded.
+// that finished after a newer deploy or a Stop. It returns the IDs it
+// superseded.
 func (s *Store) SweepSuperseded(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		UPDATE deployments d SET status = 'superseded', updated_at = $1
 		FROM app_intents i
 		WHERE d.app_id = i.app_id
 		  AND d.status = 'pending_deployment'
-		  AND d.created_at <= i.updated_at
 		  AND (i.desired_state = 'stopped' OR i.target_deployment_id IS DISTINCT FROM d.id)
 		RETURNING d.id`, time.Now().UTC())
 	if err != nil {

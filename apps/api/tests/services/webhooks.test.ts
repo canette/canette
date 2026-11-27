@@ -64,7 +64,6 @@ async function insertApp(id: string, gitUrl: string, credentialId: string): Prom
     schedule: null,
     position: 0,
     password_gate_enabled: false,
-    live_url: null,
     canette_config: null,
     created_at: now,
     updated_at: now,

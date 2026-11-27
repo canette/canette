@@ -39,7 +39,7 @@ export default function AppOverviewPage() {
     redeployingId,
     stopping,
     actionError,
-  } = useDeploymentActions(app.id, { onSettled: refresh })
+  } = useDeploymentActions(app.id, { onSettled: refresh, lifecycleStatus: app.lifecycleStatus })
 
   const [showStopConfirm, setShowStopConfirm] = useState(false)
 

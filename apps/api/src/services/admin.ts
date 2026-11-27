@@ -241,22 +241,6 @@ export async function deleteUser(
             409
           )
         }
-
-        const now = new Date().toISOString()
-
-        // Stop live deployments so the controller can tear down K8s resources.
-        await db
-          .updateTable("deployments")
-          .set({ status: "stopped", error_message: null, updated_at: now })
-          .where("app_id", "in", appIds)
-          .where("status", "=", "live")
-          .execute()
-
-        await db
-          .updateTable("apps")
-          .set({ live_url: null })
-          .where("id", "in", appIds)
-          .execute()
       }
 
       // Queue namespace deletions before removing project records.

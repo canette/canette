@@ -27,7 +27,7 @@ describe("routes/webhook-receiver", () => {
       id: APP_ID, project_id: "projectId", name: "hooked", slug: "hooked", source_type: "git",
       deployment_type: "web", git_url: "https://github.com/acme/repo.git", git_branch: "main",
       git_credential_id: null, app_path: "", image_url: "", image_tag: "", port: 3000, schedule: null,
-      position: 0, password_gate_enabled: false, live_url: null, canette_config: null,
+      position: 0, password_gate_enabled: false, canette_config: null,
       created_at: now, updated_at: now,
     }).execute()
     await db.insertInto("webhook_secrets").values({

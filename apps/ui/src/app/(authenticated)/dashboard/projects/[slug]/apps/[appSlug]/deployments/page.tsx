@@ -36,7 +36,7 @@ export default function DeploymentsPage() {
     redeployingId,
     stopping,
     actionError,
-  } = useDeploymentActions(app.id, { limit: 50, onSettled: refresh })
+  } = useDeploymentActions(app.id, { limit: 50, onSettled: refresh, lifecycleStatus: app.lifecycleStatus })
 
   const [showStopConfirm, setShowStopConfirm] = useState(false)
   const [manifestDeployment, setManifestDeployment] = useState<Deployment | null>(null)
