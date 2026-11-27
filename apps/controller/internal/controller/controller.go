@@ -56,15 +56,23 @@ type Controller struct {
 	working  sync.Map // appID → struct{}{}, app workers running in this process
 	workers  sync.WaitGroup
 
-	// applyAll and checkRollout are k8sres.ApplyAll and k8sres.CheckRollout.
-	// Tests replace them, because the fake dynamic client can't server-side
-	// apply and the fake clientset has no rollout controller.
+	// applyAll, checkRollout and checkRoute are k8sres.ApplyAll,
+	// k8sres.CheckRollout and k8sres.CheckRoute. Tests replace them, because
+	// the fake dynamic client can't server-side apply and the fake clients
+	// have no rollout controller or Gateway.
 	applyAll     func(context.Context, dynamic.Interface, k8sres.AppResources) (k8sres.AppliedWorkload, error)
 	checkRollout func(ctx context.Context, client kubernetes.Interface, namespace, name, deploymentID string, applied k8sres.AppliedWorkload) (k8sres.RolloutStatus, error)
+	checkRoute   func(ctx context.Context, dyn dynamic.Interface, namespace, name, gwName, gwNamespace string) (k8sres.RouteStatus, error)
 
 	// rolloutPollInterval is how often a worker checks a rollout (and the
 	// app's intent) while it waits.
 	rolloutPollInterval time.Duration
+
+	// routeTimeout bounds the wait, after the rollout, for the Gateway to
+	// report on the app's HTTPRoute. Gateways normally do within seconds. One
+	// that hasn't by then doesn't fail the deploy, since the route may still
+	// work.
+	routeTimeout time.Duration
 
 	// onDeployLive, if set, is called right after a deployment is marked
 	// live — lets the health watcher learn about it immediately instead of
@@ -94,7 +102,9 @@ func New(
 		log:                 log,
 		applyAll:            k8sres.ApplyAll,
 		checkRollout:        k8sres.CheckRollout,
+		checkRoute:          k8sres.CheckRoute,
 		rolloutPollInterval: 3 * time.Second,
+		routeTimeout:        2 * time.Minute,
 		onDeployLive:        onDeployLive,
 	}
 }

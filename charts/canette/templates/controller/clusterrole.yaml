@@ -41,7 +41,8 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create", "get", "list", "patch", "delete"]
-  # Gateway API — HTTPRoute resources for app ingress
+  # Gateway API — HTTPRoute resources for app ingress. "get" also lets the
+  # deploy wait for the Gateway to accept the route (k8s.CheckRoute).
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["httproutes"]
     verbs: ["create", "get", "patch", "delete"]
