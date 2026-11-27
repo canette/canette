@@ -1,0 +1,102 @@
+---
+title: Upgrading
+description: How to upgrade canette, and what to do before upgrading to each release.
+---
+
+import { Callout } from "fumadocs-ui/components/callout"
+
+## How to upgrade
+
+1. **Read the notes for every release you're upgrading past**, below and in the [release notes](https://github.com/canette/canette/releases). Some releases need a step before `helm upgrade`, or have a release you must not skip.
+2. **Back up the database.** With the bundled PostgreSQL and [backups](/docs/self-hosting/backup) enabled, run a backup by hand:
+
+   ```bash
+   kubectl create job -n canette-system pre-upgrade-backup --from=cronjob/postgres-backup
+   kubectl logs -n canette-system job/pre-upgrade-backup -f
+   ```
+
+   With `externalDatabase`, back it up through your provider. Migrations only move forward, so restoring this backup is the way back from a failed upgrade.
+3. **Upgrade**, to the latest release or to a specific one:
+
+   ```bash
+   helm upgrade canette oci://ghcr.io/canette/canette -n canette-system --reuse-values
+   helm upgrade canette oci://ghcr.io/canette/canette -n canette-system --version 1.5.0 --reuse-values
+   ```
+
+   Replace `canette-system` with your release namespace. If you install from a values file, pass it with `-f` instead of `--reuse-values`.
+4. **Wait for the rollout to finish** before you use canette as usual:
+
+   ```bash
+   for d in api controller builder ui; do
+     kubectl -n canette-system rollout status deployment/canette-$d
+   done
+   ```
+
+Migrations run automatically. By default the new API pods run them at startup, so they apply while the old pods are still serving. With `migrations.enabled: true`, a Helm pre-upgrade Job runs them before any new pod starts.
+
+<Callout type="warn">
+  **Don't deploy, stop or rename projects while an upgrade rolls out.** The API pods are replaced one at a time, so for a minute or two the old ones serve next to the new controller. A lifecycle action an old pod handles can miss what the new release changed. It's safest to pause CI pushes and tell your users. This matters most when the release notes below say so.
+</Callout>
+
+If an upgrade fails, see [Install & Upgrade Issues](/docs/troubleshooting/helm-issues).
+
+## Release notes for operators
+
+Newest first. Only releases that need something from you are listed. For everything else, see the [release notes](https://github.com/canette/canette/releases).
+
+### Releases after v1.5.0: from v1.4.0 or earlier
+
+v1.5.0 moved the deployment lifecycle to versioned app intents. The API records what each app should run, and the controller works from that record. v1.5.0 still understands deploys and Stops taken by API pods from v1.4.0 or earlier, which keep serving briefly during an upgrade's rollout. Later releases don't. Choose one of these:
+
+- **Busy installations: upgrade through v1.5.0.** If deploys, Stops or webhook pushes can happen at any time, for example from CI or from several teams, upgrade to v1.5.0 first. Wait for its rollout to finish, then upgrade to the release you want.
+- **Small installations: upgrade directly, with a small risk.** If you can make sure nothing deploys, stops or renames a project while the upgrade rolls out, you can skip v1.5.0. The risk is in that window only. A deploy, redeploy or webhook push an old API pod handles is dropped and never goes live. A Stop it handles leaves the app running. A project renamed back to its previous slug can skip the check that keeps its old namespace from being deleted. If anything happened during the upgrade, check the affected apps afterwards and repeat the action.
+
+### v1.5.0
+
+- **Avoid lifecycle actions during the rollout.** Deploys and Stops handled by v1.4.0 API pods during the upgrade are adopted by the new controller, so nothing is lost, but they don't get the new behavior. A project renamed back to its previous slug by an old pod can skip the new rename-back check.
+- **Behavior changes for API and MCP clients:**
+  - Stop is final for builds and rollouts in progress.
+  - A deploy while another is in progress replaces it instead of returning `409 DEPLOYMENT_IN_PROGRESS`.
+  - There's a new `superseded` deployment status.
+  - Apps report `lifecycleStatus` and `lifecycleError`.
+
+  See [Deployments](/docs/concepts/deployments).
+- **Builder RBAC:** the builder's Role gains `delete` on `batch/jobs`, to cancel replaced builds. The chart applies it, so there's nothing to do.
+
+### v1.4.0
+
+- **Patch the controller Deployment before upgrading.** The controller now uses `strategy: Recreate`. On clusters installed with an earlier chart, `helm upgrade` fails with `spec.strategy.rollingUpdate: Forbidden`, because Kubernetes filled in `rollingUpdate` when the Deployment was created and Helm won't remove a field it never owned. Patch the live Deployment once, then upgrade:
+
+  ```bash
+  kubectl -n canette-system patch deployment canette-controller --type=json \
+    -p '[{"op":"remove","path":"/spec/strategy/rollingUpdate"},{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]'
+  ```
+
+  The controller restarts once. Fresh installs aren't affected. Details: [Install & Upgrade Issues](/docs/troubleshooting/helm-issues).
+- **GitHub App installation wizard:** set `api.githubApp.clientId` and `api.githubApp.clientSecret` (or `clientSecretRef`). Also set the App's **Callback URL** to the same `https://<canette-host>/api/v1/github-app/callback` as its Setup URL. Until both are set, the wizard is unavailable. Existing credentials keep working. See [GitHub App](/docs/configuration/github-app).
+- **BuildKit egress:** with `buildkit.restrictEgress: true` (the default), builds can no longer reach link-local (`169.254.0.0/16`, including cloud metadata endpoints) or loopback addresses.
+- **Request body limits:** 1 MiB by default, 8 MiB for volume and MCP requests, 25 MiB for webhooks. Larger requests get `413 PAYLOAD_TOO_LARGE`.
+- **One deployment in progress per app:** migration `000024` fails all but the newest in-progress deployment of an app before adding the index. v1.5.0 drops the index again.
+
+### v1.3.0
+
+- **Git credentials are only sent to approved hosts.** If you use a PAT with a self-hosted git host (Gitea, self-hosted GitLab, GitHub Enterprise, generic), add its origin to `security.gitCredentialAllowedOrigins` before upgrading, or builds and webhook registration for those apps fail. See [Git credentials](/docs/configuration/git-credentials).
+- **Secure-by-default workloads:** Kubernetes no longer injects `*_SERVICE_HOST` / `*_PORT` variables (`enableServiceLinks: false`). Apps must reach sibling apps by DNS name. Apps with a PVC deploy with `Recreate`, which means a short downtime on each deploy. These are configurable under `controller.workloads.*`.
+- **Pod Security Admission:** project namespaces are labelled `enforce: baseline`, so an app that needs privileged settings is rejected. Running pods are never evicted, and the labels are applied on an app's next deploy. The levels are configurable under `controller.podSecurity.*`.
+
+### v1.2.0
+
+- **A default NetworkPolicy is enabled** (`controller.networkPolicy.enabled: true`). Check two cases before upgrading:
+  - Your gateway's proxy pods run in another namespace than the `Gateway` resource, for example Envoy Gateway or Cilium. Web apps may become unreachable.
+  - Your apps reach private endpoints, such as a database in your VPC or another project's namespace. That traffic is blocked.
+
+  To opt out, set `controller.networkPolicy.enabled=false`.
+
+### v1.1.0
+
+- **Skip v1.1.0, upgrade to v1.1.1 or later.** OAuth login (GitHub, Google, OIDC) is broken in v1.1.0 and fixed in v1.1.1.
+- **The generic OIDC callback URL moved** from `/api/auth/oauth2/callback/oidc` to `/api/auth/callback/oidc`. Update the redirect URL registered with your identity provider (Okta, Auth0, Keycloak, Azure AD, etc.) before upgrading, or logins fail.
+
+### v1.0.0 and earlier
+
+No operator steps beyond the [release notes](https://github.com/canette/canette/releases).
