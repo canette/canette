@@ -307,6 +307,7 @@ async function startDeployment(
         throw new ServiceError("App is not running", "APP_NOT_RUNNING", 409)
       }
     }
+    await cancelPendingTeardowns(tx, values.app_id)
     await tx.insertInto("deployments").values(values).execute()
     await setIntent(tx, values.app_id, {
       desiredState: "running",
@@ -314,6 +315,28 @@ async function startDeployment(
       updatedBy: values.triggered_by ?? null,
     })
   })
+}
+
+// cancelPendingTeardowns clears the old Stop's teardown markers on the app's
+// earlier deployments: stopped rows that still hold a manifest, and failed
+// attempts a v1.5.0 API pod marked with teardown_requested_at. This release
+// doesn't read them, but v1.5.0 takes a marker on a running app for a Stop
+// (AdoptLegacyWrites), so one left behind by an old pod during the upgrade
+// would stop the app after a rollback. It goes, with the column, in the next
+// release.
+async function cancelPendingTeardowns(db: DB, appId: string): Promise<void> {
+  await db
+    .updateTable("deployments")
+    .set({ applied_manifest: null })
+    .where("app_id", "=", appId)
+    .where("status", "=", "stopped")
+    .execute()
+  await db
+    .updateTable("deployments")
+    .set({ teardown_requested_at: null })
+    .where("app_id", "=", appId)
+    .where("teardown_requested_at", "is not", null)
+    .execute()
 }
 
 // stopApp stops an app: it records the stop in the app's intent, and the

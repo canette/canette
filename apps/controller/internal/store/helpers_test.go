@@ -39,12 +39,12 @@ func deploymentState(t *testing.T, db *sql.DB, id string) (status, errMsg string
 	return status, msg.String, claimedAt
 }
 
-func teardownState(t *testing.T, db *sql.DB, id string) (status, errMsg, manifest string) {
+func teardownState(t *testing.T, db *sql.DB, id string) (status, errMsg, manifest string, requested sql.NullTime) {
 	t.Helper()
 	var msg, man sql.NullString
-	if err := db.QueryRow(`SELECT status, error_message, applied_manifest FROM deployments WHERE id = $1`, id).
-		Scan(&status, &msg, &man); err != nil {
+	if err := db.QueryRow(`SELECT status, error_message, applied_manifest, teardown_requested_at FROM deployments WHERE id = $1`, id).
+		Scan(&status, &msg, &man, &requested); err != nil {
 		t.Fatal(err)
 	}
-	return status, msg.String, man.String
+	return status, msg.String, man.String, requested
 }

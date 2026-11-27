@@ -168,6 +168,25 @@ describe("delete cleanup", () => {
         { id: failed, status: "failed", error_message: "CrashLoopBackOff", applied_manifest: "{}" },
       ])
     })
+
+    // v1.5.0 takes these markers on a running app for a Stop, so a deploy
+    // must not leave any for it after a rollback.
+    it("a new deployment clears the teardown markers a v1.5.0 Stop left", async () => {
+      const app = await makeApp("markers-then-deploy")
+      const stopped = await addDeployment(app.id, "stopped", { appliedManifest: "{}" })
+      const failed = await addDeployment(app.id, "failed", { appliedManifest: "{}" })
+      await db.updateTable("deployments").set({ teardown_requested_at: new Date().toISOString() })
+        .where("id", "=", failed).execute()
+
+      await createDeployment(db, app.id, "userId", { commitSha: "def5678" })
+
+      const rows = await db.selectFrom("deployments").select(["id", "applied_manifest", "teardown_requested_at"])
+        .where("id", "in", [stopped, failed]).orderBy("created_at").execute()
+      expect(rows).toEqual([
+        { id: stopped, applied_manifest: null, teardown_requested_at: null },
+        { id: failed, applied_manifest: "{}", teardown_requested_at: null },
+      ])
+    })
   })
 
   describe("deleteProject", () => {

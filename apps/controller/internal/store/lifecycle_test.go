@@ -366,6 +366,10 @@ func TestFenceStop(t *testing.T) {
 	if _, err := db.Exec(`UPDATE deployments SET applied_manifest = 'm'`); err != nil {
 		t.Fatal(err)
 	}
+	// A failed attempt a v1.5.0 API pod marked for teardown.
+	if _, err := db.Exec(`UPDATE deployments SET teardown_requested_at = $1 WHERE id = 'marked'`, intentWritten); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`UPDATE app_runtime SET applied_deployment_id = 'live', live_url = 'https://x' WHERE app_id = 'app'`); err != nil {
 		t.Fatal(err)
 	}
@@ -387,10 +391,15 @@ func TestFenceStop(t *testing.T) {
 			t.Errorf("%s: %s, want %s", id, got, want)
 		}
 	}
-	// The manifests stay, as the record of what each attempt applied.
-	for _, id := range []string{"live", "rolling", "was-stopped", "marked"} {
-		if _, _, manifest := teardownState(t, db, id); manifest != "m" {
-			t.Errorf("%s: manifest %q, want it kept", id, manifest)
+	// No teardown markers are left for v1.5.0 to take for a Stop after a
+	// rollback.
+	_, _, manifest, requested := teardownState(t, db, "marked")
+	if manifest != "m" || requested.Valid {
+		t.Errorf("marked: manifest %q, teardown_requested_at %v; want the manifest kept, the marker cleared", manifest, requested)
+	}
+	for _, id := range []string{"live", "rolling", "was-stopped"} {
+		if _, _, manifest, _ := teardownState(t, db, id); manifest != "" {
+			t.Errorf("%s: manifest %q, want it cleared", id, manifest)
 		}
 	}
 	if r := runtimeOf(t, db, "app"); r.reconciled != 4 || r.applied.Valid || r.liveURL.Valid {

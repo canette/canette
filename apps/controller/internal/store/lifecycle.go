@@ -242,8 +242,9 @@ func (s *Store) Fence(ctx context.Context, l Lease, generation int64, step func(
 
 // FenceStop runs teardown like Fence, and records the stop in the same
 // transaction, before the lock is released: attempts that were live or rolling
-// out are stopped, one still waiting to be rolled out is superseded, and the
-// app has no applied deployment or URL any more. Recording it under the lock means a
+// out are stopped, one still waiting to be rolled out is superseded, the old
+// Stop's teardown markers are cleared (see recordStop), and the app has no
+// applied deployment or URL any more. Recording it under the lock means a
 // deploy accepted after the teardown can't be swept up by it.
 func (s *Store) FenceStop(ctx context.Context, l Lease, generation int64, teardown func(context.Context) error) error {
 	return s.fence(ctx, l, generation, teardown, func(ctx context.Context, tx *sql.Tx) error {
@@ -401,6 +402,19 @@ func recordStop(ctx context.Context, tx *sql.Tx, l Lease, generation int64) erro
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE deployments SET status = 'superseded', updated_at = $1
 		WHERE app_id = $2 AND status = 'pending_deployment'`, now, l.AppID); err != nil {
+		return err
+	}
+	// v1.5.0 takes a stopped row that still has its manifest, or a failed
+	// attempt marked teardown_requested_at, on a running app for a Stop
+	// (AdoptLegacyWrites). None may be left for it to find after a rollback,
+	// so they are cleared here until the release that drops the column.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE deployments
+		SET applied_manifest = CASE WHEN status = 'stopped' THEN NULL ELSE applied_manifest END,
+		    teardown_requested_at = NULL
+		WHERE app_id = $1
+		  AND (teardown_requested_at IS NOT NULL OR (status = 'stopped' AND applied_manifest IS NOT NULL))`,
+		l.AppID); err != nil {
 		return err
 	}
 	res, err := tx.ExecContext(ctx, `

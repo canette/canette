@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import * as api from "@/lib/api"
 import { ApiError } from "@/lib/api"
 import type { Deployment } from "@canette/types"
@@ -13,8 +13,11 @@ const REDEPLOYABLE_STATUSES = ["live", "failed", "stopped", "superseded"]
  * Overview and Deployments tabs so they stay in sync instead of each keeping
  * an independent copy of the same fetch/action logic.
  */
-export function useDeploymentActions(appId: string, opts?: { limit?: number; onSettled?: () => void }) {
-  const { limit = 5, onSettled } = opts ?? {}
+export function useDeploymentActions(
+  appId: string,
+  opts?: { limit?: number; onSettled?: () => void; lifecycleStatus?: string },
+) {
+  const { limit = 5, onSettled, lifecycleStatus } = opts ?? {}
 
   const [deploymentList, setDeploymentList] = useState<Deployment[]>([])
   const [loading, setLoading] = useState(true)
@@ -56,12 +59,21 @@ export function useDeploymentActions(appId: string, opts?: { limit?: number; onS
   )
   const canRedeploy = canRedeployDeployment(currentDeployment)
 
-  // Auto-refresh while active
+  // Auto-refresh while active. Stop only records the app's intent, so its
+  // live deployment stays live until the controller has torn it down: keep
+  // refreshing while the app is stopping, and once more when that settles.
+  const appStopping = lifecycleStatus === "stopping"
   useEffect(() => {
-    if (!hasActiveDeployment) return
+    if (!hasActiveDeployment && !appStopping) return
     const interval = setInterval(load, 3000)
     return () => clearInterval(interval)
-  }, [hasActiveDeployment, load])
+  }, [hasActiveDeployment, appStopping, load])
+
+  const wasStopping = useRef(appStopping)
+  useEffect(() => {
+    if (wasStopping.current && !appStopping) load()
+    wasStopping.current = appStopping
+  }, [appStopping, load])
 
   async function deploy() {
     setActionError("")
