@@ -68,7 +68,7 @@ func TestCheckRollout_TerminatedCrashBeforeBackoff(t *testing.T) {
 	}
 	client := fake.NewSimpleClientset(dep, pod)
 
-	status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-1")
+	status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-1", AppliedWorkload{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestCheckRollout_IgnoresStaleDeploymentPod(t *testing.T) {
 	}
 	client := fake.NewSimpleClientset(dep, stalePod, newPod)
 
-	status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-new")
+	status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-new", AppliedWorkload{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestCheckRollout_Completion(t *testing.T) {
 			newPod := podWithLabels("my-app-new-222", "dep-new", corev1.PodPending)
 			client := fake.NewSimpleClientset(dep, oldPod, newPod)
 
-			status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-new")
+			status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-new", AppliedWorkload{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -269,5 +269,61 @@ func TestCheckPodsForFailure_TerminatedZeroExitIsNotFailure(t *testing.T) {
 	_, failed := checkPodsForFailure([]corev1.Pod{pod})
 	if failed {
 		t.Error("expected a zero-exit-code Terminated container (Completed) not to be flagged as a failure")
+	}
+}
+
+// A Deployment deleted and created again under the same name during the
+// rollout is not the one canette applied (#332). Even fully available, it
+// fails the rollout instead of being taken for it.
+func TestCheckRollout_RecreatedDeployment(t *testing.T) {
+	dep := availableDeployment(testApp, 1)
+	dep.UID = "recreated"
+	client := fake.NewSimpleClientset(dep, podWithLabels("my-app-abc-123", "dep-1", corev1.PodRunning))
+
+	status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-1", AppliedWorkload{UID: "applied", Generation: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Done || status.Succeeded || !strings.Contains(status.Message, "created again") {
+		t.Errorf("got %+v, want a failed rollout", status)
+	}
+	// The UIDs explain it in the details, not in the message.
+	if strings.Contains(status.Message, "applied") || !strings.Contains(status.Details, "recreated") || !strings.Contains(status.Details, "applied") {
+		t.Errorf("message %q, details %q; want the UIDs in the details only", status.Message, status.Details)
+	}
+
+	// Deleted and not created again.
+	status, err = CheckRollout(context.Background(), fake.NewSimpleClientset(), testNamespace, testApp, "dep-1", AppliedWorkload{UID: "applied", Generation: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Done || status.Succeeded {
+		t.Errorf("deleted: got %+v, want a failed rollout", status)
+	}
+}
+
+// The rollout is done once Kubernetes has observed the applied generation,
+// and then reports the Deployment's revision.
+func TestCheckRollout_AppliedGeneration(t *testing.T) {
+	dep := availableDeployment(testApp, 1)
+	dep.UID = "applied"
+	dep.Annotations = map[string]string{"deployment.kubernetes.io/revision": "7"}
+	client := fake.NewSimpleClientset(dep)
+
+	// The status counters are from generation 1, the apply wrote 2.
+	status, err := CheckRollout(context.Background(), client, testNamespace, testApp, "dep-1", AppliedWorkload{UID: "applied", Generation: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Done {
+		t.Errorf("got %+v before the applied generation was observed", status)
+	}
+
+	status, err = CheckRollout(context.Background(), client, testNamespace, testApp, "dep-1", AppliedWorkload{UID: "applied", Generation: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Succeeded || status.Revision != "7" {
+		t.Errorf("got %+v, want a success at revision 7", status)
 	}
 }
