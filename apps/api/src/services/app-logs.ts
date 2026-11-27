@@ -43,15 +43,41 @@ export async function getAppPodTarget(
     .executeTakeFirst()
   if (!row) return null
 
+  const servingDeploymentId = servingDeployment(
+    row.desired_state === "stopped" ? null : (row.applied_deployment_id ?? null),
+    freshKubernetesStatus(row.kubernetes_status, row.kubernetes_status_observed_at)?.serving,
+  )
+  let deploymentType = row.deployment_type
+  if (servingDeploymentId) {
+    const dep = await db
+      .selectFrom("deployments")
+      .select("deployment_snapshot")
+      .where("id", "=", servingDeploymentId)
+      .where("app_id", "=", appId)
+      .executeTakeFirst()
+    deploymentType = snapshotDeploymentType(dep?.deployment_snapshot ?? null) ?? deploymentType
+  }
+
   return {
     appSlug: row.app_slug,
     projectId: row.project_id,
     projectSlug: row.project_slug,
-    deploymentType: row.deployment_type,
-    servingDeploymentId: servingDeployment(
-      row.desired_state === "stopped" ? null : (row.applied_deployment_id ?? null),
-      freshKubernetesStatus(row.kubernetes_status, row.kubernetes_status_observed_at)?.serving,
-    ),
+    deploymentType,
+    servingDeploymentId,
+  }
+}
+
+// snapshotDeploymentType returns the workload type a deployment was rolled
+// out as. The app's current deployment_type can differ until the next deploy
+// (a web app edited to cronjob still runs a Deployment). Snapshots from
+// before the field existed are web; null when the snapshot can't be read.
+function snapshotDeploymentType(snapshot: string | null): string | null {
+  if (!snapshot) return null
+  try {
+    const parsed = JSON.parse(snapshot) as { app?: { deployment_type?: string } }
+    return parsed.app?.deployment_type || "web"
+  } catch {
+    return null
   }
 }
 

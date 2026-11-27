@@ -366,7 +366,7 @@ type CurrentDeployment struct {
 	ProjectID      string
 	ProjectSlug    string
 	DeploymentID   string
-	DeploymentType string // "web" | "private" | "cronjob"
+	DeploymentType string // "web" | "private" | "cronjob", as the applied deployment was rolled out
 }
 
 // GetCurrentDeployments returns the applied deployment of every app that
@@ -376,11 +376,12 @@ type CurrentDeployment struct {
 // which could otherwise flag a pod that is legitimately still starting up.
 func (s *Store) GetCurrentDeployments(ctx context.Context) ([]CurrentDeployment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT a.id, a.slug, a.project_id, p.slug, r.applied_deployment_id, a.deployment_type
+		SELECT a.id, a.slug, a.project_id, p.slug, r.applied_deployment_id, a.deployment_type, d.deployment_snapshot
 		FROM app_runtime r
 		JOIN app_intents i ON i.app_id = r.app_id
 		JOIN apps a ON a.id = r.app_id
 		JOIN projects p ON p.id = a.project_id
+		LEFT JOIN deployments d ON d.id = r.applied_deployment_id
 		WHERE r.applied_deployment_id IS NOT NULL AND i.desired_state = 'running'
 		ORDER BY a.id`)
 	if err != nil {
@@ -391,12 +392,27 @@ func (s *Store) GetCurrentDeployments(ctx context.Context) ([]CurrentDeployment,
 	var out []CurrentDeployment
 	for rows.Next() {
 		var cd CurrentDeployment
-		if err := rows.Scan(&cd.AppID, &cd.AppSlug, &cd.ProjectID, &cd.ProjectSlug, &cd.DeploymentID, &cd.DeploymentType); err != nil {
+		var appType string
+		var snapshotJSON sql.NullString
+		if err := rows.Scan(&cd.AppID, &cd.AppSlug, &cd.ProjectID, &cd.ProjectSlug, &cd.DeploymentID, &appType, &snapshotJSON); err != nil {
 			return nil, fmt.Errorf("scan current deployment: %w", err)
 		}
+		cd.DeploymentType = appliedDeploymentType(snapshotJSON.String, appType)
 		out = append(out, cd)
 	}
 	return out, rows.Err()
+}
+
+// appliedDeploymentType returns the workload type the applied deployment was
+// rolled out as, from its snapshot. The app's current deployment_type can
+// differ until the next deploy (a web app edited to cronjob still runs a
+// Deployment), so it is only the fallback for a snapshot that can't be read.
+func appliedDeploymentType(snapshotJSON, appType string) string {
+	var d DeployingDeployment
+	if err := d.parseSnapshot(snapshotJSON); err != nil {
+		return appType
+	}
+	return d.DeploymentType
 }
 
 // UpdateRuntimeHealth records the health watcher's current verdict for an

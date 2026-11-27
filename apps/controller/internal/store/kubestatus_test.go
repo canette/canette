@@ -33,6 +33,32 @@ func TestGetCurrentDeployments(t *testing.T) {
 	}
 }
 
+// The workload type comes from the applied deployment's snapshot: an app
+// edited to another type keeps running its old workload until it is redeployed.
+func TestGetCurrentDeploymentsAppliedType(t *testing.T) {
+	s, db := testStore(t)
+	addLifecycleApp(t, db, lifecycleApp{id: "edited", desired: "running", generation: 1, target: "old"},
+		[2]string{"old", "live"})
+	snapshot := `{"app":{"id":"edited","slug":"edited","deployment_type":"web"},"project":{"id":"p1","slug":"p"}}`
+	if _, err := db.Exec(`UPDATE deployments SET deployment_snapshot = $1 WHERE id = 'old'`, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE apps SET deployment_type = 'cronjob' WHERE id = 'edited'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE app_runtime SET applied_deployment_id = 'old' WHERE app_id = 'edited'`); err != nil {
+		t.Fatal(err)
+	}
+
+	deps, err := s.GetCurrentDeployments(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 1 || deps[0].DeploymentType != "web" {
+		t.Fatalf("got %+v, want the applied deployment's type web", deps)
+	}
+}
+
 func TestUpdateKubernetesStatus(t *testing.T) {
 	s, db := testStore(t)
 	before := time.Now().Add(-time.Second)
