@@ -59,8 +59,8 @@ type Controller struct {
 	// applyAll and checkRollout are k8sres.ApplyAll and k8sres.CheckRollout.
 	// Tests replace them, because the fake dynamic client can't server-side
 	// apply and the fake clientset has no rollout controller.
-	applyAll     func(context.Context, dynamic.Interface, k8sres.AppResources) error
-	checkRollout func(ctx context.Context, client kubernetes.Interface, namespace, name, deploymentID string) (k8sres.RolloutStatus, error)
+	applyAll     func(context.Context, dynamic.Interface, k8sres.AppResources) (k8sres.AppliedWorkload, error)
+	checkRollout func(ctx context.Context, client kubernetes.Interface, namespace, name, deploymentID string, applied k8sres.AppliedWorkload) (k8sres.RolloutStatus, error)
 
 	// rolloutPollInterval is how often a worker checks a rollout (and the
 	// app's intent) while it waits.

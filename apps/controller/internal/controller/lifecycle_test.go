@@ -52,9 +52,9 @@ func newLifecycleFixture(t *testing.T) *lifecycleFixture {
 	f := &lifecycleFixture{t: t, db: db, dyn: dyn}
 	f.c = New(store.New(db, zaptest.NewLogger(t)), fake.NewSimpleClientset(), dyn,
 		Config{ClusterDomain: "example.com", MaxConcurrent: 3}, nil, zaptest.NewLogger(t), nil)
-	f.c.applyAll = func(context.Context, dynamic.Interface, k8sres.AppResources) error {
+	f.c.applyAll = func(context.Context, dynamic.Interface, k8sres.AppResources) (k8sres.AppliedWorkload, error) {
 		f.applies.Add(1)
-		return nil
+		return k8sres.AppliedWorkload{UID: "uid-1", Generation: 3}, nil
 	}
 	f.c.rolloutPollInterval = 10 * time.Millisecond
 	f.rollout(func(int) k8sres.RolloutStatus {
@@ -66,7 +66,7 @@ func newLifecycleFixture(t *testing.T) *lifecycleFixture {
 // rollout scripts checkRollout: status gets the 1-based number of the poll.
 func (f *lifecycleFixture) rollout(status func(poll int) k8sres.RolloutStatus) {
 	var polls atomic.Int32
-	f.c.checkRollout = func(context.Context, kubernetes.Interface, string, string, string) (k8sres.RolloutStatus, error) {
+	f.c.checkRollout = func(context.Context, kubernetes.Interface, string, string, string, k8sres.AppliedWorkload) (k8sres.RolloutStatus, error) {
 		return status(int(polls.Add(1))), nil
 	}
 }
@@ -172,6 +172,52 @@ func TestRunApp_DeploysTarget(t *testing.T) {
 	}
 	if n := f.applies.Load(); n != 1 {
 		t.Errorf("applied %d times, want 1", n)
+	}
+}
+
+// The rollout is checked against the workload the apply wrote, and the app's
+// runtime and the attempt record it with the revision the rollout reached
+// (#332). A failed attempt keeps what it applied.
+func TestRunApp_RecordsAppliedWorkload(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	var checked atomic.Value
+	f.c.checkRollout = func(_ context.Context, _ kubernetes.Interface, _, _, _ string, applied k8sres.AppliedWorkload) (k8sres.RolloutStatus, error) {
+		checked.Store(applied)
+		return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out", Revision: "5"}, nil
+	}
+
+	f.run(context.Background())
+
+	if got, _ := checked.Load().(k8sres.AppliedWorkload); got != (k8sres.AppliedWorkload{UID: "uid-1", Generation: 3}) {
+		t.Errorf("rollout checked against %+v, want the applied uid-1 at generation 3", got)
+	}
+	want := [3]string{"uid-1", "3", "5"}
+	for _, q := range []string{
+		`SELECT applied_workload_uid, applied_workload_generation::text, applied_workload_revision FROM app_runtime WHERE app_id = 'a1'`,
+		`SELECT workload_uid, workload_generation::text, workload_revision FROM deployments WHERE id = 'd1'`,
+	} {
+		var got [3]string
+		if err := f.db.QueryRow(q).Scan(&got[0], &got[1], &got[2]); err != nil || got != want {
+			t.Errorf("%s: %v, err %v; want %v", q, got, err, want)
+		}
+	}
+
+	f.deployment("d2", "pending_deployment")
+	f.intent("running", "d2")
+	f.rollout(func(int) k8sres.RolloutStatus { return k8sres.RolloutStatus{Done: true, Message: "pods crash"} })
+	f.run(context.Background())
+
+	var uid string
+	var revision sql.NullString
+	if err := f.db.QueryRow(`SELECT workload_uid, workload_revision FROM deployments WHERE id = 'd2'`).Scan(&uid, &revision); err != nil ||
+		uid != "uid-1" || revision.Valid {
+		t.Errorf("failed d2: uid %q revision %v, err %v; want uid-1 and no revision", uid, revision, err)
+	}
+	// The app still runs what d1 applied.
+	if r := f.runtime(); r.applied.String != "d1" {
+		t.Errorf("runtime %+v, want d1 applied", r)
 	}
 }
 
@@ -366,13 +412,13 @@ func TestRunApp_LostFenceResumes(t *testing.T) {
 	f := newLifecycleFixture(t)
 	f.deployment("d1", "pending_deployment")
 	f.intent("running", "d1")
-	f.c.applyAll = func(context.Context, dynamic.Interface, k8sres.AppResources) error {
+	f.c.applyAll = func(context.Context, dynamic.Interface, k8sres.AppResources) (k8sres.AppliedWorkload, error) {
 		f.applies.Add(1)
 		if f.applies.Load() == 1 {
 			f.exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
 				WHERE state = 'idle in transaction' AND query LIKE '%lease_token = $2 FOR SHARE%'`)
 		}
-		return nil
+		return k8sres.AppliedWorkload{}, nil
 	}
 
 	f.run(context.Background())

@@ -86,6 +86,17 @@ func runtimeOf(t *testing.T, db *sql.DB, appID string) runtimeRow {
 	return r
 }
 
+// workloadOf reads a workload's uid, generation and revision with q.
+func workloadOf(t *testing.T, db *sql.DB, q string) Workload {
+	t.Helper()
+	var uid, revision sql.NullString
+	var generation sql.NullInt64
+	if err := db.QueryRow(q).Scan(&uid, &generation, &revision); err != nil {
+		t.Fatal(err)
+	}
+	return Workload{UID: uid.String, Generation: generation.Int64, Revision: revision.String}
+}
+
 func claimedIDs(leases []Lease) []string {
 	ids := make([]string, 0, len(leases))
 	for _, l := range leases {
@@ -310,17 +321,17 @@ func TestFinishDeploy(t *testing.T) {
 	lease := Lease{AppID: "app", Token: "mine"}
 	url := sql.NullString{String: "https://app-p.example.com", Valid: true}
 
-	if err := s.FinishDeploy(ctx, Lease{AppID: "app", Token: "theirs"}, 3, "new", url); !errors.Is(err, ErrLeaseLost) {
+	if err := s.FinishDeploy(ctx, Lease{AppID: "app", Token: "theirs"}, 3, "new", url, Workload{}); !errors.Is(err, ErrLeaseLost) {
 		t.Fatalf("other lease: err %v, want ErrLeaseLost", err)
 	}
 	if statusOf(t, db, "new") != "deploying" || statusOf(t, db, "old") != "live" {
 		t.Fatal("a refused FinishDeploy changed deployments")
 	}
-	if err := s.FinishDeploy(ctx, lease, 3, "gone", url); !errors.Is(err, ErrNotDeploying) {
+	if err := s.FinishDeploy(ctx, lease, 3, "gone", url, Workload{}); !errors.Is(err, ErrNotDeploying) {
 		t.Fatalf("superseded attempt: err %v, want ErrNotDeploying", err)
 	}
 
-	if err := s.FinishDeploy(ctx, lease, 3, "new", url); err != nil {
+	if err := s.FinishDeploy(ctx, lease, 3, "new", url, Workload{UID: "uid-new", Generation: 4, Revision: "2"}); err != nil {
 		t.Fatal(err)
 	}
 	for id, want := range map[string]string{"new": "live", "old": "superseded", "older": "superseded", "stale": "superseded"} {
@@ -331,8 +342,16 @@ func TestFinishDeploy(t *testing.T) {
 	if r := runtimeOf(t, db, "app"); r.reconciled != 3 || r.applied.String != "new" || r.liveURL != url {
 		t.Errorf("runtime %+v", r)
 	}
+	want := Workload{UID: "uid-new", Generation: 4, Revision: "2"}
+	if w := workloadOf(t, db, `SELECT applied_workload_uid, applied_workload_generation, applied_workload_revision
+		FROM app_runtime WHERE app_id = 'app'`); w != want {
+		t.Errorf("runtime workload %+v, want %+v", w, want)
+	}
+	if w := workloadOf(t, db, `SELECT workload_uid, workload_generation, workload_revision FROM deployments WHERE id = 'new'`); w != want {
+		t.Errorf("deployment workload %+v, want %+v", w, want)
+	}
 	// Recording an older generation never moves reconciled back.
-	if err := s.FinishDeploy(ctx, lease, 2, "new", sql.NullString{}); err != nil {
+	if err := s.FinishDeploy(ctx, lease, 2, "new", sql.NullString{}, Workload{UID: "uid-new", Generation: 4, Revision: "2"}); err != nil {
 		t.Fatal(err)
 	}
 	if r := runtimeOf(t, db, "app"); r.reconciled != 3 || r.liveURL.Valid {
@@ -370,7 +389,8 @@ func TestFenceStop(t *testing.T) {
 	if _, err := db.Exec(`UPDATE deployments SET teardown_requested_at = $1 WHERE id = 'marked'`, intentWritten); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE app_runtime SET applied_deployment_id = 'live', live_url = 'https://x' WHERE app_id = 'app'`); err != nil {
+	if _, err := db.Exec(`UPDATE app_runtime SET applied_deployment_id = 'live', live_url = 'https://x',
+		applied_workload_uid = 'uid', applied_workload_generation = 2, applied_workload_revision = '1' WHERE app_id = 'app'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -404,6 +424,10 @@ func TestFenceStop(t *testing.T) {
 	}
 	if r := runtimeOf(t, db, "app"); r.reconciled != 4 || r.applied.Valid || r.liveURL.Valid {
 		t.Errorf("runtime %+v", r)
+	}
+	if w := workloadOf(t, db, `SELECT applied_workload_uid, applied_workload_generation, applied_workload_revision
+		FROM app_runtime WHERE app_id = 'app'`); w != (Workload{}) {
+		t.Errorf("runtime workload %+v after the stop, want none", w)
 	}
 	in, err := s.ReadIntent(context.Background(), "app")
 	if err != nil || in.NeedsWork() {

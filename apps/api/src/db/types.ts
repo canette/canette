@@ -138,6 +138,10 @@ export interface Database {
     // Only cleared, for v1.5.0 during an upgrade or a rollback (see
     // cancelPendingTeardowns). Dropped in the next release.
     teardown_requested_at: string | null
+    // The workload the controller applied for this attempt (#332).
+    workload_uid: string | null
+    workload_generation: string | number | null
+    workload_revision: string | null
     created_at: string
     updated_at: string
   }
@@ -278,6 +282,10 @@ export interface Database {
     lease_token: string | null
     claimed_at: string | null
     last_error: string | null
+    // The workload the controller applied for applied_deployment_id (#332).
+    applied_workload_uid: string | null
+    applied_workload_generation: string | number | null
+    applied_workload_revision: string | null
   }
 
   // Written only by the controller (what it observed in Kubernetes). A row

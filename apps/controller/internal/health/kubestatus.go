@@ -1,9 +1,12 @@
 package health
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -52,6 +55,11 @@ type KubernetesStatus struct {
 	Workload string `json:"workload"`
 	// Replicas is set for a present Deployment.
 	Replicas *ReplicaStatus `json:"replicas,omitempty"`
+	// Serving is set for a present Deployment: the deployments whose pods
+	// are ready, by their canette.dev/deployment label, most ready pods
+	// first (#332). During a rolling update both the old and the new one
+	// serve. Empty when no pod is ready.
+	Serving []ServingDeployment `json:"serving,omitempty"`
 	// CronJob is set for a present CronJob.
 	CronJob *CronJobStatus `json:"cronJob,omitempty"`
 }
@@ -64,6 +72,12 @@ type ReplicaStatus struct {
 	Ready     int32 `json:"ready"`
 	Available int32 `json:"available"`
 	Updated   int32 `json:"updated"`
+}
+
+// ServingDeployment is a deployment with ready pods.
+type ServingDeployment struct {
+	DeploymentID string `json:"deploymentId"`
+	ReadyPods    int32  `json:"readyPods"`
 }
 
 // CronJobStatus is a CronJob's state and the outcome of its newest Job.
@@ -182,6 +196,10 @@ func (r *StatusReader) readDeployment(ctx context.Context, ns, name string) (Kub
 	if dep.Spec.Replicas != nil {
 		desired = *dep.Spec.Replicas
 	}
+	pods, err := r.client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: libk8s.AppLabelSelector(name)})
+	if err != nil {
+		return KubernetesStatus{}, fmt.Errorf("list pods: %w", err)
+	}
 	return KubernetesStatus{
 		Workload: WorkloadPresent,
 		Replicas: &ReplicaStatus{
@@ -190,7 +208,33 @@ func (r *StatusReader) readDeployment(ctx context.Context, ns, name string) (Kub
 			Available: dep.Status.AvailableReplicas,
 			Updated:   dep.Status.UpdatedReplicas,
 		},
+		Serving: servingDeployments(pods.Items),
 	}, nil
+}
+
+// servingDeployments counts the ready pods of each deployment, skipping pods
+// that are being deleted, which stop serving once their endpoints go.
+func servingDeployments(pods []corev1.Pod) []ServingDeployment {
+	ready := map[string]int32{}
+	for i := range pods {
+		p := &pods[i]
+		id := p.Labels[libk8s.LabelDeployment]
+		if id == "" || p.DeletionTimestamp != nil || !podReady(p) {
+			continue
+		}
+		ready[id]++
+	}
+	out := make([]ServingDeployment, 0, len(ready))
+	for id, n := range ready {
+		out = append(out, ServingDeployment{DeploymentID: id, ReadyPods: n})
+	}
+	slices.SortFunc(out, func(a, b ServingDeployment) int {
+		if c := cmp.Compare(b.ReadyPods, a.ReadyPods); c != 0 {
+			return c
+		}
+		return strings.Compare(a.DeploymentID, b.DeploymentID)
+	})
+	return out
 }
 
 func (r *StatusReader) readCronJob(ctx context.Context, ns, name string) (KubernetesStatus, error) {

@@ -188,21 +188,21 @@ export async function listDeployments(
   return { items, total: items.length, page: 1, pageSize: items.length }
 }
 
-// getLiveDeployment returns the deployment currently serving the app, which is
-// not necessarily its latest one: a newer rollout may still be in progress or
-// have failed. Null when the app is stopped (from the moment Stop is
-// recorded, before the controller has torn it down) or has never gone live.
-// Callers check access to the app.
+// getLiveDeployment returns the app's last successful deployment: the one the
+// controller last rolled out (app_runtime.applied_deployment_id, #332), which
+// is not necessarily its latest one: a newer rollout may still be in progress
+// or have failed. Which deployments' pods actually serve is observed
+// separately (kubernetesStatus.serving). Null when the app is stopped (from
+// the moment Stop is recorded, before the controller has torn it down) or has
+// never gone live. Callers check access to the app.
 export async function getLiveDeployment(db: DB, appId: string): Promise<Deployment | null> {
   const row = await db
-    .selectFrom("deployments as d")
-    .leftJoin("app_intents as i", "i.app_id", "d.app_id")
+    .selectFrom("app_runtime as r")
+    .innerJoin("deployments as d", "d.id", "r.applied_deployment_id")
+    .leftJoin("app_intents as i", "i.app_id", "r.app_id")
     .selectAll("d")
-    .where("d.app_id", "=", appId)
-    .where("d.status", "=", "live")
+    .where("r.app_id", "=", appId)
     .where((eb) => eb.or([eb("i.desired_state", "is", null), eb("i.desired_state", "=", "running")]))
-    .orderBy("d.created_at", "desc")
-    .limit(1)
     .executeTakeFirst()
   if (!row) return null
   return mapDeployment(row, await hasSbomForId(db, row.id))

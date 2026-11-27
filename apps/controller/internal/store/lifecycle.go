@@ -315,16 +315,20 @@ func (s *Store) StartDeploying(ctx context.Context, deploymentID string) (bool, 
 // FinishDeploy records a successful rollout: the attempt is live, any other
 // live or rolling-out attempt of the app is superseded (see retireOthers), and
 // the app's runtime row names it
-// as the applied deployment, with its URL (NULL for private and cron apps).
+// as the applied deployment, with its URL (NULL for private and cron apps)
+// and its workload, which the attempt's row records too.
 // The app counts as reconciled up to generation, the generation the rollout
 // was started for. ErrNotDeploying means the attempt moved on meanwhile, and
 // nothing is changed.
-func (s *Store) FinishDeploy(ctx context.Context, l Lease, generation int64, deploymentID string, liveURL sql.NullString) error {
+func (s *Store) FinishDeploy(ctx context.Context, l Lease, generation int64, deploymentID string, liveURL sql.NullString, w Workload) error {
 	return s.inTx(ctx, "finish deploy", func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 		res, err := tx.ExecContext(ctx, `
-			UPDATE deployments SET status = 'live', updated_at = $1
-			WHERE id = $2 AND status IN ('deploying', 'live')`, now, deploymentID)
+			UPDATE deployments
+			SET status = 'live', updated_at = $1,
+			    workload_uid = $3, workload_generation = $4, workload_revision = $5
+			WHERE id = $2 AND status IN ('deploying', 'live')`,
+			now, deploymentID, w.uid(), w.generation(), w.revision())
 		if err != nil {
 			return err
 		}
@@ -339,8 +343,10 @@ func (s *Store) FinishDeploy(ctx context.Context, l Lease, generation int64, dep
 		res, err = tx.ExecContext(ctx, `
 			UPDATE app_runtime
 			SET applied_deployment_id = $1, live_url = $2, last_error = NULL,
-			    reconciled_generation = GREATEST(reconciled_generation, $3)
-			WHERE app_id = $4 AND lease_token = $5`, deploymentID, liveURL, generation, l.AppID, l.Token)
+			    reconciled_generation = GREATEST(reconciled_generation, $3),
+			    applied_workload_uid = $6, applied_workload_generation = $7, applied_workload_revision = $8
+			WHERE app_id = $4 AND lease_token = $5`,
+			deploymentID, liveURL, generation, l.AppID, l.Token, w.uid(), w.generation(), w.revision())
 		if err != nil {
 			return err
 		}
@@ -420,6 +426,7 @@ func recordStop(ctx context.Context, tx *sql.Tx, l Lease, generation int64) erro
 	res, err := tx.ExecContext(ctx, `
 		UPDATE app_runtime
 		SET applied_deployment_id = NULL, live_url = NULL, last_error = NULL,
+		    applied_workload_uid = NULL, applied_workload_generation = NULL, applied_workload_revision = NULL,
 		    reconciled_generation = GREATEST(reconciled_generation, $1)
 		WHERE app_id = $2 AND lease_token = $3`, generation, l.AppID, l.Token)
 	if err != nil {

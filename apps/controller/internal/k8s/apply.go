@@ -43,9 +43,15 @@ const fieldManager = "can-controller"
 
 // ApplyResource applies a resource using server-side apply (force=true).
 func ApplyResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace string, obj map[string]interface{}) error {
+	_, err := applyResource(ctx, dyn, gvr, namespace, obj)
+	return err
+}
+
+// applyResource is ApplyResource, returning the object as applied.
+func applyResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace string, obj map[string]interface{}) (*unstructured.Unstructured, error) {
 	data, err := json.Marshal(obj)
 	if err != nil {
-		return fmt.Errorf("marshal resource: %w", err)
+		return nil, fmt.Errorf("marshal resource: %w", err)
 	}
 
 	var iface dynamic.ResourceInterface
@@ -56,66 +62,84 @@ func ApplyResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupV
 	}
 
 	name, _ := objectName(obj)
-	_, err = iface.Patch(ctx, name, types.ApplyPatchType, data, metav1.PatchOptions{
+	applied, err := iface.Patch(ctx, name, types.ApplyPatchType, data, metav1.PatchOptions{
 		FieldManager: fieldManager,
 		Force:        boolPtr(true),
 	})
 	if err != nil {
-		return fmt.Errorf("apply %s/%s: %w", gvr.Resource, name, err)
+		return nil, fmt.Errorf("apply %s/%s: %w", gvr.Resource, name, err)
 	}
-	return nil
+	return applied, nil
+}
+
+// AppliedWorkload identifies the Deployment or CronJob an apply wrote (#332):
+// its UID, which changes when the object is deleted and created again under
+// the same name, and the metadata.generation of the spec that was applied.
+// The zero value means unknown.
+type AppliedWorkload struct {
+	UID        string
+	Generation int64
+}
+
+func appliedWorkload(obj *unstructured.Unstructured) AppliedWorkload {
+	if obj == nil {
+		return AppliedWorkload{}
+	}
+	return AppliedWorkload{UID: string(obj.GetUID()), Generation: obj.GetGeneration()}
 }
 
 // ApplyAll applies Namespace first, then Secrets (env + imagePull), then volumes (PVCs,
 // ConfigMaps), then app workload resources.
 // For CronJob deployments: applies CronJob only (no Deployment, Service, or HTTPRoute).
 // For web/private deployments: applies Deployment, Service, and optionally HTTPRoute.
-func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) error {
+// It returns the identity of the workload it applied.
+func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) (AppliedWorkload, error) {
+	var none AppliedWorkload
 	ns, _ := objectName(res.Namespace)
 	nsNamespace := "" // cluster-scoped
 
 	if err := ApplyResource(ctx, dyn, gvrNamespace, nsNamespace, res.Namespace); err != nil {
-		return fmt.Errorf("apply namespace: %w", err)
+		return none, fmt.Errorf("apply namespace: %w", err)
 	}
 	if res.NetworkPolicy != nil {
 		if err := ApplyResource(ctx, dyn, gvrNetworkPolicy, ns, res.NetworkPolicy); err != nil {
-			return fmt.Errorf("apply networkpolicy: %w", err)
+			return none, fmt.Errorf("apply networkpolicy: %w", err)
 		}
 	} else {
 		// Global toggle disabled — delete any stale canette-default NetworkPolicy so a
 		// chart upgrade that flips the toggle off actually removes the restriction
 		// instead of leaving it in place. Idempotent (DeleteResource ignores not-found).
 		if err := DeleteResource(ctx, dyn, gvrNetworkPolicy, ns, networkPolicyName); err != nil {
-			return fmt.Errorf("delete stale networkpolicy: %w", err)
+			return none, fmt.Errorf("delete stale networkpolicy: %w", err)
 		}
 	}
 	// Quota and LimitRange go before any workload, so new pods get the
 	// LimitRange defaults. When disabled, any copy left from an earlier
 	// configuration is deleted (idempotent), like the NetworkPolicy above.
 	if err := applyOrDelete(ctx, dyn, gvrResourceQuota, ns, resourceQuotaName, res.ResourceQuota); err != nil {
-		return fmt.Errorf("resourcequota: %w", err)
+		return none, fmt.Errorf("resourcequota: %w", err)
 	}
 	if res.ResourceQuota != nil {
 		if err := waitForQuotaUsage(ctx, dyn, ns, resourceQuotaName); err != nil {
-			return fmt.Errorf("resourcequota: %w", err)
+			return none, fmt.Errorf("resourcequota: %w", err)
 		}
 	}
 	if err := applyOrDelete(ctx, dyn, gvrLimitRange, ns, limitRangeName, res.LimitRange); err != nil {
-		return fmt.Errorf("limitrange: %w", err)
+		return none, fmt.Errorf("limitrange: %w", err)
 	}
 	if res.Secret != nil {
 		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.Secret); err != nil {
-			return fmt.Errorf("apply secret: %w", err)
+			return none, fmt.Errorf("apply secret: %w", err)
 		}
 	}
 	if res.ImagePullSecret != nil {
 		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.ImagePullSecret); err != nil {
-			return fmt.Errorf("apply imagepullsecret: %w", err)
+			return none, fmt.Errorf("apply imagepullsecret: %w", err)
 		}
 	}
 	if res.AuthgateSecret != nil {
 		if err := ApplyResource(ctx, dyn, gvrSecret, ns, res.AuthgateSecret); err != nil {
-			return fmt.Errorf("apply authgate secret: %w", err)
+			return none, fmt.Errorf("apply authgate secret: %w", err)
 		}
 	} else {
 		// Gate disabled (never enabled, was just disabled, or this is a CronJob
@@ -123,69 +147,71 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) erro
 		// a previous deployment with the gate enabled. Idempotent (DeleteResource
 		// ignores not-found), mirrors the stale-HTTPRoute cleanup below.
 		if err := DeleteResource(ctx, dyn, gvrSecret, ns, authgateSecretName(res.AppSlug)); err != nil {
-			return fmt.Errorf("delete stale authgate secret: %w", err)
+			return none, fmt.Errorf("delete stale authgate secret: %w", err)
 		}
 	}
 	for i, pvc := range res.PVCs {
 		pvcName, _ := objectName(pvc)
 		pvc, err := keepLiveStorageClass(ctx, dyn, ns, pvc)
 		if err != nil {
-			return fmt.Errorf("pvc[%d] %s: %w", i, pvcName, err)
+			return none, fmt.Errorf("pvc[%d] %s: %w", i, pvcName, err)
 		}
 		if err := ApplyResource(ctx, dyn, gvrPVC, ns, pvc); err != nil {
-			return fmt.Errorf("apply pvc[%d] %s: %w", i, pvcName, err)
+			return none, fmt.Errorf("apply pvc[%d] %s: %w", i, pvcName, err)
 		}
 	}
 	for i, cm := range res.ConfigMaps {
 		cmName, _ := objectName(cm)
 		if err := ApplyResource(ctx, dyn, gvrConfigMap, ns, cm); err != nil {
-			return fmt.Errorf("apply configmap[%d] %s: %w", i, cmName, err)
+			return none, fmt.Errorf("apply configmap[%d] %s: %w", i, cmName, err)
 		}
 	}
 	if res.CronJob != nil {
-		if err := ApplyResource(ctx, dyn, gvrCronJob, ns, res.CronJob); err != nil {
-			return fmt.Errorf("apply cronjob: %w", err)
+		cronJob, err := applyResource(ctx, dyn, gvrCronJob, ns, res.CronJob)
+		if err != nil {
+			return none, fmt.Errorf("apply cronjob: %w", err)
 		}
 		// The app may have been a multi-replica web/private app before.
 		if err := DeleteResource(ctx, dyn, gvrPDB, ns, res.AppSlug); err != nil {
-			return fmt.Errorf("delete stale poddisruptionbudget: %w", err)
+			return none, fmt.Errorf("delete stale poddisruptionbudget: %w", err)
 		}
-		return nil
+		return appliedWorkload(cronJob), nil
 	}
 	if err := clearRollingUpdateForRecreate(ctx, dyn, ns, res.Deployment); err != nil {
-		return fmt.Errorf("prepare deployment strategy: %w", err)
+		return none, fmt.Errorf("prepare deployment strategy: %w", err)
 	}
-	if err := ApplyResource(ctx, dyn, gvrDeployment, ns, res.Deployment); err != nil {
-		return fmt.Errorf("apply deployment: %w", err)
+	deployment, err := applyResource(ctx, dyn, gvrDeployment, ns, res.Deployment)
+	if err != nil {
+		return none, fmt.Errorf("apply deployment: %w", err)
 	}
 	// The new Deployment is applied, its Service and HTTPRoute are not.
 	failpoint.Hit("after-partial-apply")
 	if res.PodDisruptionBudget != nil {
 		if err := ApplyResource(ctx, dyn, gvrPDB, ns, res.PodDisruptionBudget); err != nil {
-			return fmt.Errorf("apply poddisruptionbudget: %w", err)
+			return none, fmt.Errorf("apply poddisruptionbudget: %w", err)
 		}
 	} else {
 		// Replicas dropped back to 1 — a leftover maxUnavailable: 1 PDB would
 		// block node drains entirely, so remove it.
 		if err := DeleteResource(ctx, dyn, gvrPDB, ns, res.AppSlug); err != nil {
-			return fmt.Errorf("delete stale poddisruptionbudget: %w", err)
+			return none, fmt.Errorf("delete stale poddisruptionbudget: %w", err)
 		}
 	}
 	if err := ApplyResource(ctx, dyn, gvrService, ns, res.Service); err != nil {
-		return fmt.Errorf("apply service: %w", err)
+		return none, fmt.Errorf("apply service: %w", err)
 	}
 	if res.HTTPRoute != nil {
 		if err := ApplyResource(ctx, dyn, gvrHTTPRoute, ns, res.HTTPRoute); err != nil {
-			return fmt.Errorf("apply httproute: %w", err)
+			return none, fmt.Errorf("apply httproute: %w", err)
 		}
 	} else {
 		// Private deployment — delete any HTTPRoute left over from a previous web deployment.
 		appName, _ := objectName(res.Deployment)
 		if err := DeleteResource(ctx, dyn, gvrHTTPRoute, ns, appName); err != nil {
-			return fmt.Errorf("delete stale httproute: %w", err)
+			return none, fmt.Errorf("delete stale httproute: %w", err)
 		}
 	}
-	return nil
+	return appliedWorkload(deployment), nil
 }
 
 // applyOrDelete applies obj, or deletes the resource called name when obj is nil.
@@ -312,7 +338,14 @@ type RolloutStatus struct {
 	Succeeded bool
 	Message   string
 	PodName   string // name of the pod backing a successful rollout; empty otherwise
+	// Revision is the Deployment's deployment.kubernetes.io/revision once the
+	// rollout succeeded; empty otherwise.
+	Revision string
 }
+
+// revisionAnnotation is where the Deployment controller numbers the
+// ReplicaSet revisions of a Deployment.
+const revisionAnnotation = "deployment.kubernetes.io/revision"
 
 // CheckRollout checks whether the Deployment has finished rolling out.
 // deploymentID scopes the pod-failure check to pods belonging to THIS
@@ -330,14 +363,28 @@ type RolloutStatus struct {
 // no old-ReplicaSet pods remain, and every updated pod is available. Checking
 // only AvailableReplicas>=1 is wrong mid-rollout — the old pod is still ready
 // and keeps AvailableReplicas at 1 while the new pod is still starting.
-func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, name, deploymentID string) (RolloutStatus, error) {
+//
+// applied is what the apply wrote (#332). A Deployment with another UID was
+// deleted and created again since, by someone else, so the rollout fails
+// rather than succeeding on an object canette didn't apply. The rollout is
+// only done once Kubernetes has observed the applied generation. A zero
+// applied skips both checks.
+func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, name, deploymentID string, applied AppliedWorkload) (RolloutStatus, error) {
 	dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
+			if applied.UID != "" {
+				return RolloutStatus{Done: true, Message: "the Deployment was deleted during the rollout"}, nil
+			}
 			return RolloutStatus{Message: "deployment not found yet"}, nil
 		}
 		return RolloutStatus{}, fmt.Errorf("get deployment: %w", err)
 	}
+	if applied.UID != "" && string(dep.UID) != applied.UID {
+		return RolloutStatus{Done: true, Message: fmt.Sprintf(
+			"the Deployment was deleted and created again during the rollout (UID %s, applied %s)", dep.UID, applied.UID)}, nil
+	}
+	observed := dep.Status.ObservedGeneration >= max(dep.Generation, applied.Generation)
 
 	// Listing errors fail open (nil pods) — pod-level failure/name detection
 	// just degrades, the replica-count based status below is unaffected.
@@ -350,7 +397,7 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 	// Check conditions for failures — only meaningful once K8s has observed the current
 	// generation. Stale ProgressDeadlineExceeded conditions from a previous rollout
 	// remain on the Deployment after a redeploy until the new rollout completes.
-	if dep.Status.ObservedGeneration >= dep.Generation {
+	if observed {
 		for _, cond := range dep.Status.Conditions {
 			if cond.Type == appsv1.DeploymentProgressing && cond.Reason == "ProgressDeadlineExceeded" {
 				return RolloutStatus{Done: true, Succeeded: false, Message: cond.Message}, nil
@@ -358,7 +405,7 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 		}
 	}
 
-	if dep.Status.ObservedGeneration >= dep.Generation &&
+	if observed &&
 		dep.Status.UpdatedReplicas >= *replicaCount(dep) &&
 		dep.Status.Replicas <= dep.Status.UpdatedReplicas &&
 		dep.Status.AvailableReplicas >= dep.Status.UpdatedReplicas {
@@ -367,7 +414,7 @@ func CheckRollout(ctx context.Context, client kubernetes.Interface, namespace, n
 		if podName != "" {
 			msg = fmt.Sprintf("deployment available (pod %s)", podName)
 		}
-		return RolloutStatus{Done: true, Succeeded: true, Message: msg, PodName: podName}, nil
+		return RolloutStatus{Done: true, Succeeded: true, Message: msg, PodName: podName, Revision: dep.Annotations[revisionAnnotation]}, nil
 	}
 
 	return RolloutStatus{Message: fmt.Sprintf("waiting: desired=%d total=%d updated=%d available=%d",

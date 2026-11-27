@@ -446,6 +446,36 @@ func (s *Store) UpdateKubernetesStatus(ctx context.Context, appID, statusJSON st
 	return nil
 }
 
+// Workload identifies the Deployment or CronJob the controller applied for a
+// deployment (#332): its UID, the metadata.generation the apply wrote, and for
+// a Deployment the revision its rollout reached. Empty fields are unknown and
+// stored as NULL.
+type Workload struct {
+	UID        string
+	Generation int64
+	Revision   string
+}
+
+func (w Workload) uid() sql.NullString { return sql.NullString{String: w.UID, Valid: w.UID != ""} }
+func (w Workload) revision() sql.NullString {
+	return sql.NullString{String: w.Revision, Valid: w.Revision != ""}
+}
+func (w Workload) generation() sql.NullInt64 {
+	return sql.NullInt64{Int64: w.Generation, Valid: w.Generation != 0}
+}
+
+// SetAppliedWorkload records on the deployment the workload its apply wrote,
+// before the rollout is checked, so a failed attempt keeps it too.
+func (s *Store) SetAppliedWorkload(ctx context.Context, deploymentID string, w Workload) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE deployments SET workload_uid = $1, workload_generation = $2, workload_revision = $3
+		WHERE id = $4`, w.uid(), w.generation(), w.revision(), deploymentID)
+	if err != nil {
+		return fmt.Errorf("set applied workload: %w", err)
+	}
+	return nil
+}
+
 // SetAppliedManifest stores the redacted YAML manifest on the deployment.
 func (s *Store) SetAppliedManifest(ctx context.Context, deploymentID, manifest string) error {
 	_, err := s.db.ExecContext(ctx,

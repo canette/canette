@@ -77,6 +77,10 @@ export interface KubernetesStatus {
   // Set for a present Deployment. available < desired means the app is
   // serving at reduced capacity.
   replicas?: { desired: number; ready: number; available: number; updated: number }
+  // Set for a present Deployment: the deployments whose pods are ready, most
+  // ready pods first. During a rolling update both the old and the new one
+  // serve. Absent when no pod is ready.
+  serving?: { deploymentId: string; readyPods: number }[]
   // Set for a present CronJob.
   cronJob?: {
     suspended: boolean

@@ -55,11 +55,19 @@ function effectiveRuntimeHealth(row: AppRow): Pick<App, "runtimeHealth" | "runti
 // watcher (apps/controller/internal/health/kubestatus.go), so the same
 // staleness window applies. A stale or unparseable reading is left out.
 function effectiveKubernetesStatus(row: AppRow): App["kubernetesStatus"] {
-  const observedAt = row.kubernetes_status_observed_at
-  if (!row.kubernetes_status || !observedAt) return undefined
+  return freshKubernetesStatus(row.kubernetes_status, row.kubernetes_status_observed_at)
+}
+
+// freshKubernetesStatus parses app_observed_status.kubernetes_status, or
+// returns undefined for a stale or unparseable reading.
+export function freshKubernetesStatus(
+  status: string | null | undefined,
+  observedAt: string | null | undefined,
+): App["kubernetesStatus"] {
+  if (!status || !observedAt) return undefined
   if (Date.now() - new Date(observedAt).getTime() > RUNTIME_HEALTH_STALE_AFTER_MS) return undefined
   try {
-    return JSON.parse(row.kubernetes_status) as App["kubernetesStatus"]
+    return JSON.parse(status) as App["kubernetesStatus"]
   } catch {
     return undefined
   }

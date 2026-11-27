@@ -58,10 +58,13 @@ func (c *Controller) deploy(ctx context.Context, log *zap.Logger, lease store.Le
 	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
 	c.appendLog(ctx, log, dep.ID, "controller", "Applying Kubernetes resources...")
 	var warnings *k8sres.WarningCollector
+	var applied k8sres.AppliedWorkload
 	err = c.store.Fence(ctx, lease, generation, func(ctx context.Context) error {
 		var applyCtx context.Context
 		applyCtx, warnings = k8sres.WithWarningCollector(ctx)
-		return c.applyAll(applyCtx, c.dynClient, res)
+		var err error
+		applied, err = c.applyAll(applyCtx, c.dynClient, res)
+		return err
 	})
 	if errors.Is(err, store.ErrIntentChanged) {
 		c.appendLog(ctx, log, dep.ID, "controller", "The app's intent changed before this deployment was applied")
@@ -75,6 +78,10 @@ func (c *Controller) deploy(ctx context.Context, log *zap.Logger, lease store.Le
 		return false
 	}
 	c.appendLog(ctx, log, dep.ID, "controller", "Resources applied successfully")
+	workload := store.Workload{UID: applied.UID, Generation: applied.Generation}
+	if err := c.store.SetAppliedWorkload(ctx, dep.ID, workload); err != nil {
+		log.Warn("failed to record the applied workload", zap.Error(err))
+	}
 	if psa := warnings.PodSecurityWarnings(); len(psa) > 0 {
 		enforce := c.cfg.NamespacePolicy.PodSecurity.Enforce
 		for _, line := range podSecurityLogLines(psa, enforce, appCfg.Security != nil) {
@@ -85,7 +92,7 @@ func (c *Controller) deploy(ctx context.Context, log *zap.Logger, lease store.Le
 	// CronJobs have no Deployment to roll out.
 	var livePodName string
 	if !deployCfg.IsCronJob {
-		r := c.waitRollout(ctx, log, dep, &generation)
+		r := c.waitRollout(ctx, log, dep, applied, &generation)
 		switch {
 		case r.interrupted:
 			return r.again
@@ -94,13 +101,14 @@ func (c *Controller) deploy(ctx context.Context, log *zap.Logger, lease store.Le
 			return false
 		}
 		livePodName = r.podName
+		workload.Revision = r.revision
 	}
 
 	var liveURL sql.NullString
 	if !deployCfg.IsCronJob && !deployCfg.SkipHTTPRoute {
 		liveURL = sql.NullString{String: fmt.Sprintf("https://%s-%s.%s", dep.AppSlug, dep.ProjectSlug, c.cfg.ClusterDomain), Valid: true}
 	}
-	if err := c.store.FinishDeploy(ctx, lease, generation, dep.ID, liveURL); err != nil {
+	if err := c.store.FinishDeploy(ctx, lease, generation, dep.ID, liveURL, workload); err != nil {
 		if errors.Is(err, store.ErrNotDeploying) {
 			// Superseded or stopped meanwhile: leave its status alone and
 			// don't publish a URL for it.
@@ -150,10 +158,11 @@ type rolloutResult struct {
 	again       bool
 	err         error
 	podName     string
+	revision    string
 }
 
-// waitRollout polls the rollout until it finishes, checking the intent on
-// every poll:
+// waitRollout polls the rollout of the workload the apply wrote until it
+// finishes, checking the intent on every poll:
 //
 //   - Stop: give up the wait, the next step tears the app down.
 //   - A newer target that is ready to roll out: supersede this attempt and
@@ -162,21 +171,21 @@ type rolloutResult struct {
 //     what will serve until the newer one is ready.
 //   - The same target at a newer generation (a repair): carry on, counting
 //     the work as done up to the newer generation.
-func (c *Controller) waitRollout(ctx context.Context, log *zap.Logger, dep store.DeployingDeployment, generation *int64) rolloutResult {
+func (c *Controller) waitRollout(ctx context.Context, log *zap.Logger, dep store.DeployingDeployment, applied k8sres.AppliedWorkload, generation *int64) rolloutResult {
 	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
 	deadline := time.Now().Add(rolloutTimeout)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return rolloutResult{interrupted: true}
 		}
-		status, err := c.checkRollout(ctx, c.client, appNS, dep.AppSlug, dep.ID)
+		status, err := c.checkRollout(ctx, c.client, appNS, dep.AppSlug, dep.ID, applied)
 		if err != nil {
 			log.Warn("check rollout error", zap.Error(err))
 		} else {
 			c.appendLog(ctx, log, dep.ID, "controller", status.Message)
 			if status.Done {
 				if status.Succeeded {
-					return rolloutResult{podName: status.PodName}
+					return rolloutResult{podName: status.PodName, revision: status.Revision}
 				}
 				return rolloutResult{err: fmt.Errorf("rollout failed: %s", status.Message)}
 			}

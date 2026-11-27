@@ -121,6 +121,50 @@ describe("services/mcp runtime diagnostics", () => {
     expect(fetchedUrls).toEqual([])
   })
 
+  // #332: metrics (and logs) default to the deployment whose pods serve.
+  it("get_app_metrics scopes to the serving deployment", async () => {
+    const app = await createApp(db, "11111111-2222-3333-4444-555555555555", "userId", {
+      name: "scoped", slug: "scoped", sourceType: "git", gitUrl: "https://github.com/example/repo",
+    })
+    const at = new Date().toISOString()
+    for (const id of ["dep-applied", "dep-other"]) {
+      await db.insertInto("deployments").values({
+        id, app_id: app.id, status: "live", commit_sha: "abc123", created_at: at, updated_at: at,
+      }).execute()
+    }
+    await db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: "dep-applied" })
+      .where("app_id", "=", app.id).execute()
+    await db.insertInto("app_runtime").values({ app_id: app.id, reconciled_generation: 0, applied_deployment_id: "dep-applied" })
+      .execute()
+    const scope = async () => {
+      fetchedUrls = []
+      stubLogstreamer({ usageAvailable: false, pods: [] })
+      await handleTool("get_app_metrics", { app_id: app.id }, "userId")
+      return new URL(fetchedUrls[0]!).searchParams.get("deployment_id")
+    }
+    const observe = async (serving: string[], observedAt = new Date()) => {
+      await db.deleteFrom("app_observed_status").where("app_id", "=", app.id).execute()
+      await db.insertInto("app_observed_status").values({
+        app_id: app.id,
+        kubernetes_status: JSON.stringify({ workload: "present", serving: serving.map((deploymentId) => ({ deploymentId, readyPods: 1 })) }),
+        kubernetes_status_observed_at: observedAt.toISOString(),
+        runtime_health: "healthy",
+      }).execute()
+    }
+
+    // Not observed yet: the applied deployment.
+    expect(await scope()).toBe("dep-applied")
+    // Serving next to another one, e.g. during a rolling update.
+    await observe(["dep-other", "dep-applied"])
+    expect(await scope()).toBe("dep-applied")
+    // Only another deployment's pods are ready.
+    await observe(["dep-other"])
+    expect(await scope()).toBe("dep-other")
+    // A stale observation is ignored.
+    await observe(["dep-other"], new Date(Date.now() - 60 * 60_000))
+    expect(await scope()).toBe("dep-applied")
+  })
+
   it("get_app_metrics proxies usage and reports upstream failures as tool errors", async () => {
     stubLogstreamer({ usageAvailable: false, pods: [{ name: "web-abc", ready: true, restarts: 0 }] })
     const ok = await handleTool("get_app_metrics", { app_id: appId }, "userId")
@@ -881,11 +925,42 @@ describe("services/mcp runtime diagnostics", () => {
       // Deployed, not stopped since.
       await db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: building })
         .where("app_id", "=", depAppId).execute()
+      // What the controller recorded when the live deployment rolled out.
+      await db.insertInto("app_runtime").values({ app_id: depAppId, reconciled_generation: 0, applied_deployment_id: live })
+        .execute()
 
       const body = JSON.parse(text(await handleTool("get_app", { app_id: depAppId }, "userId")))
       expect(body.liveDeployment.id).toBe(live)
       expect(body.liveDeployment.status).toBe("live")
       expect(body.latestDeployment.id).toBe(building)
+    })
+
+    // #332: a rollout that failed while the old deployment kept serving.
+    it("get_app reports the old deployment as serving and the new attempt as failed", async () => {
+      const app = await createApp(db, PROJECT_ID, "userId", {
+        name: "failed-rollout", slug: "failed-rollout", sourceType: "git", gitUrl: "https://github.com/example/repo",
+      })
+      const old = await insertDeployment(app.id, "live")
+      const failed = await insertDeployment(app.id, "failed")
+      await db.updateTable("app_intents").set({ desired_state: "running", target_deployment_id: failed })
+        .where("app_id", "=", app.id).execute()
+      await db.insertInto("app_runtime").values({ app_id: app.id, reconciled_generation: 0, applied_deployment_id: old })
+        .execute()
+      await db.insertInto("app_observed_status").values({
+        app_id: app.id,
+        kubernetes_status: JSON.stringify({
+          workload: "present",
+          replicas: { desired: 1, ready: 1, available: 1, updated: 0 },
+          serving: [{ deploymentId: old, readyPods: 1 }],
+        }),
+        kubernetes_status_observed_at: new Date().toISOString(),
+        runtime_health: "healthy",
+      }).execute()
+
+      const body = JSON.parse(text(await handleTool("get_app", { app_id: app.id }, "userId")))
+      expect(body.liveDeployment.id).toBe(old)
+      expect(body.latestDeployment).toMatchObject({ id: failed, status: "failed" })
+      expect(body.kubernetesStatus.serving).toEqual([{ deploymentId: old, readyPods: 1 }])
     })
 
     it("get_app returns a null live deployment for a stopped app", async () => {
