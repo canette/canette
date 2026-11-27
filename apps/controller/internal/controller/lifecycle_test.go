@@ -27,7 +27,8 @@ import (
 // These tests run an app worker against a real Postgres (see storetest) and
 // fake Kubernetes clients, on app a1 ("a") of project p1 ("p") from
 // storetest.SeedProject. The fake dynamic client can't server-side apply,
-// so applyAll only counts calls, and checkRollout is scripted per test.
+// so applyAll only counts calls, and checkRollout and checkRoute are scripted
+// per test.
 
 const appNS = "can-p1-p"
 
@@ -62,7 +63,26 @@ func newLifecycleFixture(t *testing.T) *lifecycleFixture {
 	f.rollout(func(int) k8sres.RolloutStatus {
 		return k8sres.RolloutStatus{Done: true, Succeeded: true, Message: "rolled out"}
 	})
+	f.route(func(int) k8sres.RouteStatus { return k8sres.RouteStatus{State: k8sres.RouteAccepted} })
 	return f
+}
+
+// route scripts checkRoute: status gets the 1-based number of the poll.
+func (f *lifecycleFixture) route(status func(poll int) k8sres.RouteStatus) {
+	var polls atomic.Int32
+	f.c.checkRoute = func(context.Context, dynamic.Interface, string, string, string, string) (k8sres.RouteStatus, error) {
+		return status(int(polls.Add(1))), nil
+	}
+}
+
+// logged reports whether d's log has a line containing substr.
+func (f *lifecycleFixture) logged(d, substr string) bool {
+	f.t.Helper()
+	var n int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM build_logs WHERE deployment_id = $1 AND line LIKE '%' || $2 || '%'`, d, substr).Scan(&n); err != nil {
+		f.t.Fatal(err)
+	}
+	return n > 0
 }
 
 // rollout scripts checkRollout: status gets the 1-based number of the poll.
@@ -326,6 +346,130 @@ func TestRunApp_StopDuringRollout(t *testing.T) {
 	}
 	if r := f.runtime(); r.reconciled != 2 || r.applied.Valid || r.leased {
 		t.Errorf("runtime %+v", r)
+	}
+}
+
+// After the rollout, the deploy waits for the Gateway to report on the
+// HTTPRoute's current generation before marking the attempt live (#349).
+func TestRunApp_WaitsForRoute(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	var polls atomic.Int32
+	f.route(func(poll int) k8sres.RouteStatus {
+		polls.Store(int32(poll))
+		if poll < 3 {
+			return k8sres.RouteStatus{State: k8sres.RoutePending}
+		}
+		return k8sres.RouteStatus{State: k8sres.RouteAccepted}
+	})
+
+	f.run(context.Background())
+
+	if got := f.status("d1"); got != "live" {
+		t.Errorf("d1 is %s, want live", got)
+	}
+	if n := polls.Load(); n != 3 {
+		t.Errorf("route checked %d times, want 3", n)
+	}
+	if !f.logged("d1", "The Gateway accepted the HTTPRoute") {
+		t.Error("acceptance not logged")
+	}
+}
+
+// A route the Gateway rejects fails the deploy with the Gateway's reason, and
+// the app keeps what it had applied before.
+func TestRunApp_RejectedRouteFailsDeploy(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("old", "live")
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	f.exec(`INSERT INTO app_runtime (app_id, reconciled_generation, applied_deployment_id) VALUES ('a1', 0, 'old')`)
+	f.route(func(int) k8sres.RouteStatus {
+		return k8sres.RouteStatus{State: k8sres.RouteRejected, Accepted: &k8sres.RouteCondition{
+			Status: "False", Reason: "NotAllowedByListeners", Message: "no listener allows this hostname"}}
+	})
+
+	f.run(context.Background())
+
+	var status, msg string
+	if err := f.db.QueryRow(`SELECT status, error_message FROM deployments WHERE id = 'd1'`).Scan(&status, &msg); err != nil {
+		t.Fatal(err)
+	}
+	want := "the Gateway did not accept the HTTPRoute: Accepted: NotAllowedByListeners (no listener allows this hostname)"
+	if status != "failed" || msg != want {
+		t.Errorf("d1 is %s with %q, want failed with %q", status, msg, want)
+	}
+	if r := f.runtime(); r.applied.String != "old" || r.reconciled != r.generation {
+		t.Errorf("runtime %+v, want old still applied and d1 settled", r)
+	}
+}
+
+func TestRunApp_MissingRouteFailsDeploy(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	f.route(func(int) k8sres.RouteStatus { return k8sres.RouteStatus{State: k8sres.RouteMissing} })
+
+	f.run(context.Background())
+
+	if got := f.status("d1"); got != "failed" {
+		t.Errorf("d1 is %s, want failed", got)
+	}
+}
+
+// A Gateway that never reports doesn't block the deploy: the attempt goes
+// live with a warning in its log.
+func TestRunApp_RouteNotReportedGoesLive(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.c.routeTimeout = 50 * time.Millisecond
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	f.route(func(int) k8sres.RouteStatus { return k8sres.RouteStatus{State: k8sres.RoutePending} })
+
+	f.run(context.Background())
+
+	if got := f.status("d1"); got != "live" {
+		t.Errorf("d1 is %s, want live", got)
+	}
+	if !f.logged("d1", "Warning: the Gateway hasn't reported on the HTTPRoute") {
+		t.Error("missing Gateway report not logged")
+	}
+}
+
+func TestRunApp_StopDuringRouteWait(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "pending_deployment")
+	f.intent("running", "d1")
+	f.route(func(poll int) k8sres.RouteStatus {
+		if poll == 1 {
+			f.intent("stopped", "")
+		}
+		return k8sres.RouteStatus{State: k8sres.RoutePending}
+	})
+
+	f.run(context.Background())
+
+	if got := f.status("d1"); got != "stopped" {
+		t.Errorf("d1 is %s, want stopped", got)
+	}
+}
+
+// A private app has no HTTPRoute, so there is nothing to wait for.
+func TestRunApp_PrivateSkipsRoute(t *testing.T) {
+	f := newLifecycleFixture(t)
+	f.deployment("d1", "pending_deployment")
+	f.exec(`UPDATE deployments SET deployment_snapshot = REPLACE(deployment_snapshot::text, '"web"', '"private"')::jsonb WHERE id = 'd1'`)
+	f.intent("running", "d1")
+	f.c.checkRoute = func(context.Context, dynamic.Interface, string, string, string, string) (k8sres.RouteStatus, error) {
+		t.Error("route checked for a private app")
+		return k8sres.RouteStatus{}, nil
+	}
+
+	f.run(context.Background())
+
+	if got := f.status("d1"); got != "live" {
+		t.Errorf("d1 is %s, want live", got)
 	}
 }
 

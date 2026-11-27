@@ -25,6 +25,8 @@ A new deploy or redeploy doesn't wait for one in progress: it replaces it. A bui
 
 The app's status in the UI and in the MCP `get_app` tool (`lifecycleStatus`) follows what the app should run, not its newest deployment: `building`, `deploying`, `live`, `failed`, `stopping` (stopped, still being torn down) or `stopped`.
 
+For an app with a public URL, a deployment goes `live` only once the Gateway has accepted its HTTPRoute. If the Gateway rejects the route, for example because no listener allows one of the app's hostnames or because it can't resolve the backend Service, the deployment fails with the Gateway's reason. A Gateway that hasn't reported on the route within two minutes doesn't fail the deployment: it goes live with a warning in the deploy log. canette checks the route only during a deploy. If a Gateway change later stops routing the app, a cluster admin has to fix the Gateway.
+
 If the controller restarts during a rollout, the next controller picks the deployment up again within a few minutes and finishes it, rather than failing it.
 
 ## Runtime health

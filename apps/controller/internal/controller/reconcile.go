@@ -96,7 +96,7 @@ func (c *Controller) deploy(ctx context.Context, log *zap.Logger, lease store.Le
 	// CronJobs have no Deployment to roll out.
 	var livePodName string
 	if !deployCfg.IsCronJob {
-		r := c.waitRollout(ctx, log, dep, applied, &generation)
+		r := c.waitRollout(ctx, log, dep, applied, &generation, !deployCfg.SkipHTTPRoute)
 		switch {
 		case r.interrupted:
 			return r.again
@@ -166,7 +166,11 @@ type rolloutResult struct {
 }
 
 // waitRollout polls the rollout of the workload the apply wrote until it
-// finishes, checking the intent on every poll:
+// finishes and then, with route set, the app's HTTPRoute until the Gateway
+// accepts or rejects its current generation. A rejection fails the deploy
+// with the Gateway's reason. A Gateway that hasn't reported within
+// c.routeTimeout is logged and the deploy goes on. It checks the intent on
+// every poll:
 //
 //   - Stop: give up the wait, the next step tears the app down.
 //   - A newer target that is ready to roll out: supersede this attempt and
@@ -175,26 +179,50 @@ type rolloutResult struct {
 //     what will serve until the newer one is ready.
 //   - The same target at a newer generation (a repair): carry on, counting
 //     the work as done up to the newer generation.
-func (c *Controller) waitRollout(ctx context.Context, log *zap.Logger, dep store.DeployingDeployment, applied k8sres.AppliedWorkload, generation *int64) rolloutResult {
+func (c *Controller) waitRollout(ctx context.Context, log *zap.Logger, dep store.DeployingDeployment, applied k8sres.AppliedWorkload, generation *int64, route bool) rolloutResult {
 	appNS := k8sres.AppNamespace(dep.ProjectID, dep.ProjectSlug)
 	deadline := time.Now().Add(rolloutTimeout)
+	// rolledOut is set once the rollout succeeded, while the route is
+	// checked until deadline, moved to routeTimeout from then.
+	var rolledOut *rolloutResult
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return rolloutResult{interrupted: true}
 		}
-		status, err := c.checkRollout(ctx, c.client, appNS, dep.AppSlug, dep.ID, applied)
-		if err != nil {
-			log.Warn("check rollout error", zap.Error(err))
-		} else {
-			c.appendLog(ctx, log, dep.ID, "controller", status.Message)
-			if status.Details != "" {
-				c.appendLog(ctx, log, dep.ID, "controller", "Details: "+status.Details)
-			}
-			if status.Done {
-				if status.Succeeded {
-					return rolloutResult{podName: status.PodName, revision: status.Revision}
+		if rolledOut == nil {
+			status, err := c.checkRollout(ctx, c.client, appNS, dep.AppSlug, dep.ID, applied)
+			if err != nil {
+				log.Warn("check rollout error", zap.Error(err))
+			} else {
+				c.appendLog(ctx, log, dep.ID, "controller", status.Message)
+				if status.Details != "" {
+					c.appendLog(ctx, log, dep.ID, "controller", "Details: "+status.Details)
 				}
-				return rolloutResult{err: fmt.Errorf("rollout failed: %s", status.Message)}
+				if status.Done {
+					if !status.Succeeded {
+						return rolloutResult{err: fmt.Errorf("rollout failed: %s", status.Message)}
+					}
+					rolledOut = &rolloutResult{podName: status.PodName, revision: status.Revision}
+					if !route {
+						return *rolledOut
+					}
+					c.appendLog(ctx, log, dep.ID, "controller", "Waiting for the Gateway to accept the HTTPRoute...")
+					deadline = time.Now().Add(c.routeTimeout)
+				}
+			}
+		}
+		if rolledOut != nil {
+			status, err := c.checkRoute(ctx, c.dynClient, appNS, dep.AppSlug, c.cfg.GatewayName, c.cfg.GatewayNamespace)
+			switch {
+			case err != nil:
+				log.Warn("check route error", zap.Error(err))
+			case status.State == k8sres.RouteAccepted:
+				c.appendLog(ctx, log, dep.ID, "controller", "The Gateway accepted the HTTPRoute")
+				return *rolledOut
+			case status.State == k8sres.RouteRejected:
+				return rolloutResult{err: fmt.Errorf("the Gateway did not accept the HTTPRoute: %s", status.Problem())}
+			case status.State == k8sres.RouteMissing:
+				return rolloutResult{err: errors.New("the HTTPRoute was not found after it was applied")}
 			}
 		}
 
@@ -225,6 +253,11 @@ func (c *Controller) waitRollout(ctx context.Context, log *zap.Logger, dep store
 			return rolloutResult{interrupted: true}
 		case <-time.After(c.rolloutPollInterval):
 		}
+	}
+	if rolledOut != nil {
+		c.appendLog(ctx, log, dep.ID, "controller", fmt.Sprintf(
+			"Warning: the Gateway hasn't reported on the HTTPRoute within %s, so the URL may not be routed yet", c.routeTimeout))
+		return *rolledOut
 	}
 	return rolloutResult{err: fmt.Errorf("rollout timed out after %s", rolloutTimeout)}
 }
