@@ -13,6 +13,11 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["create", "get", "list", "patch", "delete"]
+  # Read-only: a deleted app's cleanup waits until its Deployment's
+  # ReplicaSets are gone too (see k8s.RemainingAppObjects).
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["list"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["create", "get", "patch", "delete"]
@@ -45,7 +50,8 @@ rules:
     resources: ["cronjobs"]
     verbs: ["create", "get", "patch", "delete"]
   # Read-only: the Kubernetes readiness reader reports each CronJob's latest
-  # Job outcome (see internal/health/kubestatus.go).
+  # Job outcome (see internal/health/kubestatus.go), and a deleted app's
+  # cleanup waits until its Jobs are gone (k8s.RemainingAppObjects).
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["list"]

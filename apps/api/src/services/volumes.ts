@@ -237,14 +237,23 @@ export async function createVolume(
     config.content = input.config!.content!
   }
 
-  // PVC + replicas guard, plus the insert, run in a single transaction with
-  // SELECT ... FOR UPDATE on the apps row to prevent TOCTOU with concurrent
-  // app updates that change canette_config or add other PVC volumes.
+  // The name check, PVC + replicas guard and the insert run in a single
+  // transaction with SELECT ... FOR UPDATE on the apps row, to prevent TOCTOU
+  // with concurrent app updates that change canette_config or add other PVC
+  // volumes, and with deleteVolume, which takes the same lock before it
+  // queues a deletion.
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
 
   try {
     return await db.transaction().execute(async (tx) => {
+      let q = tx
+        .selectFrom("apps")
+        .select(["canette_config"])
+        .where("id", "=", appId)
+      if (supportsForUpdate(tx)) q = q.forUpdate()
+      const lockedApp = await q.executeTakeFirstOrThrow()
+
       const name = await nameClearOfPendingDeletions(tx, app, input.mountPath, derived)
       if (name === null) {
         throw new ServiceError(
@@ -255,12 +264,6 @@ export async function createVolume(
       }
 
       if (input.type === "pvc") {
-        let q = tx
-          .selectFrom("apps")
-          .select(["canette_config"])
-          .where("id", "=", appId)
-        if (supportsForUpdate(tx)) q = q.forUpdate()
-        const lockedApp = await q.executeTakeFirstOrThrow()
         const replicas = getReplicasFromCanetteConfig(lockedApp.canette_config)
         if (replicas > 1) {
           throw new ServiceError(
@@ -402,6 +405,12 @@ export async function deleteVolume(
     .executeTakeFirst()
 
   await db.transaction().execute(async (tx) => {
+    // The apps row, as in createVolume, so a volume being added can't miss
+    // the deletion queued here and take the name it frees.
+    let appQ = tx.selectFrom("apps").select("id").where("id", "=", appId)
+    if (supportsForUpdate(tx)) appQ = appQ.forUpdate()
+    await appQ.executeTakeFirst()
+
     const volRow = await tx
       .selectFrom("app_volumes")
       .selectAll()

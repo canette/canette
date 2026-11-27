@@ -512,8 +512,8 @@ type PendingNamespaceDeletion struct {
 	// was never blocked.
 	BlockedReason string
 	// DeleteRequested is true once an earlier attempt sent the namespace's
-	// delete (MarkNamespaceDeleteRequested). It is terminating, so only
-	// whether it is gone is left to check.
+	// delete (MarkNamespaceDeleteRequested). It may be terminating, or
+	// Kubernetes may have refused the delete.
 	DeleteRequested bool
 	// ClaimToken names this claim. Finishing it (MarkNamespaceDeleted,
 	// MarkNamespaceBlocked, ReleaseNamespaceDeletion) needs it, so a worker
@@ -562,12 +562,15 @@ func (s *Store) ClaimNamespaceDeletions(ctx context.Context, limit int) ([]Pendi
 }
 
 // MarkNamespaceBlocked keeps a queued namespace cleanup, unclaimed, and
-// defers its next attempt until retryAt. The namespace was left alone, so a
-// rename back to its slug may take it over meanwhile.
+// defers its next attempt until retryAt. The namespace is active, not
+// terminating, and was left alone, so a rename back to its slug may take it
+// over meanwhile: an earlier delete request was refused, so it no longer
+// blocks the rename.
 func (s *Store) MarkNamespaceBlocked(ctx context.Context, d PendingNamespaceDeletion, reason string, retryAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE queued_namespace_cleanups
-		SET blocked_reason = $1, next_attempt_at = $2, claimed_at = NULL, claim_token = NULL
+		SET blocked_reason = $1, next_attempt_at = $2, claimed_at = NULL, claim_token = NULL,
+		    delete_requested_at = NULL
 		WHERE id = $3 AND claim_token = $4`,
 		reason, retryAt.UTC(), d.ID, d.ClaimToken)
 	if err != nil {
@@ -733,10 +736,10 @@ type PendingVolumeDeletion struct {
 // short enough that a crashed controller's claims become available again.
 const volumeDeletionClaimTTL = 5 * time.Minute
 
-// NamespaceDeletionClaimTTL is how long a claim on a queued namespace
-// cleanup lasts (ClaimNamespaceDeletions). The worker must be done well
-// within it.
-const NamespaceDeletionClaimTTL = volumeDeletionClaimTTL
+// CleanupClaimTTL is how long a claim on a queued namespace, app or volume
+// cleanup lasts. The worker must be done well within it, so it never acts
+// on a row another worker has taken over.
+const CleanupClaimTTL = volumeDeletionClaimTTL
 
 // ClaimVolumeDeletions atomically transitions up to limit rows from "unclaimed"
 // (or "claimed long ago") to "claimed now" and returns them, skipping ones

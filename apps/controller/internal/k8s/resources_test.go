@@ -1435,6 +1435,19 @@ func TestBuildResources_VolumeIDLabel(t *testing.T) {
 	}
 }
 
+func TestBuildResources_CronJobJobsCarryTheAppLabels(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.AppID = "app-uuid-1"
+	cfg.IsCronJob = true
+	cfg.Schedule = "*/5 * * * *"
+	res := BuildResources(cfg)
+	jobTemplate, _ := res.CronJob["spec"].(map[string]interface{})["jobTemplate"].(map[string]interface{})
+	labels := metaLabels(jobTemplate)
+	if labels[libk8s.LabelApp] != "my-app" || labels[libk8s.LabelAppID] != "app-uuid-1" {
+		t.Errorf("jobTemplate labels = %v", labels)
+	}
+}
+
 // The registry pull Secret is shared by every app in the namespace, so an
 // app label selector must never match it (#333).
 func TestBuildResources_ImagePullSecretHasProjectLabels(t *testing.T) {

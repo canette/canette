@@ -18,9 +18,11 @@ import (
 
 func newFakeDynamic(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
-		gvrConfigMap: "ConfigMapList",
-		gvrPVC:       "PersistentVolumeClaimList",
-		gvrPod:       "PodList",
+		gvrConfigMap:  "ConfigMapList",
+		gvrPVC:        "PersistentVolumeClaimList",
+		gvrPod:        "PodList",
+		gvrReplicaSet: "ReplicaSetList",
+		gvrJob:        "JobList",
 	}
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
 }

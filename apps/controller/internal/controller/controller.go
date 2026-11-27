@@ -235,7 +235,7 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 			c.goWorker(func() {
 				// Bounded well within the claim, so a worker never acts on
 				// a namespace whose cleanup another worker has taken over.
-				ctx, cancel := context.WithTimeout(workCtx, store.NamespaceDeletionClaimTTL/2)
+				ctx, cancel := context.WithTimeout(workCtx, store.CleanupClaimTTL/2)
 				defer cancel()
 				c.cleanupNamespace(ctx, d)
 			})
@@ -248,7 +248,11 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 		c.log.Error("claim app cleanups error", zap.Error(err))
 	} else {
 		for _, d := range appCleanups {
-			c.goWorker(func() { c.cleanupApp(workCtx, d) })
+			c.goWorker(func() {
+				ctx, cancel := context.WithTimeout(workCtx, store.CleanupClaimTTL/2)
+				defer cancel()
+				c.cleanupApp(ctx, d)
+			})
 		}
 	}
 
@@ -258,7 +262,11 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 		c.log.Error("claim volume deletions error", zap.Error(err))
 	} else {
 		for _, d := range volDels {
-			c.goWorker(func() { c.deleteVolume(workCtx, d) })
+			c.goWorker(func() {
+				ctx, cancel := context.WithTimeout(workCtx, store.CleanupClaimTTL/2)
+				defer cancel()
+				c.deleteVolume(ctx, d)
+			})
 		}
 	}
 
@@ -304,7 +312,7 @@ func (c *Controller) cleanupNamespace(ctx context.Context, d store.PendingNamesp
 	}
 	exists := true
 	if err == nil {
-		exists, err = k8sres.NamespaceExists(ctx, c.dynClient, ns)
+		exists, _, err = k8sres.NamespaceStatus(ctx, c.dynClient, ns)
 	}
 	if err != nil || exists {
 		// The delete was sent, even if it failed (a timeout, say), so
@@ -569,9 +577,18 @@ func namespaceBlockedReason(pvcs []string) string {
 // that is already terminating is harmless.
 func cleanupQueuedNamespace(ctx context.Context, dyn dynamic.Interface, d store.PendingNamespaceDeletion) (pvcs []string, deleteRequested bool, err error) {
 	ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
-	// Once the delete was sent, the namespace is terminating with whatever
-	// it held, so there is nothing left to keep it for.
-	if d.ProjectExists && !d.DeleteRequested {
+	if d.ProjectExists {
+		// A terminating namespace goes with whatever it holds, so there is
+		// nothing left to keep it for. An earlier delete request alone
+		// doesn't say so: Kubernetes may have refused it, and the namespace
+		// may hold new PVCs since.
+		_, terminating, err := k8sres.NamespaceStatus(ctx, dyn, ns)
+		if err != nil {
+			return nil, false, err
+		}
+		if terminating {
+			return nil, true, k8sres.DeleteNamespace(ctx, dyn, ns)
+		}
 		pvcs, err := k8sres.ListPVCNames(ctx, dyn, ns)
 		if err != nil {
 			return nil, false, err

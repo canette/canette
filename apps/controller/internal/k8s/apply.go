@@ -33,6 +33,8 @@ var (
 	gvrPVC        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
 	gvrConfigMap  = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
 	gvrPod        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
+	gvrReplicaSet = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}
+	gvrJob        = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}
 
 	gvrNetworkPolicy = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
 	gvrPDB           = schema.GroupVersionResource{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"}
@@ -554,8 +556,9 @@ func DeleteResource(ctx context.Context, dyn dynamic.Interface, gvr schema.Group
 // is deleted, so an object is the app's only when its canette.dev/app-id
 // label is the app's id. An object without that label was applied before
 // the label existed, and is the app's when its canette.dev/app label is the
-// slug. An Owner without AppID (an app cleanup queued before the label)
-// matches by slug only.
+// slug. An Owner without AppID (an app cleanup queued before the label) only
+// matches objects without the label: one that has it was applied since, so
+// it may be a later app's that reused the slug.
 type Owner struct {
 	AppID   string
 	AppSlug string
@@ -563,7 +566,7 @@ type Owner struct {
 
 func (o Owner) owns(obj *unstructured.Unstructured) bool {
 	labels := obj.GetLabels()
-	if id, ok := labels[libk8s.LabelAppID]; ok && o.AppID != "" {
+	if id, ok := labels[libk8s.LabelAppID]; ok {
 		return id == o.AppID
 	}
 	return labels[libk8s.LabelApp] == o.AppSlug
@@ -666,17 +669,17 @@ func DeleteNamespace(ctx context.Context, dyn dynamic.Interface, namespace strin
 	return nil
 }
 
-// NamespaceExists reports whether the namespace is still there, terminating
-// or not.
-func NamespaceExists(ctx context.Context, dyn dynamic.Interface, namespace string) (bool, error) {
-	_, err := dyn.Resource(gvrNamespace).Get(ctx, namespace, metav1.GetOptions{})
+// NamespaceStatus reports whether the namespace is still there, and whether
+// Kubernetes is deleting it.
+func NamespaceStatus(ctx context.Context, dyn dynamic.Interface, namespace string) (exists, terminating bool, err error) {
+	obj, err := dyn.Resource(gvrNamespace).Get(ctx, namespace, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
-		return false, nil
+		return false, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("get namespace %s: %w", namespace, err)
+		return false, false, fmt.Errorf("get namespace %s: %w", namespace, err)
 	}
-	return true, nil
+	return true, obj.GetDeletionTimestamp() != nil, nil
 }
 
 // ListPVCNames returns the names of every PVC in the namespace, canette-managed
@@ -751,8 +754,11 @@ type AppObject struct {
 }
 
 // RemainingAppObjects returns the objects of owner that DeleteApp deletes,
-// and the app's pods, that still exist, terminating or not. The app is gone
-// from the cluster when there are none.
+// and the app's ReplicaSets, Jobs and pods, that still exist, terminating or
+// not. The app is gone from the cluster when there are none. The workloads
+// are deleted with Background propagation, so their ReplicaSets and Jobs,
+// which can still start pods, outlive them until the garbage collector is
+// done.
 func RemainingAppObjects(ctx context.Context, dyn dynamic.Interface, namespace string, owner Owner) ([]AppObject, error) {
 	var left []AppObject
 	named := []struct {
@@ -783,6 +789,8 @@ func RemainingAppObjects(ctx context.Context, dyn dynamic.Interface, namespace s
 	}{
 		{gvrPVC, "PersistentVolumeClaim"},
 		{gvrConfigMap, "ConfigMap"},
+		{gvrReplicaSet, "ReplicaSet"},
+		{gvrJob, "Job"},
 		{gvrPod, "Pod"},
 	}
 	for _, l := range listed {

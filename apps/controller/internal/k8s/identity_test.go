@@ -125,6 +125,42 @@ func TestRemainingAppObjects_TerminatingPVCAndPods(t *testing.T) {
 	}
 }
 
+// A cleanup queued before the app-id label existed matches by slug, but
+// never an object that has the label: that one was applied since, possibly
+// by a later app that reused the slug.
+func TestDeleteApp_LegacyCleanupLeavesLabelledObjects(t *testing.T) {
+	legacy := Owner{AppSlug: testApp}
+	dyn := newFakeDynamic(
+		appObj("v1", "PersistentVolumeClaim", testApp+"-data", "app-2"),
+		labelledObj("v1", "PersistentVolumeClaim", testApp+"-old", testApp),
+	)
+	if err := DeleteApp(context.Background(), dyn, testNamespace, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if !objectExists(t, dyn, gvrPVC, testApp+"-data") {
+		t.Error("the later app's PVC was deleted by a legacy cleanup")
+	}
+	if objectExists(t, dyn, gvrPVC, testApp+"-old") {
+		t.Error("the legacy app's own PVC was kept")
+	}
+}
+
+// Background deletion leaves a Deployment's ReplicaSets and a CronJob's Jobs
+// to the garbage collector, and they can still start pods until it is done.
+func TestRemainingAppObjects_WaitsForReplicaSetsAndJobs(t *testing.T) {
+	dyn := newFakeDynamic(
+		appObj("apps/v1", "ReplicaSet", testApp+"-7d9f8", "app-1"),
+		appObj("batch/v1", "Job", testApp+"-29123", "app-1"),
+	)
+	left, err := RemainingAppObjects(context.Background(), dyn, testNamespace, testOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 2 {
+		t.Errorf("remaining = %v, want the ReplicaSet and the Job", left)
+	}
+}
+
 func TestTeardownApp_LeavesAnotherAppsWorkload(t *testing.T) {
 	dyn := newFakeDynamic(appObj("apps/v1", "Deployment", testApp, "app-2"))
 	if err := TeardownApp(context.Background(), dyn, testNamespace, testOwner); err != nil {

@@ -793,7 +793,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 			"concurrencyPolicy":          "Forbid",
 			"failedJobsHistoryLimit":     3,
 			"successfulJobsHistoryLimit": 3,
-			"jobTemplate":                map[string]interface{}{"spec": jobSpec},
+			// The labels make the Jobs findable by app, e.g. by a deleted
+			// app's cleanup, which waits for them (RemainingAppObjects).
+			"jobTemplate": map[string]interface{}{"metadata": map[string]interface{}{"labels": labels}, "spec": jobSpec},
 		}
 		// Avoids a burst of missed runs (or "too many missed start times")
 		// after controller or cluster downtime.

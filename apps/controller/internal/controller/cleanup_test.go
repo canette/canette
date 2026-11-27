@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.uber.org/zap/zaptest"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,6 +43,8 @@ func newCleanupFixture(t *testing.T, objs ...runtime.Object) *cleanupFixture {
 			testGVRPVC:       "PersistentVolumeClaimList",
 			testGVRConfigMap: "ConfigMapList",
 			testGVRPod:       "PodList",
+			{Group: "apps", Version: "v1", Resource: "replicasets"}: "ReplicaSetList",
+			{Group: "batch", Version: "v1", Resource: "jobs"}:       "JobList",
 		}, objs...)
 	c := New(store.New(db, zaptest.NewLogger(t)), fake.NewSimpleClientset(), dyn,
 		Config{MaxConcurrent: 3}, nil, zaptest.NewLogger(t), nil)
@@ -215,6 +218,65 @@ func TestDeleteVolume_LateDeletionLeavesTheNewVolume(t *testing.T) {
 	var n int
 	if err := f.db.QueryRow(`SELECT COUNT(*) FROM pending_volume_deletions`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("deletions left = %d, err %v; the removed volume's object is gone", n, err)
+	}
+}
+
+// A delete Kubernetes refused leaves the namespace active. A retry must
+// check its PVCs again, not take the earlier request for a terminating
+// namespace, and a blocked namespace no longer holds off a rename back.
+func TestCleanupNamespace_RefusedDeleteChecksPVCsAgain(t *testing.T) {
+	ns := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "Namespace",
+		"metadata": map[string]interface{}{"name": "can-p1-old"},
+	}}
+	f := newCleanupFixture(t, ns)
+	refuse := true
+	f.dyn.PrependReactor("delete", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if refuse {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, "can-p1-old", nil)
+		}
+		return false, nil, nil
+	})
+	// Renamed away from "old"; the project still exists.
+	f.exec(`INSERT INTO queued_namespace_cleanups (id, project_id, project_slug, created_at)
+		VALUES ('q1', 'p1', 'old', CURRENT_TIMESTAMP)`)
+	claim := func() store.PendingNamespaceDeletion {
+		t.Helper()
+		ds, err := f.c.store.ClaimNamespaceDeletions(context.Background(), 10)
+		if err != nil || len(ds) != 1 {
+			t.Fatalf("claimed %v, err %v", ds, err)
+		}
+		return ds[0]
+	}
+
+	f.c.cleanupNamespace(context.Background(), claim())
+	var requested sql.NullTime
+	if err := f.db.QueryRow(`SELECT delete_requested_at FROM queued_namespace_cleanups`).Scan(&requested); err != nil || !requested.Valid {
+		t.Fatalf("delete_requested_at %v, err %v; the outcome is uncertain, so the rename stays blocked", requested, err)
+	}
+
+	// A PVC shows up in the still active namespace before the retry.
+	refuse = false
+	pvcObj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+		"metadata": map[string]interface{}{"name": "web-data", "namespace": "can-p1-old"},
+	}}
+	if err := f.dyn.Tracker().Add(pvcObj); err != nil {
+		t.Fatal(err)
+	}
+	f.due("queued_namespace_cleanups")
+	f.c.cleanupNamespace(context.Background(), claim())
+
+	if _, err := f.dyn.Resource(testGVRNamespace).Get(context.Background(), "can-p1-old", metav1.GetOptions{}); err != nil {
+		t.Fatalf("namespace holding a PVC was deleted on the retry: %v", err)
+	}
+	var reason string
+	if err := f.db.QueryRow(`SELECT COALESCE(blocked_reason, ''), delete_requested_at FROM queued_namespace_cleanups`).
+		Scan(&reason, &requested); err != nil {
+		t.Fatal(err)
+	}
+	if reason == "" || requested.Valid {
+		t.Errorf("blocked_reason %q, delete_requested_at %v; want blocked, and the rename back allowed again", reason, requested)
 	}
 }
 
