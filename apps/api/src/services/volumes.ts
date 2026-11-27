@@ -130,11 +130,11 @@ function validateConfigMapContent(content: unknown): asserts content is string {
 const VOLUME_RESOURCE_NAME_OVERHEAD = 5
 const K8S_NAME_MAX_LENGTH = 63
 
-// generateVolumeName derives a valid volume name from the mount path. Returns
-// null when no truncation can keep the derived K8s resource names within the
-// 63-char limit.
-function generateVolumeName(mountPath: string, appSlug: string): string | null {
-  const maxLen = K8S_NAME_MAX_LENGTH - appSlug.length - VOLUME_RESOURCE_NAME_OVERHEAD
+// generateVolumeName derives a valid volume name from the mount path, leaving
+// room for `reserve` more characters (a suffix). Returns null when no
+// truncation can keep the derived K8s resource names within the 63-char limit.
+function generateVolumeName(mountPath: string, appSlug: string, reserve = 0): string | null {
+  const maxLen = K8S_NAME_MAX_LENGTH - appSlug.length - VOLUME_RESOURCE_NAME_OVERHEAD - reserve
   if (maxLen < 1) return null
   const sanitised = mountPath
     .replace(/^\/+/, "")
@@ -144,6 +144,39 @@ function generateVolumeName(mountPath: string, appSlug: string): string | null {
     .slice(0, maxLen)
     .replace(/-+$/, "")
   return sanitised || "volume"
+}
+
+// The controller deletes a removed volume's resource in the background, and
+// keeps the queued deletion until it is gone, which for a PVC waits for the
+// pods that mount it. A volume added under the same name meanwhile would get
+// the same resource name, so it gets a numbered name instead (data-2,
+// data-3, ...), and resources of its own (#333). Returns null when no
+// numbered name fits the length budget.
+async function nameClearOfPendingDeletions(
+  tx: DB,
+  app: { id: string; projectId: string; slug: string },
+  mountPath: string,
+  name: string
+): Promise<string | null> {
+  const pending = await tx
+    .selectFrom("pending_volume_deletions")
+    .select("volume_name")
+    .where("project_id", "=", app.projectId)
+    .where("app_slug", "=", app.slug)
+    .execute()
+  const taken = new Set(pending.map((r) => r.volume_name))
+  if (!taken.has(name)) return name
+
+  const live = await tx.selectFrom("app_volumes").select("name").where("app_id", "=", app.id).execute()
+  for (const r of live) taken.add(r.name)
+  for (let n = 2; n < 100; n++) {
+    const suffix = `-${n}`
+    const base = generateVolumeName(mountPath, app.slug, suffix.length)
+    if (base === null) return null
+    const candidate = base + suffix
+    if (!taken.has(candidate)) return candidate
+  }
+  return null
 }
 
 // ── Service functions ─────────────────────────────────────────────────────────
@@ -177,8 +210,8 @@ export async function createVolume(
 
   validateMountPath(input.mountPath, input.type)
 
-  const name = generateVolumeName(input.mountPath, app.slug)
-  if (name === null) {
+  const derived = generateVolumeName(input.mountPath, app.slug)
+  if (derived === null) {
     throw new ServiceError(
       "App slug is too long to derive a volume name that fits Kubernetes' 63-character limit. Use a shorter app slug.",
       "VALIDATION_ERROR",
@@ -204,21 +237,33 @@ export async function createVolume(
     config.content = input.config!.content!
   }
 
-  // PVC + replicas guard, plus the insert, run in a single transaction with
-  // SELECT ... FOR UPDATE on the apps row to prevent TOCTOU with concurrent
-  // app updates that change canette_config or add other PVC volumes.
+  // The name check, PVC + replicas guard and the insert run in a single
+  // transaction with SELECT ... FOR UPDATE on the apps row, to prevent TOCTOU
+  // with concurrent app updates that change canette_config or add other PVC
+  // volumes, and with deleteVolume, which takes the same lock before it
+  // queues a deletion.
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
 
   try {
     return await db.transaction().execute(async (tx) => {
+      let q = tx
+        .selectFrom("apps")
+        .select(["canette_config"])
+        .where("id", "=", appId)
+      if (supportsForUpdate(tx)) q = q.forUpdate()
+      const lockedApp = await q.executeTakeFirstOrThrow()
+
+      const name = await nameClearOfPendingDeletions(tx, app, input.mountPath, derived)
+      if (name === null) {
+        throw new ServiceError(
+          `A volume at '${input.mountPath}' was just removed and is still being deleted. Try again in a minute.`,
+          "CONFLICT",
+          409
+        )
+      }
+
       if (input.type === "pvc") {
-        let q = tx
-          .selectFrom("apps")
-          .select(["canette_config"])
-          .where("id", "=", appId)
-        if (supportsForUpdate(tx)) q = q.forUpdate()
-        const lockedApp = await q.executeTakeFirstOrThrow()
         const replicas = getReplicasFromCanetteConfig(lockedApp.canette_config)
         if (replicas > 1) {
           throw new ServiceError(
@@ -360,6 +405,12 @@ export async function deleteVolume(
     .executeTakeFirst()
 
   await db.transaction().execute(async (tx) => {
+    // The apps row, as in createVolume, so a volume being added can't miss
+    // the deletion queued here and take the name it frees.
+    let appQ = tx.selectFrom("apps").select("id").where("id", "=", appId)
+    if (supportsForUpdate(tx)) appQ = appQ.forUpdate()
+    await appQ.executeTakeFirst()
+
     const volRow = await tx
       .selectFrom("app_volumes")
       .selectAll()
@@ -383,6 +434,9 @@ export async function deleteVolume(
           app_slug: app.slug,
           volume_name: volRow.name,
           volume_type: type,
+          // The controller deletes the resource only while it is still
+          // labelled with this volume's id.
+          volume_id: volRow.id,
           created_at: new Date().toISOString(),
         })
         .execute()

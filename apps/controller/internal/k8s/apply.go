@@ -32,6 +32,9 @@ var (
 	gvrCronJob    = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}
 	gvrPVC        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
 	gvrConfigMap  = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+	gvrPod        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
+	gvrReplicaSet = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}
+	gvrJob        = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}
 
 	gvrNetworkPolicy = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
 	gvrPDB           = schema.GroupVersionResource{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"}
@@ -96,6 +99,7 @@ func appliedWorkload(obj *unstructured.Unstructured) AppliedWorkload {
 func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) (AppliedWorkload, error) {
 	var none AppliedWorkload
 	ns, _ := objectName(res.Namespace)
+	owner := Owner{AppID: res.AppID, AppSlug: res.AppSlug}
 	nsNamespace := "" // cluster-scoped
 
 	if err := ApplyResource(ctx, dyn, gvrNamespace, nsNamespace, res.Namespace); err != nil {
@@ -144,9 +148,9 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) (App
 	} else {
 		// Gate disabled (never enabled, was just disabled, or this is a CronJob
 		// which never has one) — delete any stale authgate secret left over from
-		// a previous deployment with the gate enabled. Idempotent (DeleteResource
+		// a previous deployment with the gate enabled. Idempotent (deleteOwned
 		// ignores not-found), mirrors the stale-HTTPRoute cleanup below.
-		if err := DeleteResource(ctx, dyn, gvrSecret, ns, authgateSecretName(res.AppSlug)); err != nil {
+		if err := deleteOwned(ctx, dyn, gvrSecret, ns, authgateSecretName(res.AppSlug), owner, metav1.DeleteOptions{}); err != nil {
 			return none, fmt.Errorf("delete stale authgate secret: %w", err)
 		}
 	}
@@ -172,7 +176,7 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) (App
 			return none, fmt.Errorf("apply cronjob: %w", err)
 		}
 		// The app may have been a multi-replica web/private app before.
-		if err := DeleteResource(ctx, dyn, gvrPDB, ns, res.AppSlug); err != nil {
+		if err := deleteOwned(ctx, dyn, gvrPDB, ns, res.AppSlug, owner, metav1.DeleteOptions{}); err != nil {
 			return none, fmt.Errorf("delete stale poddisruptionbudget: %w", err)
 		}
 		return appliedWorkload(cronJob), nil
@@ -193,7 +197,7 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) (App
 	} else {
 		// Replicas dropped back to 1 — a leftover maxUnavailable: 1 PDB would
 		// block node drains entirely, so remove it.
-		if err := DeleteResource(ctx, dyn, gvrPDB, ns, res.AppSlug); err != nil {
+		if err := deleteOwned(ctx, dyn, gvrPDB, ns, res.AppSlug, owner, metav1.DeleteOptions{}); err != nil {
 			return none, fmt.Errorf("delete stale poddisruptionbudget: %w", err)
 		}
 	}
@@ -207,7 +211,7 @@ func ApplyAll(ctx context.Context, dyn dynamic.Interface, res AppResources) (App
 	} else {
 		// Private deployment — delete any HTTPRoute left over from a previous web deployment.
 		appName, _ := objectName(res.Deployment)
-		if err := DeleteResource(ctx, dyn, gvrHTTPRoute, ns, appName); err != nil {
+		if err := deleteOwned(ctx, dyn, gvrHTTPRoute, ns, appName, owner, metav1.DeleteOptions{}); err != nil {
 			return none, fmt.Errorf("delete stale httproute: %w", err)
 		}
 	}
@@ -317,9 +321,17 @@ func clearRollingUpdateForRecreate(ctx context.Context, dyn dynamic.Interface, n
 	return nil
 }
 
-// DeleteVolumeResource deletes a PVC or ConfigMap that was previously managed by canette.
-// Ignores not-found errors (idempotent).
-func DeleteVolumeResource(ctx context.Context, dyn dynamic.Interface, resourceType, namespace, name string) error {
+// DeleteVolumeObject deletes the PVC or ConfigMap that backed a volume
+// removed from canette, and reports whether it is gone. A PVC a pod still
+// mounts stays Terminating after the delete, so the caller keeps the queued
+// deletion until gone is true (#333).
+//
+// volumeID is the removed volume's id. An object labelled with another
+// volume's id belongs to a volume added since under the same name, so it is
+// left alone, and the removed one counts as gone. An object without the
+// label predates it and is deleted. Empty volumeID (a deletion queued before
+// the label) deletes whatever has the name.
+func DeleteVolumeObject(ctx context.Context, dyn dynamic.Interface, resourceType, namespace, name, volumeID string) (gone bool, err error) {
 	var gvr schema.GroupVersionResource
 	switch resourceType {
 	case "PersistentVolumeClaim":
@@ -327,9 +339,20 @@ func DeleteVolumeResource(ctx context.Context, dyn dynamic.Interface, resourceTy
 	case "ConfigMap":
 		gvr = gvrConfigMap
 	default:
-		return fmt.Errorf("unknown volume resource type: %s", resourceType)
+		return false, fmt.Errorf("unknown volume resource type: %s", resourceType)
 	}
-	return DeleteResource(ctx, dyn, gvr, namespace, name)
+	obj, err := getObject(ctx, dyn, gvr, namespace, name)
+	if obj == nil || err != nil {
+		return err == nil, err
+	}
+	if id, ok := obj.GetLabels()[libk8s.LabelVolumeID]; ok && volumeID != "" && id != volumeID {
+		return true, nil
+	}
+	if err := deleteObject(ctx, dyn, gvr, obj, metav1.DeleteOptions{}); err != nil {
+		return false, err
+	}
+	obj, err = getObject(ctx, dyn, gvr, namespace, name)
+	return obj == nil && err == nil, err
 }
 
 // RolloutStatus describes the outcome of watching a Deployment rollout.
@@ -342,7 +365,7 @@ type RolloutStatus struct {
 	// Kubernetes-specific, so they stay out of Message, which becomes the
 	// deployment's error.
 	Details string
-	PodName   string // name of the pod backing a successful rollout; empty otherwise
+	PodName string // name of the pod backing a successful rollout; empty otherwise
 	// Revision is the Deployment's deployment.kubernetes.io/revision once the
 	// rollout succeeded; empty otherwise.
 	Revision string
@@ -518,24 +541,121 @@ func GetPodLogs(ctx context.Context, client kubernetes.Interface, namespace, app
 }
 
 // DeleteResource deletes a namespaced K8s resource, ignoring not-found errors.
+// It is for objects of the namespace, not of one app. An app's objects go
+// through deleteOwned, which checks whose they are.
 func DeleteResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) error {
-	return deleteResource(ctx, dyn, gvr, namespace, name, metav1.DeleteOptions{})
-}
-
-// deleteWorkload deletes a Deployment or CronJob with Background propagation:
-// the object goes at once and the garbage collector then removes its
-// ReplicaSets/Jobs and their Pods, each Pod with its normal termination grace
-// period. Set explicitly because the default propagation differs between
-// resource types and API versions.
-func deleteWorkload(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) error {
-	background := metav1.DeletePropagationBackground
-	return deleteResource(ctx, dyn, gvr, namespace, name, metav1.DeleteOptions{PropagationPolicy: &background})
-}
-
-func deleteResource(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, opts metav1.DeleteOptions) error {
-	err := dyn.Resource(gvr).Namespace(namespace).Delete(ctx, name, opts)
+	err := dyn.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete %s/%s: %w", gvr.Resource, name, err)
+	}
+	return nil
+}
+
+// Owner is the app whose objects a delete may remove (#333). The objects are
+// named and labelled by the app slug, and a slug can be reused once the app
+// is deleted, so an object is the app's only when its canette.dev/app-id
+// label is the app's id. An object without that label was applied before
+// the label existed, and is the app's when its canette.dev/app label is the
+// slug. An Owner without AppID (an app cleanup queued before the label) only
+// matches objects without the label: one that has it was applied since, so
+// it may be a later app's that reused the slug.
+type Owner struct {
+	AppID   string
+	AppSlug string
+}
+
+func (o Owner) owns(obj *unstructured.Unstructured) bool {
+	labels := obj.GetLabels()
+	if id, ok := labels[libk8s.LabelAppID]; ok {
+		return id == o.AppID
+	}
+	return labels[libk8s.LabelApp] == o.AppSlug
+}
+
+// getObject returns the named object, or nil when there is none.
+func getObject(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error) {
+	obj, err := dyn.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get %s/%s: %w", gvr.Resource, name, err)
+	}
+	return obj, nil
+}
+
+// deleteOwned deletes the named object if it is owner's, and ignores it when
+// it is missing or another app's.
+func deleteOwned(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, owner Owner, opts metav1.DeleteOptions) error {
+	obj, err := getObject(ctx, dyn, gvr, namespace, name)
+	if obj == nil || err != nil {
+		return err
+	}
+	if !owner.owns(obj) {
+		return nil
+	}
+	return deleteObject(ctx, dyn, gvr, obj, opts)
+}
+
+// deleteObject deletes obj with its UID as a precondition, so an object
+// created under the same name after obj was read is never deleted in its
+// place: Kubernetes refuses the delete with a conflict, and a later attempt
+// checks the new object. An object already being deleted is left to finish.
+func deleteObject(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, obj *unstructured.Unstructured, opts metav1.DeleteOptions) error {
+	if obj.GetDeletionTimestamp() != nil {
+		return nil
+	}
+	if uid := obj.GetUID(); uid != "" {
+		opts.Preconditions = &metav1.Preconditions{UID: &uid}
+	}
+	err := dyn.Resource(gvr).Namespace(obj.GetNamespace()).Delete(ctx, obj.GetName(), opts)
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete %s/%s: %w", gvr.Resource, obj.GetName(), err)
+	}
+	return nil
+}
+
+// deleteWorkload deletes a Deployment or CronJob of owner with Background
+// propagation: the object goes at once and the garbage collector then
+// removes its ReplicaSets/Jobs and their Pods, each Pod with its normal
+// termination grace period. Set explicitly because the default propagation
+// differs between resource types and API versions.
+func deleteWorkload(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace string, owner Owner) error {
+	background := metav1.DeletePropagationBackground
+	return deleteOwned(ctx, dyn, gvr, namespace, owner.AppSlug, owner, metav1.DeleteOptions{PropagationPolicy: &background})
+}
+
+// listOwned lists the objects of a kind labelled with the app's slug that
+// are owner's. A missing namespace has none.
+func listOwned(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace string, owner Owner) ([]unstructured.Unstructured, error) {
+	list, err := dyn.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: libk8s.AppLabelSelector(owner.AppSlug),
+	})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list %s: %w", gvr.Resource, err)
+	}
+	var owned []unstructured.Unstructured
+	for _, obj := range list.Items {
+		if owner.owns(&obj) {
+			owned = append(owned, obj)
+		}
+	}
+	return owned, nil
+}
+
+// deleteAllOwned deletes every object of a kind that listOwned returns.
+func deleteAllOwned(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace string, owner Owner) error {
+	objs, err := listOwned(ctx, dyn, gvr, namespace, owner)
+	if err != nil {
+		return err
+	}
+	for i := range objs {
+		if err := deleteObject(ctx, dyn, gvr, &objs[i], metav1.DeleteOptions{}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -547,6 +667,19 @@ func DeleteNamespace(ctx context.Context, dyn dynamic.Interface, namespace strin
 		return fmt.Errorf("delete namespace %s: %w", namespace, err)
 	}
 	return nil
+}
+
+// NamespaceStatus reports whether the namespace is still there, and whether
+// Kubernetes is deleting it.
+func NamespaceStatus(ctx context.Context, dyn dynamic.Interface, namespace string) (exists, terminating bool, err error) {
+	obj, err := dyn.Resource(gvrNamespace).Get(ctx, namespace, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("get namespace %s: %w", namespace, err)
+	}
+	return true, obj.GetDeletionTimestamp() != nil, nil
 }
 
 // ListPVCNames returns the names of every PVC in the namespace, canette-managed
@@ -570,20 +703,18 @@ func ListPVCNames(ctx context.Context, dyn dynamic.Interface, namespace string) 
 // The Namespace, Secret, and PVCs are left in place. PVCs hold user data and
 // are preserved across Stop so the app can be restarted without data loss —
 // they are reclaimed when the app is deleted (DeleteApp) or with the project's namespace.
-func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
-	if err := deleteWorkload(ctx, dyn, gvrDeployment, namespace, appSlug); err != nil {
+func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace string, owner Owner) error {
+	if err := deleteWorkload(ctx, dyn, gvrDeployment, namespace, owner); err != nil {
 		return err
 	}
-	if err := DeleteResource(ctx, dyn, gvrService, namespace, appSlug); err != nil {
-		return err
+	for _, gvr := range []schema.GroupVersionResource{gvrService, gvrHTTPRoute, gvrPDB} {
+		if err := deleteOwned(ctx, dyn, gvr, namespace, owner.AppSlug, owner, metav1.DeleteOptions{}); err != nil {
+			return err
+		}
 	}
-	if err := DeleteResource(ctx, dyn, gvrHTTPRoute, namespace, appSlug); err != nil {
-		return err
-	}
-	if err := DeleteResource(ctx, dyn, gvrPDB, namespace, appSlug); err != nil {
-		return err
-	}
-	if err := deleteConfigMapsForApp(ctx, dyn, namespace, appSlug); err != nil {
+	// ConfigMaps are cheap to recreate on the next deploy, so they aren't
+	// queued in the DB.
+	if err := deleteAllOwned(ctx, dyn, gvrConfigMap, namespace, owner); err != nil {
 		return fmt.Errorf("delete configmaps: %w", err)
 	}
 	return nil
@@ -591,73 +722,97 @@ func TeardownApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug 
 
 // DeleteApp removes everything a deleted app owned in its namespace: the
 // workload of either deployment type, its routes, its own Secrets, and its
-// PVCs and ConfigMaps. Secrets are deleted by name, not by label, because the
-// namespace-wide registry pull Secret carries the label of whichever app last
-// applied it. The namespace itself stays, other apps may still use it.
-func DeleteApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
-	if err := TeardownApp(ctx, dyn, namespace, appSlug); err != nil {
+// PVCs and ConfigMaps, including PVCs whose volume was removed from canette
+// but whose deletion never ran. The namespace itself stays, other apps may
+// still use it, and so does the namespace-wide registry pull Secret.
+//
+// Kubernetes accepting the deletes doesn't mean the objects are gone. A PVC
+// a pod still mounts, and the pods themselves, take a while. The caller
+// checks with RemainingAppObjects.
+func DeleteApp(ctx context.Context, dyn dynamic.Interface, namespace string, owner Owner) error {
+	if err := TeardownApp(ctx, dyn, namespace, owner); err != nil {
 		return err
 	}
-	if err := TeardownCronJob(ctx, dyn, namespace, appSlug); err != nil {
+	if err := TeardownCronJob(ctx, dyn, namespace, owner); err != nil {
 		return err
 	}
-	for _, name := range []string{secretName(appSlug), authgateSecretName(appSlug)} {
-		if err := DeleteResource(ctx, dyn, gvrSecret, namespace, name); err != nil {
+	for _, name := range []string{secretName(owner.AppSlug), authgateSecretName(owner.AppSlug)} {
+		if err := deleteOwned(ctx, dyn, gvrSecret, namespace, name, owner, metav1.DeleteOptions{}); err != nil {
 			return err
 		}
 	}
-	return deletePVCsForApp(ctx, dyn, namespace, appSlug)
-}
-
-// deletePVCsForApp deletes every PVC labelled with the app, including ones
-// whose volume was removed from canette but whose deletion never ran.
-func deletePVCsForApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
-	list, err := dyn.Resource(gvrPVC).Namespace(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: libk8s.AppLabelSelector(appSlug),
-	})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("list pvcs: %w", err)
-	}
-	for _, pvc := range list.Items {
-		if err := DeleteResource(ctx, dyn, gvrPVC, namespace, pvc.GetName()); err != nil {
-			return err
-		}
+	if err := deleteAllOwned(ctx, dyn, gvrPVC, namespace, owner); err != nil {
+		return fmt.Errorf("delete pvcs: %w", err)
 	}
 	return nil
 }
 
-// deleteConfigMapsForApp deletes all canette-managed ConfigMaps for the given app
-// in the namespace, identified by the canette.dev/app label. ConfigMaps are cheap
-// to recreate on the next deploy, so we don't bother queuing them in the DB.
-func deleteConfigMapsForApp(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
-	list, err := dyn.Resource(gvrConfigMap).Namespace(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: libk8s.AppLabelSelector(appSlug),
-	})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("list configmaps: %w", err)
+// AppObject names one object of an app, for RemainingAppObjects.
+type AppObject struct {
+	Kind string
+	Name string
+}
+
+// RemainingAppObjects returns the objects of owner that DeleteApp deletes,
+// and the app's ReplicaSets, Jobs and pods, that still exist, terminating or
+// not. The app is gone from the cluster when there are none. The workloads
+// are deleted with Background propagation, so their ReplicaSets and Jobs,
+// which can still start pods, outlive them until the garbage collector is
+// done.
+func RemainingAppObjects(ctx context.Context, dyn dynamic.Interface, namespace string, owner Owner) ([]AppObject, error) {
+	var left []AppObject
+	named := []struct {
+		gvr  schema.GroupVersionResource
+		kind string
+		name string
+	}{
+		{gvrDeployment, "Deployment", owner.AppSlug},
+		{gvrCronJob, "CronJob", owner.AppSlug},
+		{gvrService, "Service", owner.AppSlug},
+		{gvrHTTPRoute, "HTTPRoute", owner.AppSlug},
+		{gvrPDB, "PodDisruptionBudget", owner.AppSlug},
+		{gvrSecret, "Secret", secretName(owner.AppSlug)},
+		{gvrSecret, "Secret", authgateSecretName(owner.AppSlug)},
 	}
-	for _, cm := range list.Items {
-		if err := DeleteResource(ctx, dyn, gvrConfigMap, namespace, cm.GetName()); err != nil {
-			return err
+	for _, n := range named {
+		obj, err := getObject(ctx, dyn, n.gvr, namespace, n.name)
+		if err != nil {
+			return nil, err
+		}
+		if obj != nil && owner.owns(obj) {
+			left = append(left, AppObject{Kind: n.kind, Name: n.name})
 		}
 	}
-	return nil
+	listed := []struct {
+		gvr  schema.GroupVersionResource
+		kind string
+	}{
+		{gvrPVC, "PersistentVolumeClaim"},
+		{gvrConfigMap, "ConfigMap"},
+		{gvrReplicaSet, "ReplicaSet"},
+		{gvrJob, "Job"},
+		{gvrPod, "Pod"},
+	}
+	for _, l := range listed {
+		objs, err := listOwned(ctx, dyn, l.gvr, namespace, owner)
+		if err != nil {
+			return nil, err
+		}
+		for _, obj := range objs {
+			left = append(left, AppObject{Kind: l.kind, Name: obj.GetName()})
+		}
+	}
+	return left, nil
 }
 
 // TeardownCronJob deletes the app's CronJob, plus any PodDisruptionBudget left
 // over from when the app was a multi-replica web/private app.
 // The Namespace and Secret are left in place (cheap; reused on next deploy).
-func TeardownCronJob(ctx context.Context, dyn dynamic.Interface, namespace, appSlug string) error {
-	if err := deleteWorkload(ctx, dyn, gvrCronJob, namespace, appSlug); err != nil {
+func TeardownCronJob(ctx context.Context, dyn dynamic.Interface, namespace string, owner Owner) error {
+	if err := deleteWorkload(ctx, dyn, gvrCronJob, namespace, owner); err != nil {
 		return err
 	}
-	return DeleteResource(ctx, dyn, gvrPDB, namespace, appSlug)
+	return deleteOwned(ctx, dyn, gvrPDB, namespace, owner.AppSlug, owner, metav1.DeleteOptions{})
 }
 
 func objectName(obj map[string]interface{}) (string, bool) {

@@ -132,9 +132,53 @@ describe("services/volumes", () => {
     expect(pending?.project_slug).toBeTruthy()
     expect(pending?.volume_name).toBe("data")
     expect(pending?.volume_type).toBe("pvc")
+    expect(pending?.volume_id).toBe(vol.id)
     // The API must not compute K8s names — the controller resolves them.
     expect(pending?.namespace).toBeNull()
     expect(pending?.resource_name).toBeNull()
+  })
+
+  // Done when (#333): the old PVC may still be terminating, so the re-added
+  // volume gets a name, and with it a PVC, of its own.
+  it("names a volume re-added while the old one is still being deleted", async () => {
+    const app = await makeApp("readd-app")
+    const old = await createVolume(db, app.id, "userId", {
+      type: "pvc", mountPath: "/data", config: { size: "1Gi" },
+    })
+    await deleteVolume(db, app.id, old.id, "userId")
+
+    const second = await createVolume(db, app.id, "userId", {
+      type: "pvc", mountPath: "/data", config: { size: "1Gi" },
+    })
+    expect(second.name).toBe("data-2")
+
+    await deleteVolume(db, app.id, second.id, "userId")
+    const third = await createVolume(db, app.id, "userId", {
+      type: "pvc", mountPath: "/data", config: { size: "1Gi" },
+    })
+    expect(third.name).toBe("data-3")
+
+    // Once the controller is done with the deletions, the plain name is free.
+    await db.deleteFrom("pending_volume_deletions").where("app_slug", "=", app.slug).execute()
+    await deleteVolume(db, app.id, third.id, "userId")
+    await db.deleteFrom("pending_volume_deletions").where("app_slug", "=", app.slug).execute()
+    const fourth = await createVolume(db, app.id, "userId", {
+      type: "pvc", mountPath: "/data", config: { size: "1Gi" },
+    })
+    expect(fourth.name).toBe("data")
+  })
+
+  it("keeps a suffixed name within the length budget", async () => {
+    const slug = "a".repeat(40)
+    const app = await makeApp(slug)
+    const mountPath = "/" + "b".repeat(30)
+    const old = await createVolume(db, app.id, "userId", { type: "configmap", mountPath, config: { content: "x" } })
+    await deleteVolume(db, app.id, old.id, "userId")
+
+    const again = await createVolume(db, app.id, "userId", { type: "configmap", mountPath, config: { content: "x" } })
+    expect(again.name).not.toBe(old.name)
+    expect(again.name.endsWith("-2")).toBe(true)
+    expect(slug.length + again.name.length + 5).toBeLessThanOrEqual(63)
   })
 
   it("deletes an emptyDir volume without queuing pending deletion", async () => {

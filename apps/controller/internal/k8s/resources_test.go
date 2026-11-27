@@ -1381,3 +1381,87 @@ func TestBuildResources_HardenedLeavesAuthgateAlone(t *testing.T) {
 		t.Error("authgate must not get the writable path mounts")
 	}
 }
+
+func metaLabels(obj map[string]interface{}) map[string]interface{} {
+	meta, _ := obj["metadata"].(map[string]interface{})
+	labels, _ := meta["labels"].(map[string]interface{})
+	return labels
+}
+
+// The app-id label identifies the app's objects for deletes (#333), and
+// stays out of the selectors, which can't change on a live Deployment.
+func TestBuildResources_AppIDLabel(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.AppID = "app-uuid-1"
+	cfg.Volumes = []VolumeSpec{{ID: "vol-1", Name: "data", Type: "pvc", MountPath: "/data", Size: "1Gi"}}
+	res := BuildResources(cfg)
+
+	for name, obj := range map[string]map[string]interface{}{
+		"Deployment": res.Deployment, "Service": res.Service, "HTTPRoute": res.HTTPRoute, "PVC": res.PVCs[0],
+	} {
+		if got := metaLabels(obj)[libk8s.LabelAppID]; got != "app-uuid-1" {
+			t.Errorf("%s app-id label = %v", name, got)
+		}
+	}
+	tmpl, _ := res.Deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	if got := metaLabels(tmpl)[libk8s.LabelAppID]; got != "app-uuid-1" {
+		t.Errorf("pod template app-id label = %v", got)
+	}
+
+	selector, _ := res.Deployment["spec"].(map[string]interface{})["selector"].(map[string]interface{})
+	if _, ok := selector["matchLabels"].(map[string]interface{})[libk8s.LabelAppID]; ok {
+		t.Error("Deployment selector has the app-id label")
+	}
+	if _, ok := res.Service["spec"].(map[string]interface{})["selector"].(map[string]interface{})[libk8s.LabelAppID]; ok {
+		t.Error("Service selector has the app-id label")
+	}
+}
+
+func TestBuildResources_VolumeIDLabel(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.Volumes = []VolumeSpec{
+		{ID: "vol-1", Name: "data", Type: "pvc", MountPath: "/data", Size: "1Gi"},
+		{ID: "vol-2", Name: "conf", Type: "configmap", MountPath: "/etc/app.conf", Content: "x"},
+	}
+	res := BuildResources(cfg)
+	if got := metaLabels(res.PVCs[0])[libk8s.LabelVolumeID]; got != "vol-1" {
+		t.Errorf("PVC volume-id label = %v", got)
+	}
+	if got := metaLabels(res.ConfigMaps[0])[libk8s.LabelVolumeID]; got != "vol-2" {
+		t.Errorf("ConfigMap volume-id label = %v", got)
+	}
+	if _, ok := metaLabels(res.Deployment)[libk8s.LabelVolumeID]; ok {
+		t.Error("the volume-id label leaked into the app's other labels")
+	}
+}
+
+func TestBuildResources_CronJobJobsCarryTheAppLabels(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.AppID = "app-uuid-1"
+	cfg.IsCronJob = true
+	cfg.Schedule = "*/5 * * * *"
+	res := BuildResources(cfg)
+	jobTemplate, _ := res.CronJob["spec"].(map[string]interface{})["jobTemplate"].(map[string]interface{})
+	labels := metaLabels(jobTemplate)
+	if labels[libk8s.LabelApp] != "my-app" || labels[libk8s.LabelAppID] != "app-uuid-1" {
+		t.Errorf("jobTemplate labels = %v", labels)
+	}
+}
+
+// The registry pull Secret is shared by every app in the namespace, so an
+// app label selector must never match it (#333).
+func TestBuildResources_ImagePullSecretHasProjectLabels(t *testing.T) {
+	cfg := baseDeployConfig()
+	cfg.AppID = "app-uuid-1"
+	cfg.ImagePullSecretName = "canette-registry-creds"
+	cfg.ImagePullSecretData = []byte(`{"auths":{}}`)
+	labels := metaLabels(BuildResources(cfg).ImagePullSecret)
+	if labels[libk8s.LabelProjectID] != "proj-id-1234" {
+		t.Errorf("labels = %v, want the project's", labels)
+	}
+	for _, key := range []string{libk8s.LabelApp, libk8s.LabelAppID, libk8s.LabelK8sName, libk8s.LabelDeployment} {
+		if _, ok := labels[key]; ok {
+			t.Errorf("registry pull Secret has the app label %s", key)
+		}
+	}
+}

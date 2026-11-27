@@ -135,5 +135,19 @@ describe("updateProject", () => {
       const row = await db.selectFrom("projects").select("slug").where("id", "=", project.id).executeTakeFirstOrThrow()
       expect(row.slug).toBe("claimed-b")
     })
+
+    it("refuses a rename back while that namespace is terminating", async () => {
+      const project = await makeProject("terminating")
+      await updateProject(db, project.id, "userId", { slug: "terminating-b" })
+      // The controller sent the delete and gave up its claim, the namespace
+      // is still there (#333).
+      await db.updateTable("queued_namespace_cleanups").set({ delete_requested_at: new Date().toISOString() })
+        .where("project_id", "=", project.id).where("project_slug", "=", "terminating").execute()
+
+      const err = await updateProject(db, project.id, "userId", { slug: "terminating" }).catch((e) => e)
+      expect(err).toBeInstanceOf(ServiceError)
+      expect((err as ServiceError).status).toBe(409)
+      expect(await queuedSlugs(project.id)).toEqual(["terminating"])
+    })
   })
 })

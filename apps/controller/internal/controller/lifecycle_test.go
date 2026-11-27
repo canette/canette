@@ -48,7 +48,8 @@ func newLifecycleFixture(t *testing.T) *lifecycleFixture {
 		map[schema.GroupVersionResource]string{{Version: "v1", Resource: "configmaps"}: "ConfigMapList"},
 		&unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "apps/v1", "kind": "Deployment",
-			"metadata": map[string]interface{}{"name": "a", "namespace": appNS},
+			"metadata": map[string]interface{}{"name": "a", "namespace": appNS,
+				"labels": map[string]interface{}{"canette.dev/app": "a", "canette.dev/app-id": "a1"}},
 		}})
 	f := &lifecycleFixture{t: t, db: db, dyn: dyn}
 	f.c = New(store.New(db, zaptest.NewLogger(t)), fake.NewSimpleClientset(), dyn,

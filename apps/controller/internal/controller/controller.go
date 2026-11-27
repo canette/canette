@@ -235,47 +235,9 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 			c.goWorker(func() {
 				// Bounded well within the claim, so a worker never acts on
 				// a namespace whose cleanup another worker has taken over.
-				ctx, cancel := context.WithTimeout(workCtx, store.NamespaceDeletionClaimTTL/2)
+				ctx, cancel := context.WithTimeout(workCtx, store.CleanupClaimTTL/2)
 				defer cancel()
-				ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
-				pvcs, deleteRequested, err := cleanupQueuedNamespace(ctx, c.dynClient, d)
-				if err != nil {
-					c.log.Warn("namespace deletion error",
-						zap.String("namespace", ns),
-						zap.Error(err))
-					// Before the delete request (listing the PVCs failed), the
-					// namespace is untouched: release the claim for the next
-					// poll, and a rename back to the slug may take it over
-					// meanwhile. After it, even a failed one (a timeout, say),
-					// Kubernetes may be deleting the namespace, so the claim
-					// stays and blocks a rename back until it expires and a
-					// later poll retries.
-					if !deleteRequested {
-						if err := c.store.ReleaseNamespaceDeletion(ctx, d); err != nil {
-							c.log.Warn("release namespace deletion error", zap.Error(err))
-						}
-					}
-					return
-				}
-				if len(pvcs) > 0 {
-					reason := namespaceBlockedReason(pvcs)
-					log := c.log.Debug
-					if reason != d.BlockedReason {
-						log = c.log.Warn // first block, or the PVCs changed
-					}
-					log("not deleting renamed project's old namespace: it still holds PVCs; move or delete them by hand",
-						zap.String("namespace", ns),
-						zap.Strings("pvcs", pvcs),
-						zap.Duration("retry_in", namespaceBlockedRetry))
-					if err := c.store.MarkNamespaceBlocked(ctx, d, reason, time.Now().Add(namespaceBlockedRetry)); err != nil {
-						c.log.Warn("mark namespace blocked error", zap.Error(err))
-					}
-					return // row stays queued
-				}
-				if err := c.store.MarkNamespaceDeleted(ctx, d); err != nil {
-					c.log.Warn("mark namespace deleted error", zap.Error(err))
-				}
-				c.log.Info("namespace deleted", zap.String("namespace", ns))
+				c.cleanupNamespace(ctx, d)
 			})
 		}
 	}
@@ -287,17 +249,9 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 	} else {
 		for _, d := range appCleanups {
 			c.goWorker(func() {
-				ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
-				log := c.log.With(zap.String("namespace", ns), zap.String("app", d.AppSlug))
-				if err := k8sres.DeleteApp(workCtx, c.dynClient, ns, d.AppSlug); err != nil {
-					log.Warn("app cleanup error", zap.Error(err))
-					return // claim expires, retried on a later poll
-				}
-				failpoint.Hit("after-app-delete")
-				if err := c.store.MarkAppCleanedUp(workCtx, d.ID); err != nil {
-					log.Warn("mark app cleaned up error", zap.Error(err))
-				}
-				log.Info("deleted app resources")
+				ctx, cancel := context.WithTimeout(workCtx, store.CleanupClaimTTL/2)
+				defer cancel()
+				c.cleanupApp(ctx, d)
 			})
 		}
 	}
@@ -309,33 +263,184 @@ func (c *Controller) processPending(ctx, workCtx context.Context) error {
 	} else {
 		for _, d := range volDels {
 			c.goWorker(func() {
-				ns, kind, name, err := resolveVolumeDeletion(d)
-				if err != nil {
-					// Can't happen with the table's CHECK constraints; the claim
-					// expires and the row is retried (and logged) again later.
-					c.log.Error("invalid volume deletion row", zap.String("id", d.ID), zap.Error(err))
-					return
-				}
-				if err := k8sres.DeleteVolumeResource(workCtx, c.dynClient, kind, ns, name); err != nil {
-					c.log.Warn("volume deletion error",
-						zap.String("resource_type", kind),
-						zap.String("namespace", ns),
-						zap.String("name", name),
-						zap.Error(err))
-					return // will retry next poll
-				}
-				if err := c.store.MarkVolumeDeleted(workCtx, d.ID); err != nil {
-					c.log.Warn("mark volume deleted error", zap.Error(err))
-				}
-				c.log.Info("volume resource deleted",
-					zap.String("resource_type", kind),
-					zap.String("namespace", ns),
-					zap.String("name", name))
+				ctx, cancel := context.WithTimeout(workCtx, store.CleanupClaimTTL/2)
+				defer cancel()
+				c.deleteVolume(ctx, d)
 			})
 		}
 	}
 
 	return nil
+}
+
+// terminatingRetry is how long a queued cleanup whose objects are still
+// terminating waits before it is checked again. Pods take their grace period
+// and a PVC waits for them, so this is seconds to minutes.
+const terminatingRetry = 15 * time.Second
+
+// cleanupNamespace deletes a namespace queued in queued_namespace_cleanups.
+// The row stays until the namespace is gone, not only until the delete was
+// sent (#333): it blocks a rename back to the slug, and the namespace is
+// still there while it terminates.
+func (c *Controller) cleanupNamespace(ctx context.Context, d store.PendingNamespaceDeletion) {
+	ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
+	pvcs, deleteRequested, err := cleanupQueuedNamespace(ctx, c.dynClient, d)
+	if err != nil && !deleteRequested {
+		// Before the delete request (listing the PVCs failed), the namespace
+		// is untouched: release the claim for the next poll, and a rename back
+		// to the slug may take it over meanwhile.
+		c.log.Warn("namespace deletion error", zap.String("namespace", ns), zap.Error(err))
+		if err := c.store.ReleaseNamespaceDeletion(ctx, d); err != nil {
+			c.log.Warn("release namespace deletion error", zap.Error(err))
+		}
+		return
+	}
+	if len(pvcs) > 0 {
+		reason := namespaceBlockedReason(pvcs)
+		log := c.log.Debug
+		if reason != d.BlockedReason {
+			log = c.log.Warn // first block, or the PVCs changed
+		}
+		log("not deleting renamed project's old namespace: it still holds PVCs; move or delete them by hand",
+			zap.String("namespace", ns),
+			zap.Strings("pvcs", pvcs),
+			zap.Duration("retry_in", namespaceBlockedRetry))
+		if err := c.store.MarkNamespaceBlocked(ctx, d, reason, time.Now().Add(namespaceBlockedRetry)); err != nil {
+			c.log.Warn("mark namespace blocked error", zap.Error(err))
+		}
+		return // row stays queued
+	}
+	exists := true
+	if err == nil {
+		exists, _, err = k8sres.NamespaceStatus(ctx, c.dynClient, ns)
+	}
+	if err != nil || exists {
+		// The delete was sent, even if it failed (a timeout, say), so
+		// Kubernetes may be deleting the namespace. The row stays, and keeps
+		// blocking a rename back, until a later check finds it gone.
+		if err != nil {
+			c.log.Warn("namespace deletion error", zap.String("namespace", ns), zap.Error(err))
+		} else if !d.DeleteRequested {
+			c.log.Info("namespace terminating", zap.String("namespace", ns))
+		}
+		if err := c.store.MarkNamespaceDeleteRequested(ctx, d, time.Now().Add(terminatingRetry)); err != nil {
+			c.log.Warn("mark namespace delete requested error", zap.Error(err))
+		}
+		return
+	}
+	if err := c.store.MarkNamespaceDeleted(ctx, d); err != nil {
+		c.log.Warn("mark namespace deleted error", zap.Error(err))
+	}
+	c.log.Info("namespace deleted", zap.String("namespace", ns))
+}
+
+// cleanupApp deletes every object of an app deleted from canette, and keeps
+// its tombstone, which reserves the slug, until they are all gone (#333).
+// Only objects labelled with the app's id are deleted, so a retry that runs
+// after the slug was reused leaves the new app's objects alone.
+func (c *Controller) cleanupApp(ctx context.Context, d store.PendingAppCleanup) {
+	ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
+	log := c.log.With(zap.String("namespace", ns), zap.String("app", d.AppSlug))
+	owner := k8sres.Owner{AppID: d.AppID, AppSlug: d.AppSlug}
+	if err := k8sres.DeleteApp(ctx, c.dynClient, ns, owner); err != nil {
+		log.Warn("app cleanup error", zap.Error(err))
+		return // claim expires, retried on a later poll
+	}
+	failpoint.Hit("after-app-delete")
+	left, err := k8sres.RemainingAppObjects(ctx, c.dynClient, ns, owner)
+	if err != nil {
+		log.Warn("app cleanup error", zap.Error(err))
+		return
+	}
+	if len(left) > 0 {
+		reason := appCleanupPendingReason(left)
+		if reason != d.PendingReason {
+			log.Info("deleted app resources, waiting for them to terminate",
+				zap.Strings("objects", appObjectNames(left)))
+		}
+		if err := c.store.MarkAppCleanupPending(ctx, d, reason, time.Now().Add(terminatingRetry)); err != nil {
+			log.Warn("mark app cleanup pending error", zap.Error(err))
+		}
+		return
+	}
+	if err := c.store.MarkAppCleanedUp(ctx, d); err != nil {
+		log.Warn("mark app cleaned up error", zap.Error(err))
+	}
+	log.Info("deleted app resources")
+}
+
+// appCleanupPendingReason says what a deleted app's cleanup still waits for,
+// in canette's terms rather than Kubernetes': createApp shows it to a user
+// who wants the slug back.
+func appCleanupPendingReason(left []k8sres.AppObject) string {
+	var volumes, pods, others int
+	for _, o := range left {
+		switch o.Kind {
+		case "PersistentVolumeClaim":
+			volumes++
+		case "Pod":
+			pods++
+		default:
+			others++
+		}
+	}
+	var parts []string
+	if pods > 0 {
+		parts = append(parts, plural(pods, "instance"))
+	}
+	if volumes > 0 {
+		parts = append(parts, plural(volumes, "volume"))
+	}
+	if others > 0 {
+		parts = append(parts, plural(others, "other resource"))
+	}
+	return "waiting for " + strings.Join(parts, ", ") + " to finish shutting down"
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+func appObjectNames(objs []k8sres.AppObject) []string {
+	names := make([]string, len(objs))
+	for i, o := range objs {
+		names[i] = o.Kind + "/" + o.Name
+	}
+	return names
+}
+
+// deleteVolume deletes the object of a volume removed from canette, and
+// keeps the queued deletion until it is gone (#333): createVolume names a
+// volume added meanwhile with the same name differently, so the two never
+// share an object.
+func (c *Controller) deleteVolume(ctx context.Context, d store.PendingVolumeDeletion) {
+	ns, kind, name, err := resolveVolumeDeletion(d)
+	if err != nil {
+		// Can't happen with the table's CHECK constraints; the claim
+		// expires and the row is retried (and logged) again later.
+		c.log.Error("invalid volume deletion row", zap.String("id", d.ID), zap.Error(err))
+		return
+	}
+	log := c.log.With(zap.String("resource_type", kind), zap.String("namespace", ns), zap.String("name", name))
+	gone, err := k8sres.DeleteVolumeObject(ctx, c.dynClient, kind, ns, name, d.VolumeID)
+	if err != nil {
+		log.Warn("volume deletion error", zap.Error(err))
+		return // will retry next poll
+	}
+	if !gone {
+		log.Debug("volume resource terminating")
+		if err := c.store.MarkVolumeDeletionPending(ctx, d, time.Now().Add(terminatingRetry)); err != nil {
+			log.Warn("mark volume deletion pending error", zap.Error(err))
+		}
+		return
+	}
+	if err := c.store.MarkVolumeDeleted(ctx, d); err != nil {
+		log.Warn("mark volume deleted error", zap.Error(err))
+	}
+	log.Info("volume resource deleted")
 }
 
 // resolveVolumeDeletion maps a queued volume deletion to the namespace, kind
@@ -370,6 +475,7 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 	volumes := make([]k8sres.VolumeSpec, 0, len(cfg.Volumes))
 	for _, v := range cfg.Volumes {
 		volumes = append(volumes, k8sres.VolumeSpec{
+			ID:        v.ID,
 			Name:      v.Name,
 			Type:      v.Type,
 			MountPath: v.MountPath,
@@ -382,6 +488,7 @@ func (c *Controller) buildDeployConfig(cfg *store.AppConfig, secretData map[stri
 		ProjectID:    cfg.ProjectID,
 		ProjectSlug:  cfg.ProjectSlug,
 		ProjectOwner: cfg.ProjectOwner,
+		AppID:        cfg.AppID,
 		AppSlug:      cfg.AppSlug,
 		ImageRef:     imageRef,
 		Command:      cfg.Command,
@@ -466,10 +573,22 @@ func namespaceBlockedReason(pvcs []string) string {
 // it holds any PVC, since deleting it would take the volume data with it; the
 // PVC names are returned and the row must stay queued. A deleted project's
 // namespace is always deleted. deleteRequested reports whether the delete
-// request was sent, whatever came of it.
+// request was sent, whatever came of it. Sending it again for a namespace
+// that is already terminating is harmless.
 func cleanupQueuedNamespace(ctx context.Context, dyn dynamic.Interface, d store.PendingNamespaceDeletion) (pvcs []string, deleteRequested bool, err error) {
 	ns := k8sres.AppNamespace(d.ProjectID, d.ProjectSlug)
 	if d.ProjectExists {
+		// A terminating namespace goes with whatever it holds, so there is
+		// nothing left to keep it for. An earlier delete request alone
+		// doesn't say so: Kubernetes may have refused it, and the namespace
+		// may hold new PVCs since.
+		_, terminating, err := k8sres.NamespaceStatus(ctx, dyn, ns)
+		if err != nil {
+			return nil, false, err
+		}
+		if terminating {
+			return nil, true, k8sres.DeleteNamespace(ctx, dyn, ns)
+		}
 		pvcs, err := k8sres.ListPVCNames(ctx, dyn, ns)
 		if err != nil {
 			return nil, false, err

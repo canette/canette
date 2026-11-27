@@ -144,6 +144,25 @@ describe("delete cleanup", () => {
       const again = await makeApp("reused-slug")
       expect(again.slug).toBe("reused-slug")
     })
+
+    it("records the app's id, so the cleanup only removes that app's resources", async () => {
+      const app = await makeApp("with-id")
+      await deleteApp(db, app.id, "userId")
+      const [row] = await cleanupsFor("with-id")
+      expect(row?.app_id).toBe(app.id)
+    })
+
+    it("says what the cleanup still waits for while the slug is reserved", async () => {
+      const app = await makeApp("still-terminating")
+      await deleteApp(db, app.id, "userId")
+      await db.updateTable("queued_app_cleanups")
+        .set({ pending_reason: "waiting for 1 volume to finish shutting down" })
+        .where("app_slug", "=", "still-terminating").execute()
+
+      const err = await makeApp("still-terminating").catch((e) => e)
+      expect(err).toBeInstanceOf(ServiceError)
+      expect((err as ServiceError).message).toContain("(waiting for 1 volume to finish shutting down)")
+    })
   })
 
   describe("stopApp", () => {

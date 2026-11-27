@@ -380,22 +380,6 @@ export async function createApp(
 
   if (!membership) throw new ServiceError("Not found", "NOT_FOUND", 404)
 
-  // The controller cleans a deleted app up by slug, so a new app may not take
-  // the slug until that has finished, or the cleanup would remove its resources.
-  const pendingCleanup = await db
-    .selectFrom("queued_app_cleanups")
-    .select("id")
-    .where("project_id", "=", projectId)
-    .where("app_slug", "=", input.slug)
-    .executeTakeFirst()
-  if (pendingCleanup) {
-    throw new ServiceError(
-      "An app with that slug was just deleted and is still being cleaned up. Try again in a minute.",
-      "CONFLICT",
-      409
-    )
-  }
-
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
 
@@ -418,6 +402,29 @@ export async function createApp(
 
   try {
     await db.transaction().execute(async (tx) => {
+      // The controller names a deleted app's resources by its slug, so a new
+      // app may not take the slug until every one of them is gone (the
+      // tombstone stays until then, see migration 000032). deleteApp locks
+      // the project row too, so a delete can't commit its tombstone between
+      // this check and the insert.
+      let projectQ = tx.selectFrom("projects").select("id").where("id", "=", projectId)
+      if (supportsForUpdate(tx)) projectQ = projectQ.forUpdate()
+      await projectQ.executeTakeFirst()
+      const pendingCleanup = await tx
+        .selectFrom("queued_app_cleanups")
+        .select(["id", "pending_reason"])
+        .where("project_id", "=", projectId)
+        .where("app_slug", "=", input.slug)
+        .executeTakeFirst()
+      if (pendingCleanup) {
+        const waiting = pendingCleanup.pending_reason ? ` (${pendingCleanup.pending_reason})` : ""
+        throw new ServiceError(
+          `An app with that slug was just deleted and is still being cleaned up${waiting}. Try again in a minute.`,
+          "CONFLICT",
+          409
+        )
+      }
+
       await tx
         .insertInto("apps")
         .values({
@@ -661,6 +668,8 @@ export async function deleteApp(
 
   await db.transaction().execute(async (tx) => {
     // The intent row first, like every lifecycle action (services/intents.ts).
+    // The query below locks the project row too, which createApp takes
+    // before it checks for this app's tombstone.
     await lockIntent(tx, appId)
     let lockQ = tx
       .selectFrom("apps as a")
@@ -697,6 +706,9 @@ export async function deleteApp(
         project_id: row.project_id,
         project_slug: row.project_slug,
         app_slug: row.slug,
+        // The controller deletes only the objects labelled with this id, so
+        // a late retry never touches a later app with the same slug.
+        app_id: appId,
         created_at: new Date().toISOString(),
       })
       .onConflict((oc) => oc.doNothing())

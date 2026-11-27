@@ -211,6 +211,9 @@ export interface Database {
     blocked_reason: string | null
     claimed_at: string | null
     claim_token: string | null
+    // Set once the controller sent the namespace's delete; the row stays
+    // until the namespace is gone (000032).
+    delete_requested_at: string | null
   }
 
   queued_app_cleanups: {
@@ -218,8 +221,14 @@ export interface Database {
     project_id: string
     project_slug: string
     app_slug: string
+    // The deleted app's id; null on rows queued before 000032.
+    app_id: string | null
     created_at: string
     claimed_at: string | null
+    claim_token: string | null
+    next_attempt_at: string | null
+    // What the cleanup is still waiting for, written by the controller.
+    pending_reason: string | null
   }
 
   github_app_install_states: {
@@ -254,8 +263,12 @@ export interface Database {
     namespace: string | null
     resource_type: string | null
     resource_name: string | null
+    // The removed volume's id; null on rows queued before 000032.
+    volume_id: string | null
     created_at: string
     claimed_at: string | null
+    claim_token: string | null
+    next_attempt_at: string | null
   }
 
   app_hostnames: {

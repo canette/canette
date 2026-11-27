@@ -26,6 +26,7 @@ type AppResources struct {
 	ResourceQuota       map[string]interface{} // nil when NamespacePolicy.QuotaHard is empty
 	LimitRange          map[string]interface{} // nil when NamespacePolicy.LimitRangeLimits is empty
 	AppSlug             string                 // needed by apply.go to clean up a stale AuthgateSecret when AuthgateSecret is nil
+	AppID               string                 // checked by apply.go before it deletes a stale object of the app
 }
 
 // WorkloadDefaults holds platform-wide workload settings from Helm values.
@@ -72,6 +73,7 @@ type Resources struct {
 
 // VolumeSpec describes a volume to mount in the app container.
 type VolumeSpec struct {
+	ID        string // app_volumes.id, set as the canette.dev/volume-id label
 	Name      string
 	Type      string // "pvc" | "emptyDir" | "configmap"
 	MountPath string
@@ -112,6 +114,7 @@ type DeployConfig struct {
 	ProjectID               string
 	ProjectSlug             string
 	ProjectOwner            string // user ID who created the project (may be empty)
+	AppID                   string // apps.id, set as the canette.dev/app-id label
 	AppSlug                 string
 	ImageRef                string // full image reference including digest, e.g. "registry/proj/app@sha256:..."
 	Port                    int
@@ -158,6 +161,21 @@ func hasPVC(volumes []VolumeSpec) bool {
 		}
 	}
 	return false
+}
+
+// volumeLabels returns the labels of the object backing a volume: the app's
+// labels plus the volume's id, which a queued deletion of an earlier volume
+// with the same name checks before it deletes (#333).
+func volumeLabels(labels map[string]interface{}, volumeID string) map[string]interface{} {
+	if volumeID == "" {
+		return labels
+	}
+	out := make(map[string]interface{}, len(labels)+1)
+	for k, v := range labels {
+		out[k] = v
+	}
+	out[libk8s.LabelVolumeID] = volumeID
+	return out
 }
 
 // shortSHA returns the first 7 characters of a commit SHA for display as a version label,
@@ -305,6 +323,11 @@ func BuildResources(cfg DeployConfig) AppResources {
 		resourceLabels[k] = v
 	}
 	resourceLabels[libk8s.LabelK8sPartOf] = cfg.ProjectSlug
+	if cfg.AppID != "" {
+		// Deletes check it, so they never remove another app's object that
+		// took the same name after a slug reuse (see Owner in apply.go).
+		resourceLabels[libk8s.LabelAppID] = cfg.AppID
+	}
 	if sha := shortSHA(cfg.CommitSha); sha != "" {
 		resourceLabels[libk8s.LabelK8sVersion] = sha
 	}
@@ -490,7 +513,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 			"metadata": map[string]interface{}{
 				"name":      cfg.ImagePullSecretName,
 				"namespace": ns,
-				"labels":    labels,
+				// Shared by every app in the namespace, so it carries the
+				// project's labels, and app label selectors never match it.
+				"labels": nsLabels,
 			},
 			"type": "kubernetes.io/dockerconfigjson",
 			"data": map[string]interface{}{
@@ -595,7 +620,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 				"metadata": map[string]interface{}{
 					"name":      pvcName,
 					"namespace": ns,
-					"labels":    labels,
+					"labels":    volumeLabels(labels, v.ID),
 				},
 				"spec": pvcSpec,
 			})
@@ -628,7 +653,7 @@ func BuildResources(cfg DeployConfig) AppResources {
 				"metadata": map[string]interface{}{
 					"name":      cmName,
 					"namespace": ns,
-					"labels":    labels,
+					"labels":    volumeLabels(labels, v.ID),
 				},
 				"data": map[string]interface{}{filename: v.Content},
 			})
@@ -768,7 +793,9 @@ func BuildResources(cfg DeployConfig) AppResources {
 			"concurrencyPolicy":          "Forbid",
 			"failedJobsHistoryLimit":     3,
 			"successfulJobsHistoryLimit": 3,
-			"jobTemplate":                map[string]interface{}{"spec": jobSpec},
+			// The labels make the Jobs findable by app, e.g. by a deleted
+			// app's cleanup, which waits for them (RemainingAppObjects).
+			"jobTemplate": map[string]interface{}{"metadata": map[string]interface{}{"labels": labels}, "spec": jobSpec},
 		}
 		// Avoids a burst of missed runs (or "too many missed start times")
 		// after controller or cluster downtime.
@@ -939,5 +966,6 @@ func BuildResources(cfg DeployConfig) AppResources {
 		ResourceQuota:       resourceQuota,
 		LimitRange:          limitRange,
 		AppSlug:             cfg.AppSlug,
+		AppID:               cfg.AppID,
 	}
 }
