@@ -20,6 +20,7 @@ func newFakeDynamic(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
 		gvrConfigMap: "ConfigMapList",
 		gvrPVC:       "PersistentVolumeClaimList",
+		gvrPod:       "PodList",
 	}
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
 }
@@ -33,8 +34,15 @@ func unstructuredObj(apiVersion, kind, name string, spec map[string]interface{})
 	}}
 }
 
+// testOwner is the app the teardown and cleanup tests delete. Fixtures
+// labelled only with its slug stand for objects applied before the app-id
+// label existed.
+var testOwner = Owner{AppID: "app-1", AppSlug: testApp}
+
 func pdbObj() *unstructured.Unstructured {
-	return unstructuredObj("policy/v1", "PodDisruptionBudget", testApp, map[string]interface{}{"maxUnavailable": int64(1)})
+	obj := unstructuredObj("policy/v1", "PodDisruptionBudget", testApp, map[string]interface{}{"maxUnavailable": int64(1)})
+	obj.SetLabels(map[string]string{libk8s.LabelApp: testApp})
+	return obj
 }
 
 func assertPDBGone(t *testing.T, dyn *dynamicfake.FakeDynamicClient) {
@@ -47,7 +55,7 @@ func assertPDBGone(t *testing.T, dyn *dynamicfake.FakeDynamicClient) {
 
 func TestTeardownApp_DeletesPDB(t *testing.T) {
 	dyn := newFakeDynamic(pdbObj())
-	if err := TeardownApp(context.Background(), dyn, testNamespace, testApp); err != nil {
+	if err := TeardownApp(context.Background(), dyn, testNamespace, testOwner); err != nil {
 		t.Fatalf("TeardownApp: %v", err)
 	}
 	assertPDBGone(t, dyn)
@@ -55,7 +63,7 @@ func TestTeardownApp_DeletesPDB(t *testing.T) {
 
 func TestTeardownCronJob_DeletesStalePDB(t *testing.T) {
 	dyn := newFakeDynamic(pdbObj())
-	if err := TeardownCronJob(context.Background(), dyn, testNamespace, testApp); err != nil {
+	if err := TeardownCronJob(context.Background(), dyn, testNamespace, testOwner); err != nil {
 		t.Fatalf("TeardownCronJob: %v", err)
 	}
 	assertPDBGone(t, dyn)
@@ -63,10 +71,10 @@ func TestTeardownCronJob_DeletesStalePDB(t *testing.T) {
 
 func TestTeardown_NoPDBIsFine(t *testing.T) {
 	dyn := newFakeDynamic()
-	if err := TeardownApp(context.Background(), dyn, testNamespace, testApp); err != nil {
+	if err := TeardownApp(context.Background(), dyn, testNamespace, testOwner); err != nil {
 		t.Fatalf("TeardownApp without PDB: %v", err)
 	}
-	if err := TeardownCronJob(context.Background(), dyn, testNamespace, testApp); err != nil {
+	if err := TeardownCronJob(context.Background(), dyn, testNamespace, testOwner); err != nil {
 		t.Fatalf("TeardownCronJob without PDB: %v", err)
 	}
 }
@@ -79,10 +87,10 @@ func labelledObj(apiVersion, kind, name, appSlug string) *unstructured.Unstructu
 
 func TestDeleteApp_RemovesEverythingTheAppOwned(t *testing.T) {
 	dyn := newFakeDynamic(
-		unstructuredObj("apps/v1", "Deployment", testApp, map[string]interface{}{}),
-		unstructuredObj("v1", "Service", testApp, map[string]interface{}{}),
-		unstructuredObj("gateway.networking.k8s.io/v1", "HTTPRoute", testApp, map[string]interface{}{}),
-		unstructuredObj("batch/v1", "CronJob", testApp, map[string]interface{}{}),
+		labelledObj("apps/v1", "Deployment", testApp, testApp),
+		labelledObj("v1", "Service", testApp, testApp),
+		labelledObj("gateway.networking.k8s.io/v1", "HTTPRoute", testApp, testApp),
+		labelledObj("batch/v1", "CronJob", testApp, testApp),
 		pdbObj(),
 		labelledObj("v1", "Secret", secretName(testApp), testApp),
 		labelledObj("v1", "Secret", authgateSecretName(testApp), testApp),
@@ -94,7 +102,7 @@ func TestDeleteApp_RemovesEverythingTheAppOwned(t *testing.T) {
 		labelledObj("v1", "Secret", "canette-registry-creds", testApp),
 		labelledObj("v1", "PersistentVolumeClaim", "other-app-data", "other-app"),
 	)
-	if err := DeleteApp(context.Background(), dyn, testNamespace, testApp); err != nil {
+	if err := DeleteApp(context.Background(), dyn, testNamespace, testOwner); err != nil {
 		t.Fatalf("DeleteApp: %v", err)
 	}
 
@@ -134,7 +142,7 @@ func TestDeleteApp_RemovesEverythingTheAppOwned(t *testing.T) {
 }
 
 func TestDeleteApp_NothingLeftIsFine(t *testing.T) {
-	if err := DeleteApp(context.Background(), newFakeDynamic(), testNamespace, testApp); err != nil {
+	if err := DeleteApp(context.Background(), newFakeDynamic(), testNamespace, testOwner); err != nil {
 		t.Fatalf("DeleteApp on an empty namespace: %v", err)
 	}
 }
@@ -329,12 +337,12 @@ func TestWaitForQuotaUsage_CancelledContextIsAnError(t *testing.T) {
 // Service and its route. Stop tears those down and keeps the app's PVCs.
 func TestTeardownApp_RemovesWorkloadAndRouteKeepsPVCs(t *testing.T) {
 	dyn := newFakeDynamic(
-		unstructuredObj("apps/v1", "Deployment", testApp, map[string]interface{}{}),
-		unstructuredObj("v1", "Service", testApp, map[string]interface{}{}),
-		unstructuredObj("gateway.networking.k8s.io/v1", "HTTPRoute", testApp, map[string]interface{}{}),
+		labelledObj("apps/v1", "Deployment", testApp, testApp),
+		labelledObj("v1", "Service", testApp, testApp),
+		labelledObj("gateway.networking.k8s.io/v1", "HTTPRoute", testApp, testApp),
 		labelledObj("v1", "PersistentVolumeClaim", testApp+"-data", testApp),
 	)
-	if err := TeardownApp(context.Background(), dyn, testNamespace, testApp); err != nil {
+	if err := TeardownApp(context.Background(), dyn, testNamespace, testOwner); err != nil {
 		t.Fatalf("TeardownApp: %v", err)
 	}
 	for _, gvr := range []schema.GroupVersionResource{gvrDeployment, gvrService, gvrHTTPRoute} {
@@ -348,11 +356,14 @@ func TestTeardownApp_RemovesWorkloadAndRouteKeepsPVCs(t *testing.T) {
 }
 
 func TestTeardown_DeletesWorkloadsWithBackgroundPropagation(t *testing.T) {
-	dyn := newFakeDynamic()
-	if err := TeardownApp(context.Background(), dyn, testNamespace, testApp); err != nil {
+	dyn := newFakeDynamic(
+		labelledObj("apps/v1", "Deployment", testApp, testApp),
+		labelledObj("batch/v1", "CronJob", testApp, testApp),
+	)
+	if err := TeardownApp(context.Background(), dyn, testNamespace, testOwner); err != nil {
 		t.Fatalf("TeardownApp: %v", err)
 	}
-	if err := TeardownCronJob(context.Background(), dyn, testNamespace, testApp); err != nil {
+	if err := TeardownCronJob(context.Background(), dyn, testNamespace, testOwner); err != nil {
 		t.Fatalf("TeardownCronJob: %v", err)
 	}
 	seen := map[string]bool{}

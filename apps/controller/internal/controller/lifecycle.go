@@ -91,13 +91,14 @@ func (c *Controller) step(ctx context.Context, log *zap.Logger, lease store.Leas
 func (c *Controller) stopApp(ctx context.Context, log *zap.Logger, lease store.Lease, in *store.Intent) bool {
 	log = log.With(zap.String("app", in.AppSlug), zap.String("project", in.ProjectSlug))
 	ns := k8sres.AppNamespace(in.ProjectID, in.ProjectSlug)
+	owner := k8sres.Owner{AppID: in.AppID, AppSlug: in.AppSlug}
 	// The stop is recorded in the fenced transaction, so a deploy accepted
 	// right after the teardown can't be mistaken for part of it.
 	err := c.store.FenceStop(ctx, lease, in.Generation, func(ctx context.Context) error {
-		if err := k8sres.TeardownApp(ctx, c.dynClient, ns, in.AppSlug); err != nil {
+		if err := k8sres.TeardownApp(ctx, c.dynClient, ns, owner); err != nil {
 			return err
 		}
-		if err := k8sres.TeardownCronJob(ctx, c.dynClient, ns, in.AppSlug); err != nil {
+		if err := k8sres.TeardownCronJob(ctx, c.dynClient, ns, owner); err != nil {
 			return err
 		}
 		failpoint.Hit("after-teardown-delete")

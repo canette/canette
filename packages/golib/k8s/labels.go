@@ -11,6 +11,13 @@ const (
 	LabelComponent  = "canette.dev/component"
 	LabelDeployment = "canette.dev/deployment"
 
+	// LabelAppID is the app's immutable UUID, on every object of the app
+	// except the Deployment and Service selectors, which can't change. Unlike
+	// the slug, it never matches a later app that reuses the slug (#333).
+	LabelAppID = "canette.dev/app-id"
+	// LabelVolumeID is the volume's UUID, on the PVC or ConfigMap backing it.
+	LabelVolumeID = "canette.dev/volume-id"
+
 	AnnotDeploymentID = "canette.dev/deployment-id"
 	LabelOwner        = "canette.dev/owner"
 

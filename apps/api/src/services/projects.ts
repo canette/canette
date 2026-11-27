@@ -253,18 +253,19 @@ export async function updateProject(
 
     // Renaming back to a slug whose namespace is still queued makes that
     // namespace the live one again, so it must not be deleted. Once the
-    // controller has claimed the cleanup, the namespace may already be
-    // going, so the rename is refused until the controller is done. The row
-    // is locked first, so a claim can't land between the check and the
-    // delete (the controller skips locked rows).
+    // controller has claimed the cleanup, or sent the namespace's delete,
+    // the namespace may already be going, so the rename is refused until the
+    // controller is done and the namespace is gone. The row is locked first,
+    // so a claim can't land between the check and the delete (the
+    // controller skips locked rows).
     let queuedQ = tx
       .selectFrom("queued_namespace_cleanups")
-      .select(["id", "claimed_at"])
+      .select(["id", "claimed_at", "delete_requested_at"])
       .where("project_id", "=", projectId)
       .where("project_slug", "=", newSlug)
     if (supportsForUpdate(tx)) queuedQ = queuedQ.forUpdate()
     const queued = await queuedQ.executeTakeFirst()
-    if (queued?.claimed_at) {
+    if (queued?.claimed_at || queued?.delete_requested_at) {
       throw new ServiceError(
         "The project's namespace for that slug is still being deleted. Try again in a few minutes.",
         "CONFLICT",
