@@ -1,24 +1,79 @@
 "use client"
 
 import { useTransition } from "react"
+import { ChevronRight, Eye, KeyRound, Pencil, Trash2, type LucideIcon } from "lucide-react"
 import { CanetteLogo } from "@/components/canette-logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Separator } from "@/components/ui/separator"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { authorizeAction, denyAction } from "./actions"
 
-// Everything a token lets an MCP client do. Keep in sync with the MCP tools in
-// apps/api/src/services/mcp/tools/ — a user must never grant more than this says.
-const TOOL_DESCRIPTIONS = [
-  "List your teams, list and create projects and apps, and change project and app settings",
-  "Trigger deployments and roll back to earlier ones",
-  "Stop running apps, without deleting them or their data",
-  "Turn automatic deployments on Git push on and off, without seeing webhook secrets",
-  "Read deployment status, build logs, runtime logs and metrics",
-  "Read, change and delete environment variables",
-  "Add, change and delete app volumes (persistent volumes only you can delete)",
-  "See the names of secrets and Git credentials, never their values",
-  "Ask you to enter secret values yourself on a canette page",
+type PermissionGroup = {
+  id: string
+  icon: LucideIcon
+  // Always visible. It must be honest on its own: a user who expands nothing
+  // still has to know what they grant, including anything destructive.
+  summary: string
+  // Shown when the group is expanded. It only adds detail to the summary.
+  details: string[]
+}
+
+// Everything a token lets an MCP client do, ordered by impact. Keep in sync with
+// the MCP tools in apps/api/src/services/mcp/tools/ (registered in
+// apps/api/src/services/mcp/registry.ts): a user must never grant more than this
+// says. A new tool normally extends a group's details; add a group only for a
+// new class of risk. Tool modules by group:
+//   view:    projects (list_*), status, deployments (list/get), env (list),
+//            volumes (list), apps (list_git_credentials), access (get_webhook)
+//   change:  projects (create/update), apps, deployments (trigger/redeploy/stop),
+//            access (enable/disable_webhook)
+//   delete:  env (set/delete), volumes (create/update/delete)
+//   secrets: env (request_secret), access (*_password_protection)
+// The docs tools read public documentation only and need no line here.
+//
+// The grant is all-or-nothing: these are not selectable scopes, so nothing on
+// this screen may look like a checkbox.
+const PERMISSION_GROUPS: PermissionGroup[] = [
+  {
+    id: "view",
+    icon: Eye,
+    summary: "See your teams, projects, apps, deployments, logs and metrics",
+    details: [
+      "Deployment status, build logs, runtime logs and metrics",
+      "Environment variable values",
+      "Names of secrets and Git credentials, never their values",
+    ],
+  },
+  {
+    id: "change",
+    icon: Pencil,
+    summary: "Create and configure projects and apps, deploy, roll back and stop them",
+    details: [
+      "Change project and app settings",
+      "Trigger deployments and roll back to earlier ones",
+      "Stop apps, without deleting them or their data",
+      "Turn deploy on Git push on and off, without seeing webhook secrets",
+    ],
+  },
+  {
+    id: "delete",
+    icon: Trash2,
+    summary: "Delete environment variables and app volumes",
+    details: [
+      "Add, change and delete environment variables",
+      "Add, change and delete app volumes",
+      "Persistent volumes, and the data in them, can only be deleted by you",
+    ],
+  },
+  {
+    id: "secrets",
+    icon: KeyRound,
+    summary: "Never sees secret values. It can ask you to enter them on a canette page",
+    details: [
+      "Ask you to enter secret values yourself",
+      "Ask you to set, change or remove an app's password protection yourself",
+    ],
+  },
 ]
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
@@ -34,6 +89,37 @@ function describeDestination(redirectUri: string): { origin: string; loopback: b
   } catch {
     return null
   }
+}
+
+function PermissionRow({ group }: { group: PermissionGroup }) {
+  const Icon = group.icon
+  return (
+    <Collapsible asChild>
+      <li className="group/perm bg-panel-soft">
+        <CollapsibleTrigger className="flex w-full items-start gap-3 px-3 py-2.5 text-left text-sm rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-ring">
+          <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-foreground">
+            <Icon className="size-3.5" aria-hidden />
+          </span>
+          <span className="flex-1 pt-0.5 text-foreground">{group.summary}</span>
+          <ChevronRight
+            className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]/perm:rotate-90"
+            aria-hidden
+          />
+          <span className="sr-only">Details</span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <ul className="flex flex-col gap-1 pb-2.5 pl-12 pr-3 text-xs text-muted-foreground">
+            {group.details.map((d) => (
+              <li key={d} className="flex items-start gap-2">
+                <span aria-hidden>·</span>
+                {d}
+              </li>
+            ))}
+          </ul>
+        </CollapsibleContent>
+      </li>
+    </Collapsible>
+  )
 }
 
 export function ConsentScreen({
@@ -52,9 +138,9 @@ export function ConsentScreen({
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
       <Card className="w-full max-w-sm sm:max-w-lg">
-        <CardHeader className="text-center">
-          <div className="flex justify-center mb-2">
-            <CanetteLogo className="size-16 p-1" />
+        <CardHeader className="text-center gap-1.5">
+          <div className="flex justify-center">
+            <CanetteLogo className="size-10 p-0.5" />
           </div>
           <CardTitle className="text-lg font-semibold leading-snug">
             {clientName} wants to access canette
@@ -66,23 +152,25 @@ export function ConsentScreen({
         </CardHeader>
 
         <CardContent className="flex flex-col gap-4">
-          <div className="rounded-md border bg-muted/40 px-4 py-3 text-sm">
-            <p className="font-medium mb-2 text-foreground">It will be able to:</p>
-            <ul className="flex flex-col gap-1 text-muted-foreground">
-              {TOOL_DESCRIPTIONS.map((d) => (
-                <li key={d} className="flex items-start gap-2">
-                  <span className="mt-0.5 text-foreground">·</span>
-                  {d}
-                </li>
+          <div className="flex flex-col gap-2">
+            <p id="consent-permissions" className="text-sm font-medium text-foreground">
+              It will be able to:
+            </p>
+            <ul
+              aria-labelledby="consent-permissions"
+              className="flex flex-col divide-y divide-border rounded-md ring-1 ring-inset ring-border overflow-hidden"
+            >
+              {PERMISSION_GROUPS.map((g) => (
+                <PermissionRow key={g.id} group={g} />
               ))}
             </ul>
           </div>
 
           {destination?.loopback ? (
-            <div className="rounded-md border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-              <p>Access will be sent to an app on this computer:</p>
-              <p className="mt-1 font-mono text-xs text-foreground break-all">{destination.origin}</p>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Access will be sent to an app on this computer:{" "}
+              <span className="font-mono text-foreground break-all">{destination.origin}</span>
+            </p>
           ) : (
             <div className="rounded-md border border-warning-line bg-warning-soft px-4 py-3 text-sm text-warning-text">
               {destination ? (
@@ -101,34 +189,30 @@ export function ConsentScreen({
             </div>
           )}
 
-          <Separator />
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <form action={denyAction} onSubmit={() => startDeny(() => {})}>
+              <input type="hidden" name="qs" value={qs} />
+              <Button
+                type="submit"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={authorizing || denying}
+              >
+                {denying ? "Cancelling…" : "Cancel"}
+              </Button>
+            </form>
 
-          <form
-            action={authorizeAction}
-            onSubmit={() => startAuthorize(() => {})}
-            className="contents"
-          >
-            <input type="hidden" name="qs" value={qs} />
-            <Button type="submit" className="w-full" disabled={!destination || authorizing || denying}>
-              {authorizing ? "Authorizing…" : "Authorize"}
-            </Button>
-          </form>
-
-          <form
-            action={denyAction}
-            onSubmit={() => startDeny(() => {})}
-            className="contents"
-          >
-            <input type="hidden" name="qs" value={qs} />
-            <Button
-              type="submit"
-              variant="outline"
-              className="w-full"
-              disabled={authorizing || denying}
-            >
-              {denying ? "Cancelling…" : "Cancel"}
-            </Button>
-          </form>
+            <form action={authorizeAction} onSubmit={() => startAuthorize(() => {})}>
+              <input type="hidden" name="qs" value={qs} />
+              <Button
+                type="submit"
+                className="w-full sm:w-auto"
+                disabled={!destination || authorizing || denying}
+              >
+                {authorizing ? "Authorizing…" : "Authorize"}
+              </Button>
+            </form>
+          </div>
         </CardContent>
       </Card>
     </main>
